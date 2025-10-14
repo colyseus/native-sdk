@@ -14,7 +14,7 @@ find_package(RapidJSON CONFIG REQUIRED)
 add_library(colyseus-sdk SHARED
         src/settings.cpp
         src/client.cpp
-        src/http.cpp
+        src/network/http.cpp
 )
 
 target_include_directories(colyseus-sdk PUBLIC include)
