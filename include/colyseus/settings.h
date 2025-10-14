@@ -2,7 +2,7 @@
 #include <string>
 #include <map>
 
-namespace NativeSDK {
+namespace Colyseus {
 
     struct Settings {
         std::string serverAddress = "localhost";

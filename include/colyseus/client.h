@@ -28,7 +28,10 @@ namespace NativeSDK {
 
     class Client {
     public:
+        // Default: uses WebSocketTransport
         Client(const Settings& settings);
+        // Custom transport factory
+        Client(const Settings& settings, TransportFactory transportFactory);
         ~Client();
 
         // Matchmaking
@@ -43,6 +46,7 @@ namespace NativeSDK {
 
     private:
         Settings settings_;
+        TransportFactory transportFactory_;
         std::shared_ptr<HTTP> http_;
         std::shared_ptr<Auth> auth_;
 
