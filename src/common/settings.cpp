@@ -1,7 +1,7 @@
 #include "colyseus/settings.h"
 #include <sstream>
 
-namespace NativeSDK {
+namespace Colyseus {
 
     void Settings::setRequestHeaders(const std::map<std::string, std::string>& newHeaders) {
         headers = newHeaders;
