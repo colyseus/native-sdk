@@ -1,6 +1,3 @@
-//
-// Created by Bharath Sharama on 14/10/25.
-//
 #include "colyseus/websocket_transport.h"
 #include <wslay/wslay.h>
 #include <sys/socket.h>

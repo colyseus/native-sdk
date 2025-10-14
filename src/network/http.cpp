@@ -1,6 +1,3 @@
-//
-// Created by Bharath Sharama on 14/10/25.
-//
 #include "colyseus/http.h"
 #include "colyseus/settings.h"
 #include <curl/curl.h>

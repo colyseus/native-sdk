@@ -1,7 +1,3 @@
-//
-// Created by Bharath Sharama on 14/10/25.
-//
-
 #pragma once
 #include "colyseus/transport.h"
 #include <memory>
