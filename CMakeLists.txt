@@ -15,7 +15,7 @@ find_path(WSLAY_INCLUDE_DIR wslay/wslay.h)
 find_library(WSLAY_LIBRARY wslay)
 
 add_library(colyseus-sdk SHARED
-        src/settings.cpp
+        src/common/settings.cpp
         src/client.cpp
         src/network/http.cpp
         src/network/websocket_transport.cpp
