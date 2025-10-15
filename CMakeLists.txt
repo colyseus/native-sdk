@@ -19,7 +19,7 @@ add_library(colyseus-sdk SHARED
         src/client.cpp
         src/network/http.cpp
         src/network/websocket_transport.cpp
-        src/utils/base64.cpp
+        src/utils/strUtil.cpp
 )
 
 target_include_directories(colyseus-sdk PUBLIC
