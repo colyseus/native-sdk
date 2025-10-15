@@ -6,11 +6,15 @@
 #include <fcntl.h>
 #include <arpa/inet.h>
 #include <cstring>
+#include "colyseus/utils/sha1.h"
+#include "colyseus/utils/strUtil.h"
 #include <random>
 #include <sstream>
 #include <algorithm>
 #include <iostream>
-
+#include <thread>
+#include <chrono>
+#include <optional>
 namespace {
     std::string createAcceptKey(const std::string& clientKey) {
     SHA1 sha;
