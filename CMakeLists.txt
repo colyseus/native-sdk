@@ -20,6 +20,8 @@ add_library(colyseus-sdk SHARED
         src/network/http.cpp
         src/network/websocket_transport.cpp
         src/utils/strUtil.cpp
+        include/colyseus/room.h
+        src/room.cpp
 )
 
 target_include_directories(colyseus-sdk PUBLIC
