@@ -3,6 +3,36 @@
 namespace Colyseus {
     namespace Utils {
 
+        std::optional<URLParts> parseURL(const std::string& url) {
+            // ws://host:port/path or wss://host:port/path
+            const std::regex re("([^:]+)://([^:/]+)(:([0-9]+))?/(.+)", std::regex::extended);
+            std::smatch m;
+
+            if (!std::regex_match(url, m, re)) {
+                return std::nullopt;
+            }
+
+            std::optional<uint16_t> port(std::nullopt);
+            if (m[4].length() > 0) {
+                auto portNum = std::strtoul(m[4].str().c_str(), nullptr, 10);
+                if (portNum > 0 && portNum <= std::numeric_limits<uint16_t>::max()) {
+                    port = static_cast<uint16_t>(portNum);
+                } else {
+                    return std::nullopt;
+                }
+            }
+
+            URLParts parts{
+                m[1].str(),  // scheme
+                m[2].str(),  // host
+                port,        // port
+                m[5].str(),  // pathAndArgs
+                url          // url
+            };
+
+            return std::make_optional(parts);
+        }
+
         static const char base64_chars[] =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
             "abcdefghijklmnopqrstuvwxyz"
