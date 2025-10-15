@@ -212,9 +212,11 @@ bool WebSocketTransport::isOpen() const {
 
 // Internal methods
 void WebSocketTransport::tickLoop() {
+    //TODO: We can futhure optimise this with select/poll to wait for socket activity.
+    uint32_t tickRateMs_ = 10;
     while (running_) {
         tickOnce();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(tickRateMs_));
     }
 }
 
