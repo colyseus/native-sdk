@@ -1,56 +1,67 @@
 #pragma once
 #include "colyseus/settings.h"
+#include "colyseus/transport.h"
+#include "colyseus/protocol.h"
 #include <string>
 #include <map>
 #include <functional>
 #include <memory>
 
-namespace NativeSDK {
+namespace Colyseus {
 
-    class Room;
-    class HTTP;
-    class Auth;
+class Room;
+class HTTP;
 
-    struct SeatReservation {
-        std::string sessionId;
-        std::string reconnectionToken;
-        struct RoomData {
-            std::string name;
-            std::string roomId;
-            std::string processId;
-            std::string publicAddress;
-        } room;
-    };
+class Client {
+public:
+    Client(const Settings& settings);
+    Client(const Settings& settings, TransportFactory transportFactory);
+    ~Client();
 
-    class Client {
-    public:
-        // Default: uses WebSocketTransport
-        Client(const Settings& settings);
-        // Custom transport factory
-        Client(const Settings& settings, TransportFactory transportFactory);
-        ~Client();
+    // Matchmaking with callbacks
+    void joinOrCreate(const std::string& roomName,
+                      const std::map<std::string, std::string>& options,
+                      std::function<void(Room*)> onSuccess,
+                      std::function<void(int, const std::string&)> onError);
 
-        // Matchmaking
-        void joinOrCreate(const std::string& roomName, const std::map<std::string, std::string>& options = {});
-        void create(const std::string& roomName, const std::map<std::string, std::string>& options = {});
-        void join(const std::string& roomName, const std::map<std::string, std::string>& options = {});
-        void joinById(const std::string& roomId, const std::map<std::string, std::string>& options = {});
-        void reconnect(const std::string& reconnectionToken);
+    void create(const std::string& roomName,
+                const std::map<std::string, std::string>& options,
+                std::function<void(Room*)> onSuccess,
+                std::function<void(int, const std::string&)> onError);
 
-        // Auth
-        std::shared_ptr<Auth> getAuth();
+    void join(const std::string& roomName,
+              const std::map<std::string, std::string>& options,
+              std::function<void(Room*)> onSuccess,
+              std::function<void(int, const std::string&)> onError);
 
-    private:
-        Settings settings_;
-        TransportFactory transportFactory_;
-        std::shared_ptr<HTTP> http_;
-        std::shared_ptr<Auth> auth_;
+    void joinById(const std::string& roomId,
+                  const std::map<std::string, std::string>& options,
+                  std::function<void(Room*)> onSuccess,
+                  std::function<void(int, const std::string&)> onError);
 
-        std::string buildEndpoint(const SeatReservation::RoomData& room, const std::map<std::string, std::string>& options);
-        std::string getHttpEndpoint(const std::string& segments = "");
-        std::string getEndpointPort();
+    void reconnect(const std::string& reconnectionToken,
+                   std::function<void(Room*)> onSuccess,
+                   std::function<void(int, const std::string&)> onError);
 
-        void consumeSeatReservation(const SeatReservation& reservation);
-    };
+    std::shared_ptr<HTTP> getHTTP();
+
+private:
+    Settings settings_;
+    TransportFactory transportFactory_;
+    std::shared_ptr<HTTP> http_;
+
+    void createMatchMakeRequest(const std::string& method,
+                                const std::string& roomName,
+                                const std::map<std::string, std::string>& options,
+                                std::function<void(Room*)> onSuccess,
+                                std::function<void(int, const std::string&)> onError);
+
+    void consumeSeatReservation(const SeatReservation& reservation,
+                                std::function<void(Room*)> onSuccess,
+                                std::function<void(int, const std::string&)> onError);
+
+    std::string buildRoomEndpoint(const SeatReservation::RoomData& room,
+                                  const std::map<std::string, std::string>& options);
+};
 
 }

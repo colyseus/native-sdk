@@ -15,14 +15,4 @@ namespace Colyseus {
         int getPort() const;
     };
 
-    class Client {
-    public:
-        Client(const Settings& settings);
-        void connect();
-        void disconnect();
-
-    private:
-        Settings settings_;
-    };
-
-} // namespace NativeSDK
+} // namespace Colyseus
