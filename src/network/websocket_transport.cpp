@@ -14,7 +14,7 @@
 namespace {
     std::string createAcceptKey(const std::string& clientKey) {
     SHA1 sha;
-    sha.update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    sha.update(clientKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"); // magic number here is WebSocket protocol GUID
     auto digest = sha.final();
     std::string hashStr(digest.begin(), digest.end());
     return Colyseus::Utils::base64Encode(hashStr);
@@ -293,14 +293,20 @@ void WebSocketTransport::handleMessageReceived(const uint8_t* data, size_t lengt
 }
 
 bool WebSocketTransport::connectInit() {
-    // Parse URL (simplified - assumes ws://host:port/path format)
-    std::string host;
-    int port = 80;
+    auto parsedURL = Utils::parseURL(url_);
+    if (!parsedURL) {
+        return false;
+    }
 
-    // TODO: Proper URL parsing
-    // For now, assume localhost:2567
-    host = "localhost";
-    port = 2567;
+    std::string host = parsedURL->host;
+    int port = parsedURL->port.value_or(
+        parsedURL->scheme == "wss" ? 443 : 80
+    );
+
+    // Store for handshake
+    urlHost_ = host;
+    urlPort_ = port;
+    urlPath_ = "/" + parsedURL->pathAndArgs;
 
     // Create socket
     socket_ = socket(AF_INET, SOCK_STREAM, 0);
@@ -312,12 +318,20 @@ bool WebSocketTransport::connectInit() {
     int flags = fcntl(socket_, F_GETFL, 0);
     fcntl(socket_, F_SETFL, flags | O_NONBLOCK);
 
+    // Resolve hostname
+    struct hostent* server = gethostbyname(host.c_str());
+    if (server == nullptr) {
+        ::close(socket_);
+        socket_ = -1;
+        return false;
+    }
+
     // Connect
     struct sockaddr_in server_addr;
     std::memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
-    inet_pton(AF_INET, host.c_str(), &server_addr.sin_addr);
+    std::memcpy(&server_addr.sin_addr.s_addr, server->h_addr, server->h_length);
 
     ::connect(socket_, (struct sockaddr*)&server_addr, sizeof(server_addr));
 
@@ -400,11 +414,20 @@ bool WebSocketTransport::httpHandshakeReceive() {
         return false;
     }
 
-    // Verify Sec-WebSocket-Accept
+    // Extract Sec-WebSocket-Accept header using regex
+    std::regex acceptRegex("Sec-WebSocket-Accept: ([^\r\n]+)");
+    std::smatch match;
+
+    if (!std::regex_search(buffer_, match, acceptRegex)) {
+        return false;
+    }
+
+    std::string receivedKey = match[1].str();
     std::string expectedKey = createAcceptKey(clientKey_);
 
-    // TODO: Proper HTTP response parsing
-    // For now, assume success if we got full response
+    if (receivedKey != expectedKey) {
+        return false;
+    }
 
     // Remove handshake response, keep any extra data
     size_t endPos = buffer_.find("\r\n\r\n");
