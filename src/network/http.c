@@ -15,7 +15,7 @@ typedef struct {
 } colyseus_http_context_t;
 
 /* CURL write callback */
-static size_t curl_write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
+static size_t colyseus_curl_write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t total_size = size * nmemb;
     colyseus_http_context_t* ctx = (colyseus_http_context_t*)userp;
 
@@ -159,7 +159,7 @@ static void http_request(
 
     /* Configure CURL */
     curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, colyseus_curl_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
 
     /* Set method */
