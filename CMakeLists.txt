@@ -98,3 +98,13 @@ if(BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# Third-party libraries (as submodules)
+add_subdirectory(third_party/sds)
+add_subdirectory(third_party/cJSON)
+
+# uthash is header-only
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/third_party/uthash/src)
+
+# SHA1 (our own header-only)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include/colyseus/utils)

@@ -1,0 +1,9 @@
+[submodule "third_party/sds"]
+	path = third_party/sds
+	url = https://github.com/antirez/sds.git
+[submodule "third_party/uthash"]
+	path = third_party/uthash
+	url = https://github.com/troydhanson/uthash.git
+[submodule "third_party/cJSON"]
+	path = third_party/cJSON
+	url = https://github.com/DaveGamble/cJSON.git
