@@ -1,75 +1,87 @@
-#pragma once
-#include <string>
-#include <map>
-#include <functional>
-#include <memory>
+#ifndef COLYSEUS_HTTP_H
+#define COLYSEUS_HTTP_H
 
-namespace Colyseus {
+#include "colyseus/settings.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 
-class Settings;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-class HTTPException : public std::exception {
-public:
-    HTTPException(int code, const std::string& message)
-        : code_(code), message_(message) {}
+/* HTTP response structure */
+typedef struct {
+    int status_code;
+    char* body;
+    bool success;
+} colyseus_http_response_t;
 
-    int getCode() const { return code_; }
-    const char* what() const noexcept override { return message_.c_str(); }
+/* HTTP exception/error structure */
+typedef struct {
+    int code;
+    char* message;
+} colyseus_http_error_t;
 
-private:
-    int code_;
-    std::string message_;
-};
+/* HTTP callbacks */
+typedef void (*colyseus_http_success_callback_t)(const colyseus_http_response_t* response, void* userdata);
+typedef void (*colyseus_http_error_callback_t)(const colyseus_http_error_t* error, void* userdata);
 
-struct HTTPResponse {
-    int statusCode;
-    std::string body;
-    std::map<std::string, std::string> headers;
-};
+/* HTTP client structure */
+typedef struct {
+    const colyseus_settings_t* settings;
+    char* auth_token;
+} colyseus_http_t;
 
-class HTTP {
-public:
-    HTTP(const Settings* settings);
-    ~HTTP();
+/* Create/destroy HTTP client */
+colyseus_http_t* colyseus_http_create(const colyseus_settings_t* settings);
+void colyseus_http_free(colyseus_http_t* http);
 
-    // Async requests with callbacks
-    void get(const std::string& path,
-             std::function<void(const HTTPResponse&)> onSuccess,
-             std::function<void(const HTTPException&)> onError,
-             const std::map<std::string, std::string>& headers = {});
+/* Set auth token */
+void colyseus_http_set_auth_token(colyseus_http_t* http, const char* token);
+const char* colyseus_http_get_auth_token(const colyseus_http_t* http);
 
-    void post(const std::string& path,
-              const std::string& jsonBody,
-              std::function<void(const HTTPResponse&)> onSuccess,
-              std::function<void(const HTTPException&)> onError,
-              const std::map<std::string, std::string>& headers = {});
+/* HTTP methods (async with callbacks) */
+void colyseus_http_get(
+    colyseus_http_t* http,
+    const char* path,
+    colyseus_http_success_callback_t on_success,
+    colyseus_http_error_callback_t on_error,
+    void* userdata
+);
 
-    void put(const std::string& path,
-             const std::string& jsonBody,
-             std::function<void(const HTTPResponse&)> onSuccess,
-             std::function<void(const HTTPException&)> onError,
-             const std::map<std::string, std::string>& headers = {});
+void colyseus_http_post(
+    colyseus_http_t* http,
+    const char* path,
+    const char* json_body,
+    colyseus_http_success_callback_t on_success,
+    colyseus_http_error_callback_t on_error,
+    void* userdata
+);
 
-    void del(const std::string& path,
-             std::function<void(const HTTPResponse&)> onSuccess,
-             std::function<void(const HTTPException&)> onError,
-             const std::map<std::string, std::string>& headers = {});
+void colyseus_http_put(
+    colyseus_http_t* http,
+    const char* path,
+    const char* json_body,
+    colyseus_http_success_callback_t on_success,
+    colyseus_http_error_callback_t on_error,
+    void* userdata
+);
 
-    void setAuthToken(const std::string& token);
-    std::string getAuthToken() const;
+void colyseus_http_delete(
+    colyseus_http_t* http,
+    const char* path,
+    colyseus_http_success_callback_t on_success,
+    colyseus_http_error_callback_t on_error,
+    void* userdata
+);
 
-private:
-    const Settings* settings_;
-    std::string authToken_;
+/* Helper functions for response/error cleanup */
+void colyseus_http_response_free(colyseus_http_response_t* response);
+void colyseus_http_error_free(colyseus_http_error_t* error);
 
-    void request(const std::string& method,
-                 const std::string& path,
-                 const std::string& body,
-                 std::function<void(const HTTPResponse&)> onSuccess,
-                 std::function<void(const HTTPException&)> onError,
-                 std::map<std::string, std::string> headers);
-
-    std::string getRequestURL(const std::string& path);
-};
-
+#ifdef __cplusplus
 }
+#endif
+
+#endif /* COLYSEUS_HTTP_H */
