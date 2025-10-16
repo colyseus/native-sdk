@@ -51,7 +51,7 @@ include_directories(
 # Source files
 set(COLYSEUS_SOURCES
         # Core
-        src/settings.c
+        src/common/settings.c
         src/client.c
         src/room.c
 
@@ -135,7 +135,7 @@ install(TARGETS colyseus
 )
 
 install(DIRECTORY include/colyseus
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        DESTINATION include
         FILES_MATCHING PATTERN "*.h"
 )
 
@@ -169,13 +169,21 @@ install(FILES
 
 # Examples
 if(BUILD_EXAMPLES)
-    add_subdirectory(examples)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples)
+        add_subdirectory(examples)
+    else()
+        message(STATUS "Examples directory not found, skipping")
+    endif()
 endif()
 
 # Tests
 if(BUILD_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        enable_testing()
+        add_subdirectory(tests)
+    else()
+        message(STATUS "Tests directory not found, skipping")
+    endif()
 endif()
 
 # Print summary

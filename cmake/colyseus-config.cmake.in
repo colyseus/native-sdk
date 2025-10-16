@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(CURL REQUIRED)
+
+include("${CMAKE_CURRENT_LIST_DIR}/colyseus-targets.cmake")
+
+check_required_components(colyseus)
