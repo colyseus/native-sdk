@@ -45,6 +45,8 @@ set(COLYSEUS_SOURCES
 set(THIRD_PARTY_SOURCES
         third_party/sds/sds.c
         third_party/cJSON/cJSON.c
+        include/colyseus/utils/sha1_c.h
+        src/utils/sha1_c.c
 )
 
 # Build shared library

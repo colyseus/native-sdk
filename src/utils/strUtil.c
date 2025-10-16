@@ -1,5 +1,5 @@
 #include "colyseus/utils/StrUtil.h"
-#include "colyseus/utils/sha1.h"
+#include "colyseus/utils/sha1_c.h"
 #include "sds.h"
 #include <stdlib.h>
 #include <string.h>
@@ -135,7 +135,6 @@ char* colyseus_base64_decode(const char* data) {
 
 /* WebSocket accept key generation */
 char* colyseus_create_accept_key(const char* client_key) {
-    /* Concatenate with magic GUID */
     const char* magic_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
     sds combined = sdsempty();
@@ -143,21 +142,13 @@ char* colyseus_create_accept_key(const char* client_key) {
     combined = sdscat(combined, magic_guid);
 
     /* Calculate SHA1 */
-    SHA1 sha;
-    SHA1_Init(&sha);
-    SHA1_Update(&sha, combined, sdslen(combined));
-
-    std::array<char, 20> digest;
-    SHA1_Final(&sha, digest);
+    uint8_t digest[20];
+    sha1_hash((const uint8_t*)combined, sdslen(combined), digest);
 
     sdsfree(combined);
 
     /* Base64 encode the hash */
-    char hash_str[21];
-    memcpy(hash_str, digest.data(), 20);
-    hash_str[20] = '\0';
-
-    char* result = colyseus_base64_encode(hash_str);
+    char* result = colyseus_base64_encode((const char*)digest);
 
     return result;
 }
