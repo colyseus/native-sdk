@@ -1,67 +1,86 @@
-#pragma once
+#ifndef COLYSEUS_CLIENT_H
+#define COLYSEUS_CLIENT_H
+
 #include "colyseus/settings.h"
 #include "colyseus/transport.h"
 #include "colyseus/protocol.h"
-#include <string>
-#include <map>
-#include <functional>
-#include <memory>
+#include "colyseus/http.h"
+#include "colyseus/room.h"
+#include <stdbool.h>
 
-namespace Colyseus {
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-class Room;
-class HTTP;
+/* Client structure */
+typedef struct {
+    colyseus_settings_t* settings;
+    colyseus_transport_factory_fn transport_factory;
+    colyseus_http_t* http;
+} colyseus_client_t;
 
-class Client {
-public:
-    Client(const Settings& settings);
-    Client(const Settings& settings, TransportFactory transportFactory);
-    ~Client();
+/* Matchmaking callbacks */
+typedef void (*colyseus_client_room_callback_t)(colyseus_room_t* room, void* userdata);
+typedef void (*colyseus_client_error_callback_t)(int code, const char* message, void* userdata);
 
-    // Matchmaking with callbacks
-    void joinOrCreate(const std::string& roomName,
-                      const std::map<std::string, std::string>& options,
-                      std::function<void(Room*)> onSuccess,
-                      std::function<void(int, const std::string&)> onError);
+/* Create and destroy client */
+colyseus_client_t* colyseus_client_create(colyseus_settings_t* settings);
+colyseus_client_t* colyseus_client_create_with_transport(
+    colyseus_settings_t* settings,
+    colyseus_transport_factory_fn transport_factory
+);
+void colyseus_client_free(colyseus_client_t* client);
 
-    void create(const std::string& roomName,
-                const std::map<std::string, std::string>& options,
-                std::function<void(Room*)> onSuccess,
-                std::function<void(int, const std::string&)> onError);
+/* Get HTTP client */
+colyseus_http_t* colyseus_client_get_http(colyseus_client_t* client);
 
-    void join(const std::string& roomName,
-              const std::map<std::string, std::string>& options,
-              std::function<void(Room*)> onSuccess,
-              std::function<void(int, const std::string&)> onError);
+/* Matchmaking methods */
+void colyseus_client_join_or_create(
+    colyseus_client_t* client,
+    const char* room_name,
+    const char* options_json,
+    colyseus_client_room_callback_t on_success,
+    colyseus_client_error_callback_t on_error,
+    void* userdata
+);
 
-    void joinById(const std::string& roomId,
-                  const std::map<std::string, std::string>& options,
-                  std::function<void(Room*)> onSuccess,
-                  std::function<void(int, const std::string&)> onError);
+void colyseus_client_create_room(
+    colyseus_client_t* client,
+    const char* room_name,
+    const char* options_json,
+    colyseus_client_room_callback_t on_success,
+    colyseus_client_error_callback_t on_error,
+    void* userdata
+);
 
-    void reconnect(const std::string& reconnectionToken,
-                   std::function<void(Room*)> onSuccess,
-                   std::function<void(int, const std::string&)> onError);
+void colyseus_client_join(
+    colyseus_client_t* client,
+    const char* room_name,
+    const char* options_json,
+    colyseus_client_room_callback_t on_success,
+    colyseus_client_error_callback_t on_error,
+    void* userdata
+);
 
-    std::shared_ptr<HTTP> getHTTP();
+void colyseus_client_join_by_id(
+    colyseus_client_t* client,
+    const char* room_id,
+    const char* options_json,
+    colyseus_client_room_callback_t on_success,
+    colyseus_client_error_callback_t on_error,
+    void* userdata
+);
 
-private:
-    Settings settings_;
-    TransportFactory transportFactory_;
-    std::shared_ptr<HTTP> http_;
+void colyseus_client_reconnect(
+    colyseus_client_t* client,
+    const char* reconnection_token,
+    colyseus_client_room_callback_t on_success,
+    colyseus_client_error_callback_t on_error,
+    void* userdata
+);
 
-    void createMatchMakeRequest(const std::string& method,
-                                const std::string& roomName,
-                                const std::map<std::string, std::string>& options,
-                                std::function<void(Room*)> onSuccess,
-                                std::function<void(int, const std::string&)> onError);
-
-    void consumeSeatReservation(const SeatReservation& reservation,
-                                std::function<void(Room*)> onSuccess,
-                                std::function<void(int, const std::string&)> onError);
-
-    std::string buildRoomEndpoint(const SeatReservation::RoomData& room,
-                                  const std::map<std::string, std::string>& options);
-};
-
+#ifdef __cplusplus
 }
+#endif
+
+#endif /* COLYSEUS_CLIENT_H */
