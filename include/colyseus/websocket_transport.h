@@ -4,6 +4,7 @@
 #include "colyseus/transport.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include <wslay/wslay.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,7 +35,7 @@ extern "C" {
         size_t buffer_size;
         size_t buffer_offset;
 
-        void* wslay_ctx;  /* wslay_event_context_ptr */
+        wslay_event_context_ptr wslay_ctx;  /* wslay_event_context_ptr */
         int socket_fd;
 
         /* Thread handle (platform specific) */
