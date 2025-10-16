@@ -1,78 +1,51 @@
-#pragma once
+#ifndef COLYSEUS_WEBSOCKET_TRANSPORT_H
+#define COLYSEUS_WEBSOCKET_TRANSPORT_H
+
 #include "colyseus/transport.h"
-#include <memory>
-#include <thread>
-#include <atomic>
-#include <queue>
-#include <mutex>
+#include <stdint.h>
+#include <stdbool.h>
 
-struct wslay_event_context;
-typedef struct wslay_event_context* wslay_event_context_ptr;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-namespace Colyseus {
+    /* WebSocket transport state */
+    typedef enum {
+        COLYSEUS_WS_DISCONNECTED,
+        COLYSEUS_WS_CONNECTING,
+        COLYSEUS_WS_HANDSHAKE_SENDING,
+        COLYSEUS_WS_HANDSHAKE_RECEIVING,
+        COLYSEUS_WS_CONNECTED,
+        COLYSEUS_WS_REMOTE_DISCONNECT
+    } colyseus_ws_state_t;
 
-enum class WebSocketState {
-    DISCONNECTED,
-    CONNECTING,
-    HANDSHAKE_SENDING,
-    HANDSHAKE_RECEIVING,
-    CONNECTED,
-    REMOTE_DISCONNECT
-};
+    /* WebSocket transport implementation data */
+    typedef struct {
+        colyseus_ws_state_t state;
+        bool running;
 
-class WebSocketTransport : public ITransport {
-public:
-    WebSocketTransport(const TransportEvents& events);
-    ~WebSocketTransport() override;
+        char* url;
+        char* url_host;
+        int url_port;
+        char* url_path;
 
-    // ITransport interface implementation
-    void connect(const std::string& url, const std::map<std::string, std::string>& options = {}) override;
-    void send(const std::vector<uint8_t>& data) override;
-    void sendUnreliable(const std::vector<uint8_t>& data) override;
-    void close(int code = 1000, const std::string& reason = "") override;
-    bool isOpen() const override;
+        char* client_key;
+        char* buffer;
+        size_t buffer_size;
+        size_t buffer_offset;
 
-private:
-    TransportEvents events_;
-    std::atomic<WebSocketState> state_;
-    std::atomic<bool> running_;
+        void* wslay_ctx;  /* wslay_event_context_ptr */
+        int socket_fd;
 
-    std::string url_;
-    std::string clientKey_;
-    std::string buffer_;
-    size_t bufferOffset_;
+        /* Thread handle (platform specific) */
+        void* tick_thread;
+    } colyseus_ws_transport_data_t;
 
-    wslay_event_context_ptr ctx_;
-    int socket_;
+    /* Create WebSocket transport (implements transport interface) */
+    colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transport_events_t* events);
 
-    std::unique_ptr<std::thread> tickThread_;
-    std::queue<std::vector<uint8_t>> sendQueue_;
-    std::mutex queueMutex_;
-
-    // Internal tick loop (runs in thread)
-    void tickLoop();
-    void tickOnce();
-
-    // wslay callbacks (static, call into instance methods)
-    static void onMsgRecvCallback(wslay_event_context_ptr ctx, const struct wslay_event_on_msg_recv_arg* arg, void* user_data);
-    static ssize_t recvCallback(wslay_event_context_ptr ctx, uint8_t* data, size_t len, int flags, void* user_data);
-    static ssize_t sendCallback(wslay_event_context_ptr ctx, const uint8_t* data, size_t len, int flags, void* user_data);
-    static int genmaskCallback(wslay_event_context_ptr ctx, uint8_t* buf, size_t len, void* user_data);
-
-    // Instance methods for callbacks
-    void handleMessageReceived(const uint8_t* data, size_t length, uint8_t opcode);
-    ssize_t socketRecv(uint8_t* data, size_t len, int* wouldBlock);
-    ssize_t socketSend(const uint8_t* data, size_t len, int* wouldBlock);
-
-    // Connection state machine
-    bool connectInit();
-    bool connectTick();
-    bool httpHandshakeInit();
-    bool httpHandshakeSend();
-    bool httpHandshakeReceive();
-
-    void socketClose();
-    void cleanupWslay();
-};
-
+#ifdef __cplusplus
 }
+#endif
+
+#endif /* COLYSEUS_WEBSOCKET_TRANSPORT_H */
