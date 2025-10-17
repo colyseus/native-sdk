@@ -84,18 +84,24 @@ char* colyseus_base64_encode(const char* data) {
     if (!data) return NULL;
 
     size_t in_len = strlen(data);
+    return colyseus_base64_encode_binary((const uint8_t*)data, in_len);
+}
+
+char* colyseus_base64_encode_binary(const uint8_t* data, size_t in_len) {
+    if (!data || in_len == 0) return NULL;
+
     size_t out_len = 4 * ((in_len + 2) / 3);
 
     char* result = malloc(out_len + 1);
     if (!result) return NULL;
 
-    const unsigned char* bytes = (const unsigned char*)data;
     size_t i = 0, j = 0;
     unsigned char char_array_3[3];
     unsigned char char_array_4[4];
 
+    size_t idx = 0;
     while (in_len--) {
-        char_array_3[i++] = *(bytes++);
+        char_array_3[i++] = data[idx++];
         if (i == 3) {
             char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
             char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
@@ -147,8 +153,8 @@ char* colyseus_create_accept_key(const char* client_key) {
 
     sdsfree(combined);
 
-    /* Base64 encode the hash */
-    char* result = colyseus_base64_encode((const char*)digest);
+    /* Base64 encode the hash - use binary version */
+    char* result = colyseus_base64_encode_binary(digest, 20);
 
     return result;
 }

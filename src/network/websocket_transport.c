@@ -28,6 +28,14 @@
     #define THREAD_CALL
 #endif
 
+#define WS_DEBUG 0
+
+#if WS_DEBUG
+#define WS_LOG(fmt, ...) fprintf(stderr, "[WS] " fmt "\n", ##__VA_ARGS__)
+#else
+#define WS_LOG(fmt, ...)
+#endif
+
 /* Forward declarations */
 static void ws_connect_impl(colyseus_transport_t* transport, const char* url);
 static void ws_send_impl(colyseus_transport_t* transport, const uint8_t* data, size_t length);
@@ -98,19 +106,24 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
 static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
+    WS_LOG("Connect called: %s", url);
+
     if (data->state != COLYSEUS_WS_DISCONNECTED) {
+        WS_LOG("Already connecting/connected, state=%d", data->state);
         return;
     }
 
     data->url = strdup(url);
 
     if (!ws_connect_init(data)) {
+        WS_LOG("Connect init failed");
         if (transport->events.on_error) {
             transport->events.on_error("Failed to initialize connection", transport->events.userdata);
         }
         return;
     }
 
+    WS_LOG("Socket initialized, starting state machine");
     data->state = COLYSEUS_WS_CONNECTING;
     data->running = true;
 
@@ -122,6 +135,8 @@ static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
     pthread_create(thread, NULL, ws_tick_thread_func, transport);
     data->tick_thread = thread;
 #endif
+
+    WS_LOG("Tick thread created");
 }
 
 static void ws_send_impl(colyseus_transport_t* transport, const uint8_t* data, size_t length) {
@@ -238,12 +253,14 @@ static void ws_tick_once(colyseus_transport_t* transport) {
     if (data->state == COLYSEUS_WS_CONNECTED) {
         int ret = wslay_event_recv(data->wslay_ctx);
         if (ret != 0) {
+            WS_LOG("wslay_event_recv error: %d", ret);
             ws_close_impl(transport, 1006, "Receive error");
             return;
         }
 
         ret = wslay_event_send(data->wslay_ctx);
         if (ret != 0) {
+            WS_LOG("wslay_event_send error: %d", ret);
             ws_close_impl(transport, 1006, "Send error");
             return;
         }
@@ -252,6 +269,7 @@ static void ws_tick_once(colyseus_transport_t* transport) {
     }
 
     if (data->state == COLYSEUS_WS_REMOTE_DISCONNECT) {
+        WS_LOG("Remote disconnect");
         uint16_t code = wslay_event_get_status_code_received(data->wslay_ctx);
         ws_close_impl(transport, code, "Remote disconnect");
         return;
@@ -260,17 +278,20 @@ static void ws_tick_once(colyseus_transport_t* transport) {
     /* State machine */
     if (data->state == COLYSEUS_WS_CONNECTING) {
         if (ws_connect_tick(data)) {
+            WS_LOG("TCP connected");
             data->state = COLYSEUS_WS_HANDSHAKE_SENDING;
             ws_http_handshake_init(data);
         }
     }
     else if (data->state == COLYSEUS_WS_HANDSHAKE_SENDING) {
         if (ws_http_handshake_send(data)) {
+            WS_LOG("Handshake sent");
             data->state = COLYSEUS_WS_HANDSHAKE_RECEIVING;
         }
     }
     else if (data->state == COLYSEUS_WS_HANDSHAKE_RECEIVING) {
         if (ws_http_handshake_receive(data)) {
+            WS_LOG("Handshake received, WS connected");
             data->state = COLYSEUS_WS_CONNECTED;
 
             /* Initialize wslay */
@@ -285,6 +306,8 @@ static void ws_tick_once(colyseus_transport_t* transport) {
             };
 
             wslay_event_context_client_init(&data->wslay_ctx, &callbacks, transport);
+
+            WS_LOG("Calling on_open callback");
 
             if (transport->events.on_open) {
                 transport->events.on_open(transport->events.userdata);
@@ -422,23 +445,50 @@ static bool ws_http_handshake_send(colyseus_ws_transport_data_t* data) {
 }
 
 static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data) {
-    /* Simplified - full implementation needs proper HTTP parsing */
     int would_block = 0;
     char buf[1024];
     ssize_t received = ws_socket_recv(data, (uint8_t*)buf, sizeof(buf) - 1, &would_block);
 
     if (received > 0) {
-        buf[received] = '\0';
-        strncat(data->buffer + data->buffer_offset, buf, data->buffer_size - data->buffer_offset - 1);
-        data->buffer_offset += received;
+        size_t space_left = data->buffer_size - data->buffer_offset;
+        size_t to_copy = (size_t)received < space_left ? (size_t)received : space_left;
+        memcpy(data->buffer + data->buffer_offset, buf, to_copy);
+        data->buffer_offset += to_copy;
     }
 
-    if (would_block || !strstr(data->buffer, "\r\n\r\n")) {
+    if (would_block) {
         return false;
     }
 
-    /* Verify Sec-WebSocket-Accept */
-    /* TODO: Implement proper verification using createAcceptKey */
+    // Look for end of HTTP headers
+    char* header_end = strstr((char*)data->buffer, "\r\n\r\n");
+    if (!header_end) {
+        return false;
+    }
+
+    // Check for HTTP 101
+    if (!strstr((char*)data->buffer, "HTTP/1.1 101")) {
+        fprintf(stderr, "WebSocket handshake failed\n");
+        return false;
+    }
+
+    // Calculate where headers end
+    size_t headers_length = (header_end - (char*)data->buffer) + 4; // +4 for \r\n\r\n
+
+    fprintf(stderr, "Headers length: %zu, total buffered: %zu\n", headers_length, data->buffer_offset);
+
+    // Check if there's extra data after headers (WebSocket frames that came with handshake)
+    if (data->buffer_offset > headers_length) {
+        size_t extra_data_len = data->buffer_offset - headers_length;
+        fprintf(stderr, "Found %zu bytes of data after handshake headers\n", extra_data_len);
+
+        // Move the extra data to the beginning of the buffer
+        // This data will be read by wslay on the next recv_callback
+        memmove(data->buffer, data->buffer + headers_length, extra_data_len);
+        data->buffer_offset = extra_data_len;
+    } else {
+        data->buffer_offset = 0;
+    }
 
     return true;
 }
@@ -448,11 +498,29 @@ static void ws_on_msg_recv_callback(wslay_event_context_ptr ctx, const struct ws
     colyseus_transport_t* transport = (colyseus_transport_t*)user_data;
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
+    WS_LOG("Message received: opcode=%d (%s), length=%zu",
+           arg->opcode,
+           arg->opcode == WSLAY_TEXT_FRAME ? "TEXT" :
+           arg->opcode == WSLAY_BINARY_FRAME ? "BINARY" :
+           arg->opcode == WSLAY_PING ? "PING" :
+           arg->opcode == WSLAY_PONG ? "PONG" : "OTHER",
+           arg->msg_length);
+
     if (wslay_is_ctrl_frame(arg->opcode)) {
         if (arg->opcode == WSLAY_CONNECTION_CLOSE) {
+            WS_LOG("Close frame received");
             data->state = COLYSEUS_WS_REMOTE_DISCONNECT;
         }
+        // wslay handles ping/pong automatically
     } else {
+        // Data frame
+        if (arg->msg_length > 0) {
+            WS_LOG("Data frame - first 4 bytes: %02x %02x %02x %02x",
+                   arg->msg[0],
+                   arg->msg_length > 1 ? arg->msg[1] : 0,
+                   arg->msg_length > 2 ? arg->msg[2] : 0,
+                   arg->msg_length > 3 ? arg->msg[3] : 0);
+        }
         if (transport->events.on_message) {
             transport->events.on_message(arg->msg, arg->msg_length, transport->events.userdata);
         }
@@ -463,8 +531,26 @@ static ssize_t ws_recv_callback(wslay_event_context_ptr ctx, uint8_t* buf, size_
     colyseus_transport_t* transport = (colyseus_transport_t*)user_data;
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
+    // Check if we have buffered data from handshake first
+    if (data->buffer_offset > 0) {
+        size_t to_copy = data->buffer_offset < len ? data->buffer_offset : len;
+        memcpy(buf, data->buffer, to_copy);
+
+        // Shift remaining buffer data
+        if (to_copy < data->buffer_offset) {
+            memmove(data->buffer, data->buffer + to_copy, data->buffer_offset - to_copy);
+        }
+        data->buffer_offset -= to_copy;
+
+        WS_LOG("wslay recv_callback: returned %zu bytes from buffer", to_copy);
+        return (ssize_t)to_copy;
+    }
+
+    // No buffered data, read from socket
     int would_block = 0;
     ssize_t ret = ws_socket_recv(data, buf, len, &would_block);
+
+    WS_LOG("wslay recv_callback: requested=%zu, received=%zd, would_block=%d", len, ret, would_block);
 
     if (would_block) {
         wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
@@ -472,6 +558,10 @@ static ssize_t ws_recv_callback(wslay_event_context_ptr ctx, uint8_t* buf, size_
     } else if (ret < 0) {
         wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
         return -1;
+    }
+
+    if (ret > 0) {
+        WS_LOG("wslay received %zd bytes from socket", ret);
     }
 
     return ret;

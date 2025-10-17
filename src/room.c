@@ -254,7 +254,9 @@ void colyseus_room_send_int(colyseus_room_t* room, int type, const uint8_t* mess
 
 /* Transport event handlers */
 static void room_on_transport_open(void* userdata) {
-    /* Connection established, wait for JOIN_ROOM */
+    // Connection established, wait for JOIN_ROOM from server
+    printf("Transport connected, waiting for JOIN_ROOM\n");
+    fflush(stdout);
 }
 
 static void room_on_transport_message(const uint8_t* data, size_t length, void* userdata) {
@@ -311,9 +313,79 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
 
         case COLYSEUS_PROTOCOL_ROOM_DATA:
         case COLYSEUS_PROTOCOL_ROOM_DATA_BYTES: {
-            /* TODO: Decode type and message properly */
-            const char* type = "unknown";
-            room_dispatch_message(room, type, data + offset, length - offset);
+            /* Decode message type and data */
+            if (length > offset) {
+                char type_str[256] = {0};
+
+                // Check first byte to determine type encoding
+                uint8_t first_byte = data[offset];
+
+                // MessagePack string formats:
+                // fixstr: 0xa0 - 0xbf (160-191)
+                // str8: 0xd9, str16: 0xda, str32: 0xdb
+                if ((first_byte >= 0xa0 && first_byte <= 0xbf) ||
+                    first_byte == 0xd9 || first_byte == 0xda || first_byte == 0xdb) {
+
+                    // String type (msgpack encoded)
+                    size_t str_len = 0;
+
+                    if (first_byte >= 0xa0 && first_byte <= 0xbf) {
+                        // fixstr: length is in lower 5 bits
+                        str_len = first_byte & 0x1f;
+                        offset++;
+                    } else if (first_byte == 0xd9) {
+                        // str8: next byte is length
+                        if (offset + 1 < length) {
+                            str_len = data[offset + 1];
+                            offset += 2;
+                        }
+                    } else if (first_byte == 0xda) {
+                        // str16: next 2 bytes are length (big-endian)
+                        if (offset + 2 < length) {
+                            str_len = (data[offset + 1] << 8) | data[offset + 2];
+                            offset += 3;
+                        }
+                    } else if (first_byte == 0xdb) {
+                        // str32: next 4 bytes are length (big-endian)
+                        if (offset + 4 < length) {
+                            str_len = (data[offset + 1] << 24) | (data[offset + 2] << 16) |
+                                      (data[offset + 3] << 8) | data[offset + 4];
+                            offset += 5;
+                        }
+                    }
+
+                    // Copy string type
+                    if (str_len > 0 && str_len < sizeof(type_str) && offset + str_len <= length) {
+                        memcpy(type_str, data + offset, str_len);
+                        type_str[str_len] = '\0';
+                        offset += str_len;
+                    }
+
+                } else if (first_byte < 0x80) {
+                    // Positive fixint (0-127) - numeric type
+                    snprintf(type_str, sizeof(type_str), "i%d", first_byte);
+                    offset++;
+
+                } else if (first_byte >= 0xe0) {
+                    // Negative fixint (-32 to -1)
+                    int8_t num = (int8_t)first_byte;
+                    snprintf(type_str, sizeof(type_str), "i%d", num);
+                    offset++;
+
+                } else {
+                    // Other msgpack types (uint8, uint16, int8, etc.)
+                    // For now, treat as numeric
+                    snprintf(type_str, sizeof(type_str), "i%d", first_byte);
+                    offset++;
+                }
+
+                // Dispatch the message with remaining data
+                if (strlen(type_str) > 0) {
+                    room_dispatch_message(room, type_str, data + offset, length - offset);
+                } else {
+                    fprintf(stderr, "Failed to decode message type\n");
+                }
+            }
             break;
         }
 

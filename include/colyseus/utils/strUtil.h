@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,6 +28,8 @@ extern "C" {
 
     /* Helper: Create accept key for WebSocket handshake */
     char* colyseus_create_accept_key(const char* client_key);
+
+    char* colyseus_base64_encode_binary(const uint8_t* data, size_t length);
 
 #ifdef __cplusplus
 }
