@@ -216,7 +216,7 @@ static void ws_destroy_impl(colyseus_transport_t* transport) {
     if (data) {
         free(data->url);
         free(data->url_host);
-        free(data->url_path);
+        sdsfree(data->url_path);
         free(data->client_key);
         free(data->buffer);
         free(data);
