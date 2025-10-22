@@ -344,21 +344,23 @@ static bool ws_connect_init(colyseus_ws_transport_data_t* data) {
     fcntl(data->socket_fd, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-    /* Resolve hostname */
-    struct hostent* server = gethostbyname(data->url_host);
-    if (!server) {
+    /* Resolve hostname using getaddrinfo (modern, alignment-safe) */
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", data->url_port);
+    
+    if (getaddrinfo(data->url_host, port_str, &hints, &result) != 0) {
         ws_socket_close(data);
         return false;
     }
 
     /* Connect */
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(data->url_port);
-    memcpy(&server_addr.sin_addr.s_addr, server->h_addr, server->h_length);
-
-    connect(data->socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    connect(data->socket_fd, result->ai_addr, result->ai_addrlen);
+    freeaddrinfo(result);
 
     return true;
 }
