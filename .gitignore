@@ -949,6 +949,15 @@ compile_commands.json
 CTestTestfile.cmake
 _deps
 
+##### Zig
+# Zig build output directory
+zig-out/
+# Zig build cache
+.zig-cache/
+# Zig package cache (if using package manager)
+.zigmod/
+deps.zig
+
 ##### C++
 # Prerequisites
 *.d

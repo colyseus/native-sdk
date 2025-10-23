@@ -1,4 +1,4 @@
-#include "colyseus/utils/StrUtil.h"
+#include "colyseus/utils/strUtil.h"
 #include "colyseus/utils/sha1_c.h"
 #include "sds.h"
 #include <stdlib.h>

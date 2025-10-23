@@ -22,24 +22,26 @@ extern "C" {
 
     /* WebSocket transport implementation data */
     typedef struct {
-        colyseus_ws_state_t state;
-        bool running;
-
+        /* Pointers first (8-byte aligned on 64-bit) */
         char* url;
         char* url_host;
-        int url_port;
         char* url_path;
-
         char* client_key;
         char* buffer;
+        wslay_event_context_ptr wslay_ctx;  /* wslay_event_context_ptr */
+        void* tick_thread;  /* Thread handle (platform specific) */
+
+        /* size_t fields (8 bytes on 64-bit) */
         size_t buffer_size;
         size_t buffer_offset;
 
-        wslay_event_context_ptr wslay_ctx;  /* wslay_event_context_ptr */
+        /* 4-byte fields */
+        colyseus_ws_state_t state;
+        int url_port;
         int socket_fd;
 
-        /* Thread handle (platform specific) */
-        void* tick_thread;
+        /* 1-byte field */
+        bool running;
     } colyseus_ws_transport_data_t;
 
     /* Create WebSocket transport (implements transport interface) */
