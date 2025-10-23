@@ -9,4 +9,4 @@
 	url = https://github.com/DaveGamble/cJSON.git
 [submodule "third_party/wslay"]
 	path = third_party/wslay
-	url = git@github.com:tatsuhiro-t/wslay.git
+	url = https://github.com/tatsuhiro-t/wslay.git
