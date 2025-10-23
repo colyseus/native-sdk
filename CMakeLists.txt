@@ -68,6 +68,8 @@ set(COLYSEUS_SOURCES
 set(THIRD_PARTY_SOURCES
         ${SDS_DIR}/sds.c
         ${CJSON_DIR}/cJSON.c
+        include/colyseus/auth/auth.h
+        src/auth/auth.c
 )
 
 # Build library

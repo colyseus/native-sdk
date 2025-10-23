@@ -57,6 +57,7 @@ colyseus_client_t* colyseus_client_create_with_transport(
     client->settings = settings;
     client->transport_factory = transport_factory;
     client->http = colyseus_http_create(settings);
+    client->auth = colyseus_auth_create(client->http);
 
     return client;
 }
@@ -65,11 +66,16 @@ void colyseus_client_free(colyseus_client_t* client) {
     if (!client) return;
 
     colyseus_http_free(client->http);
+    colyseus_auth_free(client->auth);
     free(client);
 }
 
 colyseus_http_t* colyseus_client_get_http(colyseus_client_t* client) {
     return client ? client->http : NULL;
+}
+
+colyseus_auth_t* colyseus_client_get_auth(colyseus_client_t* client) {
+    return client ? client->auth : NULL;
 }
 
 /* Matchmaking methods */
