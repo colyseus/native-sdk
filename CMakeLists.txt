@@ -25,21 +25,25 @@ option(BUILD_SHARED_LIBS "Build shared library" ON)
 # Find dependencies
 find_package(CURL REQUIRED)
 
-# wslay - assume it's in system or third_party
-# You may need to adjust this based on your setup
+# wslay
 find_library(WSLAY_LIBRARY NAMES wslay)
 find_path(WSLAY_INCLUDE_DIR wslay/wslay.h)
 
 if(NOT WSLAY_LIBRARY OR NOT WSLAY_INCLUDE_DIR)
-    message(STATUS "wslay not found in system, looking in third_party")
-    set(WSLAY_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/wslay/lib/includes)
-    # You may need to build wslay separately or add it as submodule
+    message(FATAL_ERROR "wslay not found. Please install wslay.")
 endif()
 
 # Third-party header-only libraries
 set(SDS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/sds)
 set(UTHASH_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/uthash/src)
 set(CJSON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cJSON)
+
+# Verify third-party directories exist
+foreach(dir ${SDS_DIR} ${UTHASH_DIR} ${CJSON_DIR})
+    if(NOT EXISTS ${dir})
+        message(FATAL_ERROR "Missing third-party dependency: ${dir}. Run 'git submodule update --init --recursive'")
+    endif()
+endforeach()
 
 include_directories(
         ${SDS_DIR}
@@ -55,6 +59,10 @@ set(COLYSEUS_SOURCES
         src/client.c
         src/room.c
 
+        # Auth
+        src/auth/auth.c
+        src/auth/secure_storage.c
+
         # Network
         src/network/http.c
         src/network/websocket_transport.c
@@ -68,8 +76,6 @@ set(COLYSEUS_SOURCES
 set(THIRD_PARTY_SOURCES
         ${SDS_DIR}/sds.c
         ${CJSON_DIR}/cJSON.c
-        include/colyseus/auth/auth.h
-        src/auth/auth.c
 )
 
 # Build library
@@ -106,12 +112,28 @@ target_link_libraries(colyseus
 )
 
 # Platform-specific libraries
-if(UNIX AND NOT APPLE)
-    target_link_libraries(colyseus PRIVATE m pthread)
+if(ANDROID)
+    # Android
+    find_library(log-lib log)
+    target_link_libraries(colyseus PRIVATE ${log-lib} android)
+elseif(UNIX AND NOT APPLE)
+    # Linux
+    target_link_libraries(colyseus PRIVATE m pthread dl)
 elseif(APPLE)
-    target_link_libraries(colyseus PRIVATE pthread)
+    # macOS, iOS, tvOS
+    target_link_libraries(colyseus PRIVATE
+            pthread
+            "-framework Security"
+            "-framework CoreFoundation"
+    )
 elseif(WIN32)
-    target_link_libraries(colyseus PRIVATE ws2_32)
+    # Windows
+    target_link_libraries(colyseus PRIVATE ws2_32 advapi32)
+elseif(EMSCRIPTEN)
+    # Web/WASM - no special libraries needed
+    message(STATUS "Building for Web/WASM, using fallback storage")
+else()
+    message(WARNING "Unknown platform, using fallback storage only")
 endif()
 
 # Compiler definitions
@@ -130,10 +152,9 @@ set_target_properties(colyseus PROPERTIES
 # Installation
 install(TARGETS colyseus
         EXPORT colyseus-targets
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin
 )
 
 install(DIRECTORY include/colyseus
@@ -141,51 +162,15 @@ install(DIRECTORY include/colyseus
         FILES_MATCHING PATTERN "*.h"
 )
 
-# Export targets
-install(EXPORT colyseus-targets
-        FILE colyseus-targets.cmake
-        NAMESPACE colyseus::
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/colyseus
-)
-
-# Create config file
-include(CMakePackageConfigHelpers)
-
-configure_package_config_file(
-        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/colyseus-config.cmake.in
-        ${CMAKE_CURRENT_BINARY_DIR}/colyseus-config.cmake
-        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/colyseus
-)
-
-write_basic_package_version_file(
-        ${CMAKE_CURRENT_BINARY_DIR}/colyseus-config-version.cmake
-        VERSION ${PROJECT_VERSION}
-        COMPATIBILITY SameMajorVersion
-)
-
-install(FILES
-        ${CMAKE_CURRENT_BINARY_DIR}/colyseus-config.cmake
-        ${CMAKE_CURRENT_BINARY_DIR}/colyseus-config-version.cmake
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/colyseus
-)
-
 # Examples
-if(BUILD_EXAMPLES)
-    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples)
-        add_subdirectory(examples)
-    else()
-        message(STATUS "Examples directory not found, skipping")
-    endif()
+if(BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples)
+    add_subdirectory(examples)
 endif()
 
 # Tests
-if(BUILD_TESTS)
-    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-        enable_testing()
-        add_subdirectory(tests)
-    else()
-        message(STATUS "Tests directory not found, skipping")
-    endif()
+if(BUILD_TESTS AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    enable_testing()
+    add_subdirectory(tests)
 endif()
 
 # Print summary
@@ -195,6 +180,5 @@ message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Shared libs: ${BUILD_SHARED_LIBS}")
 message(STATUS "  C Compiler: ${CMAKE_C_COMPILER}")
-message(STATUS "  C Standard: ${CMAKE_C_STANDARD}")
 message(STATUS "  Install prefix: ${CMAKE_INSTALL_PREFIX}")
 message(STATUS "")
