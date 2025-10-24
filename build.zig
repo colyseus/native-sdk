@@ -120,6 +120,11 @@ pub fn build(b: *std.Build) void {
             // Utils
             "src/utils/strUtil.c",
             "src/utils/sha1_c.c",
+
+            // Auth
+            "src/auth/auth.c",
+            "src/auth/secure_storage.c",
+
             // Third-party sources
             "third_party/sds/sds.c",
             "third_party/cJSON/cJSON.c",
@@ -143,11 +148,20 @@ pub fn build(b: *std.Build) void {
     } else if (target.result.os.tag == .macos) {
         colyseus.linkSystemLibrary("curl");
         colyseus.linkSystemLibrary("pthread");
+        colyseus.linkFramework("CoreFoundation");
+        colyseus.linkFramework("Security");
+    } else if (target.result.os.tag == .ios) {
+        colyseus.linkSystemLibrary("curl");
+        colyseus.linkFramework("CoreFoundation");
+        colyseus.linkFramework("Security");
+    } else if (target.result.os.tag == .tvos) {
+        colyseus.linkSystemLibrary("curl");
+        colyseus.linkFramework("CoreFoundation");
+        colyseus.linkFramework("Security");
     } else if (target.result.os.tag == .windows) {
         colyseus.linkSystemLibrary("curl");
         colyseus.linkSystemLibrary("ws2_32");
     } else {
-        // Fallback for other platforms
         colyseus.linkSystemLibrary("curl");
     }
 
@@ -164,6 +178,8 @@ pub fn build(b: *std.Build) void {
     const install_websocket_h = b.addInstallHeaderFile(b.path("include/colyseus/websocket_transport.h"), "colyseus/websocket_transport.h");
     const install_sha1_h = b.addInstallHeaderFile(b.path("include/colyseus/utils/sha1_c.h"), "colyseus/utils/sha1_c.h");
     const install_strutil_h = b.addInstallHeaderFile(b.path("include/colyseus/utils/strUtil.h"), "colyseus/utils/strUtil.h");
+    const install_auth_auth_h = b.addInstallHeaderFile(b.path("include/colyseus/auth/auth.h"), "colyseus/auth/auth.h");
+    const install_auth_secure_storage_h = b.addInstallHeaderFile(b.path("include/colyseus/auth/secure_storage.h"), "colyseus/auth/secure_storage.h");
 
     b.getInstallStep().dependOn(&install_client_h.step);
     b.getInstallStep().dependOn(&install_http_h.step);
@@ -174,6 +190,8 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_websocket_h.step);
     b.getInstallStep().dependOn(&install_sha1_h.step);
     b.getInstallStep().dependOn(&install_strutil_h.step);
+    b.getInstallStep().dependOn(&install_auth_auth_h.step);
+    b.getInstallStep().dependOn(&install_auth_secure_storage_h.step);
 
     // ========================================================================
     // Build examples

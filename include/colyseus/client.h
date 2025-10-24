@@ -8,6 +8,8 @@
 #include "colyseus/room.h"
 #include <stdbool.h>
 
+#include "auth/auth.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -17,6 +19,7 @@ typedef struct {
     colyseus_settings_t* settings;
     colyseus_transport_factory_fn transport_factory;
     colyseus_http_t* http;
+    colyseus_auth_t* auth;
 } colyseus_client_t;
 
 /* Matchmaking callbacks */
@@ -33,6 +36,9 @@ void colyseus_client_free(colyseus_client_t* client);
 
 /* Get HTTP client */
 colyseus_http_t* colyseus_client_get_http(colyseus_client_t* client);
+
+/* Get Auth client */
+colyseus_auth_t* colyseus_client_get_auth(colyseus_client_t* client);
 
 /* Matchmaking methods */
 void colyseus_client_join_or_create(
