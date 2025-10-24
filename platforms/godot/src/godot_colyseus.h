@@ -33,6 +33,20 @@ typedef struct {
     uint8_t data[VARIANT_SIZE];
 } Variant;
 
+// Enums.
+typedef enum
+{
+    PROPERTY_HINT_NONE = 0,
+} PropertyHint;
+
+typedef enum
+{
+    PROPERTY_USAGE_NONE = 0,
+    PROPERTY_USAGE_STORAGE = 2,
+    PROPERTY_USAGE_EDITOR = 4,
+    PROPERTY_USAGE_DEFAULT = PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR,
+} PropertyUsageFlags;
+
 // Forward declarations
 typedef struct ColyseusClient ColyseusClient;
 typedef struct ColyseusRoom ColyseusRoom;

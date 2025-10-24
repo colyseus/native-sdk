@@ -20,40 +20,42 @@ GDExtensionClassLibraryPtr class_library = NULL;
 struct Constructors constructors = {0};
 struct Destructors destructors = {0};
 
-// String name cache
-StringName string_name_joined;
-StringName string_name_state_changed;
-StringName string_name_message_received;
-StringName string_name_error;
-StringName string_name_left;
+GDExtensionPropertyInfo make_property_full(
+    GDExtensionVariantType type,
+    const char *name,
+    uint32_t hint,
+    const char *hint_string,
+    const char *class_name,
+    uint32_t usage_flags)
+{
 
-static void initialize_string_names(void) {
-    // Create string names for signals using C strings directly
-    constructors.string_name_new_with_latin1_chars(&string_name_joined, "joined", false);
-    constructors.string_name_new_with_latin1_chars(&string_name_state_changed, "state_changed", false);
-    constructors.string_name_new_with_latin1_chars(&string_name_message_received, "message_received", false);
-    constructors.string_name_new_with_latin1_chars(&string_name_error, "error", false);
-    constructors.string_name_new_with_latin1_chars(&string_name_left, "left", false);
+    StringName *prop_name = api.mem_alloc(sizeof(StringName));
+    constructors.string_name_new_with_latin1_chars(prop_name, name, false);
+    String *prop_hint_string = api.mem_alloc(sizeof(String));
+    constructors.string_new_with_utf8_chars(prop_hint_string, hint_string);
+    StringName *prop_class_name = api.mem_alloc(sizeof(StringName));
+    constructors.string_name_new_with_latin1_chars(prop_class_name, class_name, false);
+
+    GDExtensionPropertyInfo info = {
+        .name = prop_name,
+        .type = type,
+        .hint = hint,
+        .hint_string = prop_hint_string,
+        .class_name = prop_class_name,
+        .usage = usage_flags,
+    };
+
+    return info;
 }
 
 // Helper function to create property info
-static GDExtensionPropertyInfo make_property(GDExtensionVariantType type, const char *name) {
-    StringName *prop_name = NULL;
-    if (name != NULL) {
-        prop_name = malloc(sizeof(StringName));
-        constructors.string_name_new_with_latin1_chars(prop_name, name, false);
-    }
-    
-    GDExtensionPropertyInfo info = {
-        .type = type,
-        .name = prop_name,
-        .class_name = NULL,
-        .hint = 0,
-        .hint_string = NULL,
-        .usage = 6 // PROPERTY_USAGE_DEFAULT
-    };
-    return info;
+GDExtensionPropertyInfo make_property(
+    GDExtensionVariantType type,
+    const char *name)
+{
+    return make_property_full(type, name, PROPERTY_HINT_NONE, "", "", PROPERTY_USAGE_DEFAULT);
 }
+
 
 // Helper function to destruct property info
 void destruct_property(GDExtensionPropertyInfo *info)
@@ -283,6 +285,73 @@ static void bind_method_2_no_ret(
     destruct_property(&args_info[1]);
 }
 
+// Signal binding helpers
+static void bind_signal_0(
+    const char *class_name,
+    const char *signal_name)
+{
+    StringName class_string_name;
+    constructors.string_name_new_with_latin1_chars(&class_string_name, class_name, false);
+    StringName signal_string_name;
+    constructors.string_name_new_with_latin1_chars(&signal_string_name, signal_name, false);
+
+    api.classdb_register_extension_class_signal(class_library, &class_string_name, &signal_string_name, NULL, 0);
+
+    // Destruct things.
+    destructors.string_name_destructor(&class_string_name);
+    destructors.string_name_destructor(&signal_string_name);
+}
+
+static void bind_signal_1(
+    const char *class_name,
+    const char *signal_name,
+    const char *arg1_name,
+    GDExtensionVariantType arg1_type)
+{
+    StringName class_string_name;
+    constructors.string_name_new_with_latin1_chars(&class_string_name, class_name, false);
+    StringName signal_string_name;
+    constructors.string_name_new_with_latin1_chars(&signal_string_name, signal_name, false);
+
+    GDExtensionPropertyInfo args_info[] = {
+        make_property(arg1_type, arg1_name),
+    };
+
+    api.classdb_register_extension_class_signal(class_library, &class_string_name, &signal_string_name, args_info, 1);
+
+    // Destruct things.
+    destructors.string_name_destructor(&class_string_name);
+    destructors.string_name_destructor(&signal_string_name);
+    destruct_property(&args_info[0]);
+}
+
+static void bind_signal_2(
+    const char *class_name,
+    const char *signal_name,
+    const char *arg1_name,
+    GDExtensionVariantType arg1_type,
+    const char *arg2_name,
+    GDExtensionVariantType arg2_type)
+{
+    StringName class_string_name;
+    constructors.string_name_new_with_latin1_chars(&class_string_name, class_name, false);
+    StringName signal_string_name;
+    constructors.string_name_new_with_latin1_chars(&signal_string_name, signal_name, false);
+
+    GDExtensionPropertyInfo args_info[] = {
+        make_property(arg1_type, arg1_name),
+        make_property(arg2_type, arg2_name),
+    };
+
+    api.classdb_register_extension_class_signal(class_library, &class_string_name, &signal_string_name, args_info, 2);
+
+    // Destruct things.
+    destructors.string_name_destructor(&class_string_name);
+    destructors.string_name_destructor(&signal_string_name);
+    destruct_property(&args_info[0]);
+    destruct_property(&args_info[1]);
+}
+
 static void register_colyseus_client(void) {
     printf("[ColyseusClient] Starting registration\n");
     fflush(stdout);
@@ -337,13 +406,13 @@ static void register_colyseus_client(void) {
     printf("[ColyseusClient] Registering connect_to method\n");
     fflush(stdout);
 
-    // bind_method_1_no_ret(
-    //     "ColyseusClient",
-    //     "connect_to",
-    //     gdext_colyseus_client_connect_to,
-    //     "endpoint",
-    //     GDEXTENSION_VARIANT_TYPE_STRING
-    // );
+    bind_method_1_no_ret(
+        "ColyseusClient",
+        "connect_to",
+        gdext_colyseus_client_connect_to,
+        "endpoint",
+        GDEXTENSION_VARIANT_TYPE_STRING
+    );
 
     printf("[ColyseusClient] connect_to method registered successfully\n");
     fflush(stdout);
@@ -400,37 +469,12 @@ static void register_colyseus_room(void) {
 
     api.classdb_register_extension_class2(class_library, &class_name, &parent_class_name, &class_info);
 
-    // Register signals
-    GDExtensionPropertyInfo signal_params[2];
-
-    // joined signal
-    api.classdb_register_extension_class_signal(class_library, &class_name, &string_name_joined, NULL, 0);
-
-    // state_changed signal
-    api.classdb_register_extension_class_signal(class_library, &class_name, &string_name_state_changed, NULL, 0);
-
-    // message_received signal (data: PackedByteArray)
-    memset(signal_params, 0, sizeof(signal_params));
-    signal_params[0].type = GDEXTENSION_VARIANT_TYPE_PACKED_BYTE_ARRAY;
-    StringName signal_param_data;
-    constructors.string_name_new_with_latin1_chars(&signal_param_data, "data", false);
-    signal_params[0].name = &signal_param_data;
-    api.classdb_register_extension_class_signal(class_library, &class_name, &string_name_message_received, signal_params, 1);
-
-    // error signal (code: int, message: String)
-    memset(signal_params, 0, sizeof(signal_params));
-    signal_params[0].type = GDEXTENSION_VARIANT_TYPE_INT;
-    StringName signal_param_code;
-    constructors.string_name_new_with_latin1_chars(&signal_param_code, "code", false);
-    signal_params[0].name = &signal_param_code;
-    signal_params[1].type = GDEXTENSION_VARIANT_TYPE_STRING;
-    StringName signal_param_message;
-    constructors.string_name_new_with_latin1_chars(&signal_param_message, "message", false);
-    signal_params[1].name = &signal_param_message;
-    api.classdb_register_extension_class_signal(class_library, &class_name, &string_name_error, signal_params, 2);
-
-    // left signal (code: int, reason: String)
-    api.classdb_register_extension_class_signal(class_library, &class_name, &string_name_left, signal_params, 2);
+    // Register signals using helper functions
+    bind_signal_0("ColyseusRoom", "joined");
+    bind_signal_0("ColyseusRoom", "state_changed");
+    bind_signal_1("ColyseusRoom", "message_received", "data", GDEXTENSION_VARIANT_TYPE_PACKED_BYTE_ARRAY);
+    bind_signal_2("ColyseusRoom", "error", "code", GDEXTENSION_VARIANT_TYPE_INT, "message", GDEXTENSION_VARIANT_TYPE_STRING);
+    bind_signal_2("ColyseusRoom", "left", "code", GDEXTENSION_VARIANT_TYPE_INT, "reason", GDEXTENSION_VARIANT_TYPE_STRING);
 
     // Register methods using generic helpers
     
@@ -495,7 +539,6 @@ static void colyseus_initialize(void *userdata, GDExtensionInitializationLevel p
         return;
     }
     
-    initialize_string_names();
     register_colyseus_client();
     register_colyseus_room();
 }
@@ -506,12 +549,6 @@ static void colyseus_deinitialize(void *userdata, GDExtensionInitializationLevel
         return;
     }
     
-    // Cleanup string names (no need to free since they're stack-allocated)
-    destructors.string_name_destructor(&string_name_joined);
-    destructors.string_name_destructor(&string_name_state_changed);
-    destructors.string_name_destructor(&string_name_message_received);
-    destructors.string_name_destructor(&string_name_error);
-    destructors.string_name_destructor(&string_name_left);
 }
 
 GDExtensionBool GDE_EXPORT colyseus_sdk_init(
