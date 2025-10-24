@@ -2,10 +2,7 @@
 #include <colyseus/room.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct {
-    colyseus_room_t* native_room;
-} ColyseusRoomWrapper;
+#include <stdio.h>
 
 // Helper function to create a Godot String from a C string
 static void string_from_c_str(String *p_dest, const char *p_src) {
@@ -21,11 +18,15 @@ GDExtensionObjectPtr gdext_colyseus_room_constructor(void* p_class_userdata) {
     
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)malloc(sizeof(ColyseusRoomWrapper));
     wrapper->native_room = NULL; // Will be set when joining
+    wrapper->godot_object = NULL; // Will be set when returned from join_or_create
     return (GDExtensionObjectPtr)wrapper;
 }
 
 void gdext_colyseus_room_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
     (void)p_class_userdata;
+    
+    printf("[ColyseusRoom] Destructor called for instance: %p\n", p_instance);
+    fflush(stdout);
     
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
     if (wrapper) {
@@ -34,6 +35,21 @@ void gdext_colyseus_room_destructor(void* p_class_userdata, GDExtensionClassInst
         }
         free(wrapper);
     }
+}
+
+// Reference counting for RefCounted base class
+void gdext_colyseus_room_reference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
+    (void)p_class_userdata;
+    (void)p_instance;
+    printf("[ColyseusRoom] Reference called\n");
+    fflush(stdout);
+}
+
+void gdext_colyseus_room_unreference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
+    (void)p_class_userdata;
+    (void)p_instance;
+    printf("[ColyseusRoom] Unreference called\n");
+    fflush(stdout);
 }
 
 void gdext_colyseus_room_send_message(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {

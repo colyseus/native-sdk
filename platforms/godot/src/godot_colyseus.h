@@ -58,6 +58,7 @@ struct Constructors
     GDExtensionInterfaceStringNewWithUtf8Chars string_new_with_utf8_chars;
     GDExtensionVariantFromTypeConstructorFunc variant_from_string_constructor;
     GDExtensionVariantFromTypeConstructorFunc variant_from_bool_constructor;
+    GDExtensionVariantFromTypeConstructorFunc variant_from_object_constructor;
     GDExtensionTypeFromVariantConstructorFunc string_from_variant_constructor;
 };
 
@@ -81,10 +82,12 @@ typedef struct {
     GDExtensionInterfaceClassdbConstructObject classdb_construct_object;
     GDExtensionInterfaceObjectSetInstance object_set_instance;
     GDExtensionInterfaceObjectSetInstanceBinding object_set_instance_binding;
+    GDExtensionInterfaceObjectGetInstanceBinding object_get_instance_binding;
     GDExtensionInterfaceMemAlloc mem_alloc;
     GDExtensionInterfaceMemFree mem_free;
     GDExtensionInterfaceVariantGetPtrDestructor variant_get_ptr_destructor;
     GDExtensionInterfaceStringNewWithUtf8CharsAndLen string_new_with_utf8_chars_and_len;
+    GDExtensionInterfaceStringToUtf8Chars string_to_utf8_chars;
 } GDExtensionInterface;
 
 // GDExtension interface globals
@@ -96,10 +99,20 @@ typedef struct ColyseusClientWrapper {
     colyseus_client_t* native_client;
 } ColyseusClientWrapper;
 
+// ColyseusRoomWrapper type (forward declaration)
+typedef struct {
+    colyseus_room_t* native_room;
+    GDExtensionObjectPtr godot_object;
+} ColyseusRoomWrapper;
+
 // ColyseusClient methods
 GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata);
 void gdext_colyseus_client_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
+void gdext_colyseus_client_reference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
+void gdext_colyseus_client_unreference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
 void gdext_colyseus_client_connect_to(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_client_join_or_create(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 
 // Simple getter (reference implementation style)
 const char* gdext_colyseus_client_get_endpoint(const ColyseusClientWrapper* self);
@@ -110,6 +123,8 @@ void gdext_colyseus_client_get_endpoint_wrapper(void* p_method_userdata, GDExten
 // ColyseusRoom methods
 GDExtensionObjectPtr gdext_colyseus_room_constructor(void* p_class_userdata);
 void gdext_colyseus_room_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
+void gdext_colyseus_room_reference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
+void gdext_colyseus_room_unreference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
 void gdext_colyseus_room_send_message(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 void gdext_colyseus_room_send_message_int(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 void gdext_colyseus_room_leave(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);

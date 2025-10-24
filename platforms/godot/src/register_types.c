@@ -236,6 +236,67 @@ static void bind_method_1_no_ret(
     destruct_property(&args_info[0]);
 }
 
+// 1 argument, with return
+static void call_1_arg_with_ret(void *method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr *p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError *r_error)
+{
+    void (*function)(void *, GDExtensionClassInstancePtr, const GDExtensionConstVariantPtr *, GDExtensionInt, GDExtensionVariantPtr, GDExtensionCallError *) = method_userdata;
+    function(method_userdata, p_instance, p_args, p_argument_count, r_return, r_error);
+}
+
+static void ptrcall_1_arg_with_ret(void *method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr *p_args, GDExtensionTypePtr r_ret)
+{
+    void (*function)(void *, GDExtensionClassInstancePtr, const GDExtensionConstTypePtr *, GDExtensionTypePtr) = method_userdata;
+    function(method_userdata, p_instance, p_args, r_ret);
+}
+
+// Generic method binding: 1 argument, with return
+static void bind_method_1_with_ret(
+    const char *class_name,
+    const char *method_name,
+    void *function,
+    const char *arg1_name,
+    GDExtensionVariantType arg1_type,
+    GDExtensionVariantType return_type)
+{
+    StringName method_name_string;
+    constructors.string_name_new_with_latin1_chars(&method_name_string, method_name, false);
+
+    GDExtensionPropertyInfo args_info[] = {
+        make_property(arg1_type, arg1_name),
+    };
+    GDExtensionClassMethodArgumentMetadata args_metadata[] = {
+        GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+    };
+
+    GDExtensionPropertyInfo return_info = make_property(return_type, "");
+
+    GDExtensionClassMethodInfo method_info = {
+        .name = &method_name_string,
+        .method_userdata = function,
+        .call_func = call_1_arg_with_ret,
+        .ptrcall_func = ptrcall_1_arg_with_ret,
+        .method_flags = GDEXTENSION_METHOD_FLAG_NORMAL,
+        .has_return_value = true,
+        .return_value_info = &return_info,
+        .return_value_metadata = GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+        .argument_count = 1,
+        .arguments_info = args_info,
+        .arguments_metadata = args_metadata,
+        .default_argument_count = 0,
+        .default_arguments = NULL
+    };
+
+    StringName class_name_string;
+    constructors.string_name_new_with_latin1_chars(&class_name_string, class_name, false);
+
+    api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
+
+    destructors.string_name_destructor(&method_name_string);
+    destructors.string_name_destructor(&class_name_string);
+    destruct_property(&args_info[0]);
+    destruct_property(&return_info);
+}
+
 // Generic method binding: 2 arguments, no return
 static void bind_method_2_no_ret(
     const char *class_name,
@@ -369,7 +430,7 @@ static void register_colyseus_client(void) {
         .validate_property_func = NULL,
         .notification_func = NULL,
         .to_string_func = NULL,
-        .reference_func = NULL,
+        .reference_func = NULL,  // Let Godot handle RefCounted reference counting
         .unreference_func = NULL,
         .create_instance_func = gdext_colyseus_client_constructor,
         .free_instance_func = gdext_colyseus_client_destructor,
@@ -423,11 +484,58 @@ static void register_colyseus_client(void) {
     bind_method_0_with_ret(
         "ColyseusClient",
         "get_endpoint",
-        gdext_colyseus_client_get_endpoint,
+        gdext_colyseus_client_get_endpoint_wrapper,
         GDEXTENSION_VARIANT_TYPE_STRING
     );
 
     printf("[ColyseusClient] get_endpoint method registered successfully\n");
+    fflush(stdout);
+
+    printf("[ColyseusClient] Registering join_or_create method\n");
+    fflush(stdout);
+
+    // Manual registration for join_or_create (needs separate call/ptrcall functions)
+    {
+        StringName method_name_string;
+        constructors.string_name_new_with_latin1_chars(&method_name_string, "join_or_create", false);
+
+        GDExtensionPropertyInfo args_info[] = {
+            make_property(GDEXTENSION_VARIANT_TYPE_STRING, "room_name"),
+        };
+        GDExtensionClassMethodArgumentMetadata args_metadata[] = {
+            GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+        };
+
+        GDExtensionPropertyInfo return_info = make_property(GDEXTENSION_VARIANT_TYPE_OBJECT, "");
+
+        GDExtensionClassMethodInfo method_info = {
+            .name = &method_name_string,
+            .method_userdata = NULL,  // Not used since we provide direct function pointers
+            .call_func = (GDExtensionClassMethodCall)gdext_colyseus_client_join_or_create,
+            .ptrcall_func = (GDExtensionClassMethodPtrCall)gdext_colyseus_client_join_or_create_ptrcall,
+            .method_flags = GDEXTENSION_METHOD_FLAG_NORMAL,
+            .has_return_value = true,
+            .return_value_info = &return_info,
+            .return_value_metadata = GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+            .argument_count = 1,
+            .arguments_info = args_info,
+            .arguments_metadata = args_metadata,
+            .default_argument_count = 0,
+            .default_arguments = NULL
+        };
+
+        StringName class_name_string;
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusClient", false);
+
+        api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
+
+        destructors.string_name_destructor(&method_name_string);
+        destructors.string_name_destructor(&class_name_string);
+        destruct_property(&args_info[0]);
+        destruct_property(&return_info);
+    }
+
+    printf("[ColyseusClient] join_or_create method registered successfully\n");
     fflush(stdout);
 
     printf("[ColyseusClient] Registration complete\n");
@@ -435,6 +543,9 @@ static void register_colyseus_client(void) {
 }
 
 static void register_colyseus_room(void) {
+    printf("[ColyseusRoom] Starting registration\n");
+    fflush(stdout);
+    
     GDExtensionClassCreationInfo2 class_info = {
         .is_virtual = false,
         .is_abstract = false,
@@ -448,7 +559,7 @@ static void register_colyseus_room(void) {
         .validate_property_func = NULL,
         .notification_func = NULL,
         .to_string_func = NULL,
-        .reference_func = NULL,
+        .reference_func = NULL,  // Let Godot handle RefCounted reference counting
         .unreference_func = NULL,
         .create_instance_func = gdext_colyseus_room_constructor,
         .free_instance_func = gdext_colyseus_room_destructor,
@@ -565,10 +676,12 @@ GDExtensionBool GDE_EXPORT colyseus_sdk_init(
     api.classdb_construct_object = (GDExtensionInterfaceClassdbConstructObject)p_get_proc_address("classdb_construct_object");
     api.object_set_instance = (GDExtensionInterfaceObjectSetInstance)p_get_proc_address("object_set_instance");
     api.object_set_instance_binding = (GDExtensionInterfaceObjectSetInstanceBinding)p_get_proc_address("object_set_instance_binding");
+    api.object_get_instance_binding = (GDExtensionInterfaceObjectGetInstanceBinding)p_get_proc_address("object_get_instance_binding");
     api.mem_alloc = (GDExtensionInterfaceMemAlloc)p_get_proc_address("mem_alloc");
     api.mem_free = (GDExtensionInterfaceMemFree)p_get_proc_address("mem_free");
     api.variant_get_ptr_destructor = (GDExtensionInterfaceVariantGetPtrDestructor)p_get_proc_address("variant_get_ptr_destructor");
     api.string_new_with_utf8_chars_and_len = (GDExtensionInterfaceStringNewWithUtf8CharsAndLen)p_get_proc_address("string_new_with_utf8_chars_and_len");
+    api.string_to_utf8_chars = (GDExtensionInterfaceStringToUtf8Chars)p_get_proc_address("string_to_utf8_chars");
 
     // Get variant from type constructor function
     GDExtensionInterfaceGetVariantFromTypeConstructor get_variant_from_type_constructor = 
@@ -581,6 +694,7 @@ GDExtensionBool GDE_EXPORT colyseus_sdk_init(
     constructors.string_new_with_utf8_chars = (GDExtensionInterfaceStringNewWithUtf8Chars)p_get_proc_address("string_new_with_utf8_chars");
     constructors.variant_from_string_constructor = get_variant_from_type_constructor(GDEXTENSION_VARIANT_TYPE_STRING);
     constructors.variant_from_bool_constructor = get_variant_from_type_constructor(GDEXTENSION_VARIANT_TYPE_BOOL);
+    constructors.variant_from_object_constructor = get_variant_from_type_constructor(GDEXTENSION_VARIANT_TYPE_OBJECT);
     constructors.string_from_variant_constructor = get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_STRING);
 
     // Destructors.
