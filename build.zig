@@ -194,46 +194,79 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_auth_secure_storage_h.step);
 
     // ========================================================================
+    // Helper function to build examples
+    // ========================================================================
+    const ExampleConfig = struct {
+        name: []const u8,
+        source_file: []const u8,
+        run_step_name: []const u8,
+        run_step_desc: []const u8,
+    };
+
+    const buildExample = struct {
+        fn build(
+            builder: *std.Build,
+            config: ExampleConfig,
+            tgt: std.Build.ResolvedTarget,
+            opt: std.builtin.OptimizeMode,
+            colyseus_lib: *std.Build.Step.Compile,
+            wslay_version_header: *std.Build.Step.ConfigHeader,
+        ) void {
+            const example_module = builder.createModule(.{
+                .target = tgt,
+                .optimize = opt,
+            });
+
+            const example = builder.addExecutable(.{
+                .name = config.name,
+                .root_module = example_module,
+            });
+
+            example.linkLibC();
+            example.addCSourceFile(.{
+                .file = builder.path(config.source_file),
+                .flags = &.{
+                    "-Wall",
+                    "-Wextra",
+                    "-std=c11",
+                },
+            });
+
+            example.addIncludePath(builder.path("include"));
+            example.addIncludePath(builder.path("third_party/uthash/src"));
+            example.addIncludePath(builder.path("third_party/sds"));
+            example.addIncludePath(builder.path("third_party/cJSON"));
+            example.addIncludePath(builder.path("third_party/wslay/lib/includes"));
+            example.addIncludePath(wslay_version_header.getOutput().dirname().dirname());
+            example.linkLibrary(colyseus_lib);
+
+            builder.installArtifact(example);
+
+            const run_example = builder.addRunArtifact(example);
+            run_example.step.dependOn(builder.getInstallStep());
+
+            const run_step = builder.step(config.run_step_name, config.run_step_desc);
+            run_step.dependOn(&run_example.step);
+        }
+    }.build;
+
+    // ========================================================================
     // Build examples
     // ========================================================================
     if (build_examples) {
-        const simple_example_module = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-        });
-
-        const simple_example = b.addExecutable(.{
+        buildExample(b, .{
             .name = "simple_example",
-            .root_module = simple_example_module,
-        });
+            .source_file = "examples/simple_example.c",
+            .run_step_name = "run-example",
+            .run_step_desc = "Run the simple example",
+        }, target, optimize, colyseus, wslay_version_h);
 
-        simple_example.linkLibC();
-        simple_example.addCSourceFile(.{
-            .file = b.path("examples/simple_example.c"),
-            .flags = &.{
-                "-Wall",
-                "-Wextra",
-                "-std=c11",
-            },
-        });
-
-        simple_example.addIncludePath(b.path("include"));
-        simple_example.addIncludePath(b.path("third_party/uthash/src"));
-        simple_example.addIncludePath(b.path("third_party/sds"));
-        simple_example.addIncludePath(b.path("third_party/cJSON"));
-        simple_example.addIncludePath(b.path("third_party/wslay/lib/includes"));
-        simple_example.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
-        simple_example.linkLibrary(colyseus);
-
-        // Install the example
-        b.installArtifact(simple_example);
-
-        // Create a run step for the example
-        const run_example = b.addRunArtifact(simple_example);
-        run_example.step.dependOn(b.getInstallStep());
-
-        const run_step = b.step("run-example", "Run the simple example");
-        run_step.dependOn(&run_example.step);
+        buildExample(b, .{
+            .name = "auth_example",
+            .source_file = "examples/auth_example.c",
+            .run_step_name = "run-auth-example",
+            .run_step_desc = "Run the auth example",
+        }, target, optimize, colyseus, wslay_version_h);
     }
 
     // ========================================================================
