@@ -98,9 +98,20 @@ void colyseus_room_on_message_str(colyseus_room_t* room, const char* type, colys
 void colyseus_room_on_message_int(colyseus_room_t* room, int type, colyseus_room_on_message_fn callback, void* userdata);
 void colyseus_room_on_message_any(colyseus_room_t* room, colyseus_room_on_message_fn callback, void* userdata);
 
+/* Convenience macros */
+#define colyseus_room_on_message(room, type, callback, userdata) \
+colyseus_room_on_message_str(room, type, callback, userdata)
+
+#define colyseus_room_on_message_index(room, type, callback, userdata) \
+colyseus_room_on_message_int(room, type, callback, userdata)
+
 /* Send messages */
 void colyseus_room_send_str(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
 void colyseus_room_send_int(colyseus_room_t* room, int type, const uint8_t* message, size_t length);
+
+/* Convenience macro */
+#define colyseus_room_send(room, type, message, length) \
+colyseus_room_send_str(room, type, message, length)
 
 #ifdef __cplusplus
 }
