@@ -136,6 +136,7 @@ pub fn build(b: *std.Build) void {
             "-Wextra",
             "-pedantic",
             "-std=c11",
+            "-D_POSIX_C_SOURCE=200809L", "-Wno-unused-parameter", // workaround for compilation errors on Linux
         },
     });
 
