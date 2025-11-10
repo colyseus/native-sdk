@@ -5,9 +5,23 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#ifndef HAVE_STRNDUP
+#ifndef _GNU_SOURCE
+char* strndup(const char* s, size_t n) {
+    size_t len = strnlen(s, n);
+    char* result = malloc(len + 1);
+    if (!result) return NULL;
+    memcpy(result, s, len);
+    result[len] = '\0';
+    return result;
+}
+#endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
 
     /* URL parts structure */
     typedef struct {
