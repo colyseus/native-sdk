@@ -1,0 +1,27 @@
+name: Zig CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
+      - name: Show Zig version
+        run: zig version
+
+      - name: Install dependencies
+        run: git submodule update --init --recursive
+
+      - name: Run tests
+        run: zig build test -Dskip-integration
