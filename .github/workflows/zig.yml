@@ -21,7 +21,10 @@ jobs:
         run: zig version
 
       - name: Install dependencies
-        run: git submodule update --init --recursive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
+          git submodule update --init --recursive
 
       - name: Run tests
         run: zig build test -Dskip-integration
