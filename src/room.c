@@ -212,21 +212,97 @@ void colyseus_room_on_message_any(colyseus_room_t* room, colyseus_room_on_messag
     room->on_message_any_userdata = userdata;
 }
 
+/* Helper function to encode msgpack string */
+static size_t msgpack_encode_string(uint8_t* dest, const char* str, size_t str_len) {
+    if (str_len <= 31) {
+        /* fixstr: 0xa0 | length */
+        dest[0] = 0xa0 | (uint8_t)str_len;
+        memcpy(dest + 1, str, str_len);
+        return 1 + str_len;
+    } else if (str_len <= 255) {
+        /* str8: 0xd9, length (1 byte), string */
+        dest[0] = 0xd9;
+        dest[1] = (uint8_t)str_len;
+        memcpy(dest + 2, str, str_len);
+        return 2 + str_len;
+    } else if (str_len <= 65535) {
+        /* str16: 0xda, length (2 bytes big-endian), string */
+        dest[0] = 0xda;
+        dest[1] = (uint8_t)(str_len >> 8);
+        dest[2] = (uint8_t)(str_len & 0xff);
+        memcpy(dest + 3, str, str_len);
+        return 3 + str_len;
+    } else {
+        /* str32: 0xdb, length (4 bytes big-endian), string */
+        dest[0] = 0xdb;
+        dest[1] = (uint8_t)(str_len >> 24);
+        dest[2] = (uint8_t)((str_len >> 16) & 0xff);
+        dest[3] = (uint8_t)((str_len >> 8) & 0xff);
+        dest[4] = (uint8_t)(str_len & 0xff);
+        memcpy(dest + 5, str, str_len);
+        return 5 + str_len;
+    }
+}
+
+/* Helper function to encode msgpack integer */
+static size_t msgpack_encode_number(uint8_t* dest, int value) {
+    if (value >= 0 && value <= 127) {
+        /* Positive fixint: single byte */
+        dest[0] = (uint8_t)value;
+        return 1;
+    } else if (value >= -32 && value < 0) {
+        /* Negative fixint: 0xe0 to 0xff */
+        dest[0] = (uint8_t)(0xe0 | (value & 0x1f));
+        return 1;
+    } else if (value >= -128 && value <= 127) {
+        /* int8: 0xd0, value */
+        dest[0] = 0xd0;
+        dest[1] = (uint8_t)value;
+        return 2;
+    } else if (value >= -32768 && value <= 32767) {
+        /* int16: 0xd1, value (2 bytes big-endian) */
+        dest[0] = 0xd1;
+        dest[1] = (uint8_t)(value >> 8);
+        dest[2] = (uint8_t)(value & 0xff);
+        return 3;
+    } else {
+        /* int32: 0xd2, value (4 bytes big-endian) */
+        dest[0] = 0xd2;
+        dest[1] = (uint8_t)(value >> 24);
+        dest[2] = (uint8_t)((value >> 16) & 0xff);
+        dest[3] = (uint8_t)((value >> 8) & 0xff);
+        dest[4] = (uint8_t)(value & 0xff);
+        return 5;
+    }
+}
+
 /* Send messages */
 void colyseus_room_send_str(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length) {
     if (!room || !room->transport || !colyseus_transport_is_open(room->transport)) {
         return;
     }
 
-    /* Build message: [PROTOCOL][type string][message] */
+    /* Build message: [PROTOCOL][msgpack-encoded type string][message] */
     size_t type_len = strlen(type);
-    size_t total_len = 1 + type_len + length;
+    
+    /* Calculate msgpack encoding size */
+    size_t msgpack_size = (type_len <= 31) ? (1 + type_len) :
+                          (type_len <= 255) ? (2 + type_len) :
+                          (type_len <= 65535) ? (3 + type_len) :
+                          (5 + type_len);
+    
+    size_t total_len = 1 + msgpack_size + length;
     uint8_t* data = malloc(total_len);
 
+    /* Protocol byte */
     data[0] = COLYSEUS_PROTOCOL_ROOM_DATA;
-    memcpy(data + 1, type, type_len);
+    
+    /* Msgpack-encoded type string */
+    size_t encoded_len = msgpack_encode_string(data + 1, type, type_len);
+    
+    /* Message payload */
     if (message && length > 0) {
-        memcpy(data + 1 + type_len, message, length);
+        memcpy(data + 1 + encoded_len, message, length);
     }
 
     colyseus_transport_send(room->transport, data, total_len);
@@ -238,14 +314,22 @@ void colyseus_room_send_int(colyseus_room_t* room, int type, const uint8_t* mess
         return;
     }
 
-    /* Build message: [PROTOCOL][type as byte][message] */
-    size_t total_len = 2 + length;
+    /* Build message: [PROTOCOL][msgpack-encoded type integer][message] */
+    uint8_t type_buffer[5];  /* Max size for int32 msgpack encoding */
+    size_t type_encoded_size = msgpack_encode_number(type_buffer, type);
+    
+    size_t total_len = 1 + type_encoded_size + length;
     uint8_t* data = malloc(total_len);
 
+    /* Protocol byte */
     data[0] = COLYSEUS_PROTOCOL_ROOM_DATA;
-    data[1] = (uint8_t)type;
+    
+    /* Msgpack-encoded type integer */
+    memcpy(data + 1, type_buffer, type_encoded_size);
+    
+    /* Message payload */
     if (message && length > 0) {
-        memcpy(data + 2, message, length);
+        memcpy(data + 1 + type_encoded_size, message, length);
     }
 
     colyseus_transport_send(room->transport, data, total_len);
