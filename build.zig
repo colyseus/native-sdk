@@ -10,6 +10,8 @@ pub fn build(b: *std.Build) void {
     // Build options
     const build_shared = b.option(bool, "shared", "Build shared library") orelse false;
     const build_examples = b.option(bool, "examples", "Build example programs") orelse true;
+    const skip_integration = b.option(bool, "skip-integration", "Skip integration tests (which require a running server)") orelse false;
+    const debug_tests = b.option(bool, "debug-tests", "Install test executables for debugging") orelse false;
 
     // ========================================================================
     // Build wslay library
@@ -270,8 +272,63 @@ pub fn build(b: *std.Build) void {
     }
 
     // ========================================================================
-    // Test step (placeholder for future tests)
+    // Build and run tests
     // ========================================================================
     const test_step = b.step("test", "Run unit tests");
-    _ = test_step; // Currently no tests, but keeping for future
+
+    // Define all Zig test files
+    const zig_test_files = [_]struct {
+        name: []const u8,
+        file: []const u8,
+        description: []const u8,
+    }{
+        .{ .name = "test_http", .file = "tests/test_http.zig", .description = "Run HTTP tests" },
+        .{ .name = "test_auth", .file = "tests/test_auth.zig", .description = "Run authentication tests" },
+        .{ .name = "test_room", .file = "tests/test_room.zig", .description = "Run room tests" },
+        .{ .name = "test_storage", .file = "tests/test_storage.zig", .description = "Run storage tests" },
+        .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
+        .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
+    };
+
+    // Build each Zig test
+    for (zig_test_files) |test_file| {
+        // Skip integration test if requested
+        if (skip_integration and std.mem.eql(u8, test_file.name, "test_integration")) {
+            continue;
+        }
+
+        const test_module = b.createModule(.{
+            .root_source_file = b.path(test_file.file),
+            .target = target,
+            .optimize = optimize,
+        });
+
+        const test_exe = b.addTest(.{
+            .root_module = test_module,
+        });
+
+        test_exe.linkLibC();
+        test_exe.addIncludePath(b.path("include"));
+        test_exe.addIncludePath(b.path("third_party/uthash/src"));
+        test_exe.addIncludePath(b.path("third_party/sds"));
+        test_exe.addIncludePath(b.path("third_party/cJSON"));
+        test_exe.addIncludePath(b.path("third_party/wslay/lib/includes"));
+        test_exe.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
+        test_exe.linkLibrary(colyseus);
+
+        // If debug-tests is enabled, install the test executable
+        if (debug_tests) {
+            b.installArtifact(test_exe);
+        }
+
+        // Create run command for this test
+        const run_test = b.addRunArtifact(test_exe);
+
+        // Add to main test step
+        test_step.dependOn(&run_test.step);
+
+        // Also create individual test steps
+        const individual_test_step = b.step(test_file.name, test_file.description);
+        individual_test_step.dependOn(&run_test.step);
+    }
 }

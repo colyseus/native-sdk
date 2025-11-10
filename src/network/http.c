@@ -161,6 +161,8 @@ static void http_request(
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, colyseus_curl_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);  /* 30 second timeout */
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);  /* 10 second connect timeout */
 
     /* Set method */
     if (strcmp(method, "POST") == 0) {

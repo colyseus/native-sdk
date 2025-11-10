@@ -6,6 +6,10 @@ export class MyRoom extends Room<MyRoomState> {
   state = new MyRoomState();
 
   onCreate (options: any) {
+    this.onMessage("test", (client, message) => {
+      console.log("Received 'test' message.", { sessionId: client.sessionId, message });
+    });
+
     this.onMessage("type", (client, message) => {
       //
       // handle "type" message
