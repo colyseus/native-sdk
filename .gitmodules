@@ -10,3 +10,6 @@
 [submodule "third_party/wslay"]
 	path = third_party/wslay
 	url = https://github.com/tatsuhiro-t/wslay.git
+[submodule "third_party/curl"]
+	path = third_party/curl
+	url = https://github.com/curl/curl.git
