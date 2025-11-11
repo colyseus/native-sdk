@@ -7,6 +7,9 @@ pub fn build(b: *std.Build) void {
     // Standard optimization options
     const optimize = b.standardOptimizeOption(.{});
 
+    // Determine C standard based on platform
+    const c_std = if (target.result.os.tag == .linux) "-std=gnu11" else "-std=c11";
+
     // Build options
     const build_shared = b.option(bool, "shared", "Build shared library") orelse false;
     const build_examples = b.option(bool, "examples", "Build example programs") orelse true;
@@ -65,7 +68,7 @@ pub fn build(b: *std.Build) void {
         .flags = &.{
             "-Wall",
             "-Wextra",
-            "-std=c11",
+            c_std,
             "-DHAVE_CONFIG_H",
         },
     });
@@ -135,7 +138,7 @@ pub fn build(b: *std.Build) void {
             "-Wall",
             "-Wextra",
             "-pedantic",
-            "-std=c11",
+            c_std,
         },
     });
 
@@ -213,6 +216,7 @@ pub fn build(b: *std.Build) void {
             opt: std.builtin.OptimizeMode,
             colyseus_lib: *std.Build.Step.Compile,
             wslay_version_header: *std.Build.Step.ConfigHeader,
+            c_standard: []const u8,
         ) void {
             const example_module = builder.createModule(.{
                 .target = tgt,
@@ -230,7 +234,7 @@ pub fn build(b: *std.Build) void {
                 .flags = &.{
                     "-Wall",
                     "-Wextra",
-                    "-std=c11",
+                    c_standard,
                 },
             });
 
@@ -261,14 +265,14 @@ pub fn build(b: *std.Build) void {
             .source_file = "examples/simple_example.c",
             .run_step_name = "run-example",
             .run_step_desc = "Run the simple example",
-        }, target, optimize, colyseus, wslay_version_h);
+        }, target, optimize, colyseus, wslay_version_h, c_std);
 
         buildExample(b, .{
             .name = "auth_example",
             .source_file = "examples/auth_example.c",
             .run_step_name = "run-auth-example",
             .run_step_desc = "Run the auth example",
-        }, target, optimize, colyseus, wslay_version_h);
+        }, target, optimize, colyseus, wslay_version_h, c_std);
     }
 
     // ========================================================================
