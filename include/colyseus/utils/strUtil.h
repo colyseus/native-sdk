@@ -7,6 +7,11 @@
 
 #if !defined(HAVE_STRNDUP) && !defined(__APPLE__)
 #ifndef _GNU_SOURCE
+static inline size_t strnlen(const char *s, size_t maxlen) {
+    size_t i;
+    for (i = 0; i < maxlen && s[i]; i++);
+    return i;
+}
 static inline char* strndup(const char* s, size_t n) {
     size_t len = strnlen(s, n);
     char* result = malloc(len + 1);
