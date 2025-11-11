@@ -3,48 +3,43 @@
 #include "sds.h"
 #include <stdlib.h>
 #include <string.h>
-#include <regex.h>
 #include <stdio.h>
+#include <curl/curl.h>
 
 /* Parse URL using regex */
 colyseus_url_parts_t* colyseus_parse_url(const char* url) {
-    /* Regex pattern: (scheme)://(host)(:port)?/(path) */
-    regex_t regex;
-    const char* pattern = "^([^:]+)://([^:/]+)(:([0-9]+))?/(.*)$";
+    CURLU* h = curl_url();
+    if (!h) return NULL;
 
-    if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-        return NULL;
-    }
-
-    regmatch_t matches[6];
-    if (regexec(&regex, url, 6, matches, 0) != 0) {
-        regfree(&regex);
+    CURLUcode rc = curl_url_set(h, CURLUPART_URL, url, 0);
+    if (rc != CURLUE_OK) {
+        curl_url_cleanup(h);
         return NULL;
     }
 
     colyseus_url_parts_t* parts = malloc(sizeof(colyseus_url_parts_t));
     if (!parts) {
-        regfree(&regex);
+        curl_url_cleanup(h);
         return NULL;
     }
+    memset(parts, 0, sizeof(*parts));
 
-    memset(parts, 0, sizeof(colyseus_url_parts_t));
+    char* scheme = NULL;
+    char* host = NULL;
+    char* port_str = NULL;
+    char* path = NULL;
+    char* query = NULL;
 
     /* Extract scheme */
-    int len = matches[1].rm_eo - matches[1].rm_so;
-    parts->scheme = strndup(url + matches[1].rm_so, len);
+    if (curl_url_get(h, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK)
+        parts->scheme = strdup(scheme);
 
     /* Extract host */
-    len = matches[2].rm_eo - matches[2].rm_so;
-    parts->host = strndup(url + matches[2].rm_so, len);
+    if (curl_url_get(h, CURLUPART_HOST, &host, 0) == CURLUE_OK)
+        parts->host = strdup(host);
 
-    /* Extract port (if present) */
-    if (matches[4].rm_so != -1) {
-        len = matches[4].rm_eo - matches[4].rm_so;
-        char port_str[16];
-        strncpy(port_str, url + matches[4].rm_so, len);
-        port_str[len] = '\0';
-
+    /* Extract port */
+    if (curl_url_get(h, CURLUPART_PORT, &port_str, 0) == CURLUE_OK && port_str && *port_str) {
         uint16_t port_num = (uint16_t)strtoul(port_str, NULL, 10);
         if (port_num > 0) {
             parts->port = malloc(sizeof(uint16_t));
@@ -52,14 +47,27 @@ colyseus_url_parts_t* colyseus_parse_url(const char* url) {
         }
     }
 
-    /* Extract path and args */
-    len = matches[5].rm_eo - matches[5].rm_so;
-    parts->path_and_args = strndup(url + matches[5].rm_so, len);
+    /* Extract path and query */
+    if (curl_url_get(h, CURLUPART_PATH, &path, 0) == CURLUE_OK) {
+        if (curl_url_get(h, CURLUPART_QUERY, &query, 0) == CURLUE_OK && query && *query) {
+            size_t total_len = strlen(path) + 1 + strlen(query) + 1;
+            parts->path_and_args = malloc(total_len);
+            snprintf(parts->path_and_args, total_len, "%s?%s", path, query);
+        } else {
+            parts->path_and_args = strdup(path);
+        }
+    }
 
     /* Store original URL */
     parts->url = strdup(url);
 
-    regfree(&regex);
+    curl_free(scheme);
+    curl_free(host);
+    curl_free(port_str);
+    curl_free(path);
+    curl_free(query);
+    curl_url_cleanup(h);
+
     return parts;
 }
 

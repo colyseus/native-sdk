@@ -22,15 +22,24 @@ pub fn build(b: *std.Build) void {
 
     // Generate config.h for wslay based on target platform
     // For most common platforms (Unix-like systems)
-    const wslay_config_h = b.addConfigHeader(.{
-        .style = .blank,
-        .include_path = "config.h",
-    }, .{
-        .HAVE_ARPA_INET_H = 1, // Available on Unix-like systems
-        .HAVE_NETINET_IN_H = 1, // Available on Unix-like systems
-        // HAVE_WINSOCK2_H not defined on Unix
-        // WORDS_BIGENDIAN not defined (little-endian is most common)
-    });
+    const is_windows = target.result.os.tag == .windows;
+
+    // Create config header with platform-specific values
+    const wslay_config_h: *std.Build.Step.ConfigHeader = if (is_windows)
+        b.addConfigHeader(.{
+            .style = .blank,
+            .include_path = "config.h",
+        }, .{
+            .HAVE_WINSOCK2_H = 1,
+        })
+    else
+        b.addConfigHeader(.{
+            .style = .blank,
+            .include_path = "config.h",
+        }, .{
+            .HAVE_ARPA_INET_H = 1,
+            .HAVE_NETINET_IN_H = 1,
+        });
 
     // Generate wslayver.h for wslay
     const wslay_version_h = b.addConfigHeader(.{
@@ -164,8 +173,14 @@ pub fn build(b: *std.Build) void {
         colyseus.linkFramework("CoreFoundation");
         colyseus.linkFramework("Security");
     } else if (target.result.os.tag == .windows) {
-        colyseus.linkSystemLibrary("curl");
+        const vcpkg_root = "../vcpkg/installed/x64-windows";
+        colyseus.addIncludePath(b.path(vcpkg_root ++ "/include"));
+
+        // Construct the path to libcurl.lib
+        const libcurl_path = b.pathJoin(&.{ vcpkg_root, "lib", "libcurl.lib" });
+        colyseus.addObjectFile(b.path(libcurl_path));
         colyseus.linkSystemLibrary("ws2_32");
+        colyseus.linkSystemLibrary("crypt32");
     } else {
         colyseus.linkSystemLibrary("curl");
     }
