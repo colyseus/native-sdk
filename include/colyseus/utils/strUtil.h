@@ -5,9 +5,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#ifndef HAVE_STRNDUP
+#if !defined(HAVE_STRNDUP) && !defined(__APPLE__)
 #ifndef _GNU_SOURCE
-char* strndup(const char* s, size_t n) {
+static inline char* strndup(const char* s, size_t n) {
     size_t len = strnlen(s, n);
     char* result = malloc(len + 1);
     if (!result) return NULL;
