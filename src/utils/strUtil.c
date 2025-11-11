@@ -6,68 +6,106 @@
 #include <stdio.h>
 #include <curl/curl.h>
 
-/* Parse URL using regex */
+/* Parse URL using curl (portable across all platforms) */
 colyseus_url_parts_t* colyseus_parse_url(const char* url) {
-    CURLU* h = curl_url();
-    if (!h) return NULL;
-
-    CURLUcode rc = curl_url_set(h, CURLUPART_URL, url, 0);
-    if (rc != CURLUE_OK) {
-        curl_url_cleanup(h);
+    CURLU* url_handle = curl_url();
+    if (!url_handle) {
         return NULL;
     }
+
+    /* curl's URL parser doesn't recognize ws:// and wss:// schemes by default.
+     * Temporarily replace "ws" with "http" for parsing (ws->http, wss->https). */
+    char* temp_url = NULL;
+    bool is_websocket = false;
+
+    if (strncmp(url, "ws", 2) == 0) {
+        is_websocket = true;
+        size_t len = strlen(url) + 3; /* "http" is 4, "ws" is 2, +1 for null */
+        temp_url = malloc(len);
+        snprintf(temp_url, len, "http%s", url + 2); /* Replace "ws" with "http" */
+    }
+
+    const char* parse_url = temp_url ? temp_url : url;
+
+    /* Parse the URL */
+    if (curl_url_set(url_handle, CURLUPART_URL, parse_url, 0) != CURLUE_OK) {
+        curl_url_cleanup(url_handle);
+        free(temp_url);
+        return NULL;
+    }
+    
+    free(temp_url);
 
     colyseus_url_parts_t* parts = malloc(sizeof(colyseus_url_parts_t));
     if (!parts) {
-        curl_url_cleanup(h);
+        curl_url_cleanup(url_handle);
         return NULL;
     }
-    memset(parts, 0, sizeof(*parts));
 
-    char* scheme = NULL;
-    char* host = NULL;
-    char* port_str = NULL;
-    char* path = NULL;
-    char* query = NULL;
+    memset(parts, 0, sizeof(colyseus_url_parts_t));
 
     /* Extract scheme */
-    if (curl_url_get(h, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK)
-        parts->scheme = strdup(scheme);
+    char* scheme = NULL;
+    if (curl_url_get(url_handle, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK && scheme) {
+        /* Restore original ws/wss scheme if this was a WebSocket URL */
+        if (is_websocket) {
+            /* Check if it was secure (https -> wss, http -> ws) */
+            bool is_secure = strcmp(scheme, "https") == 0;
+            parts->scheme = strdup(is_secure ? "wss" : "ws");
+        } else {
+            parts->scheme = strdup(scheme);
+        }
+        curl_free(scheme);
+    }
 
     /* Extract host */
-    if (curl_url_get(h, CURLUPART_HOST, &host, 0) == CURLUE_OK)
+    char* host = NULL;
+    if (curl_url_get(url_handle, CURLUPART_HOST, &host, 0) == CURLUE_OK && host) {
         parts->host = strdup(host);
+        curl_free(host);
+    }
 
-    /* Extract port */
-    if (curl_url_get(h, CURLUPART_PORT, &port_str, 0) == CURLUE_OK && port_str && *port_str) {
+    /* Extract port (if present) */
+    char* port_str = NULL;
+    if (curl_url_get(url_handle, CURLUPART_PORT, &port_str, 0) == CURLUE_OK && port_str) {
         uint16_t port_num = (uint16_t)strtoul(port_str, NULL, 10);
         if (port_num > 0) {
             parts->port = malloc(sizeof(uint16_t));
             *parts->port = port_num;
         }
+        curl_free(port_str);
     }
 
-    /* Extract path and query */
-    if (curl_url_get(h, CURLUPART_PATH, &path, 0) == CURLUE_OK) {
-        if (curl_url_get(h, CURLUPART_QUERY, &query, 0) == CURLUE_OK && query && *query) {
-            size_t total_len = strlen(path) + 1 + strlen(query) + 1;
+    /* Extract path and query combined */
+    char* path = NULL;
+    char* query = NULL;
+
+    if (curl_url_get(url_handle, CURLUPART_PATH, &path, 0) == CURLUE_OK && path) {
+        /* Remove leading '/' from path if present */
+        const char* path_start = (path[0] == '/') ? path + 1 : path;
+
+        if (curl_url_get(url_handle, CURLUPART_QUERY, &query, 0) == CURLUE_OK && query) {
+            /* Combine path and query */
+            size_t total_len = strlen(path_start) + strlen(query) + 2; /* +2 for '?' and '\0' */
             parts->path_and_args = malloc(total_len);
-            snprintf(parts->path_and_args, total_len, "%s?%s", path, query);
+            if (parts->path_and_args) {
+                snprintf(parts->path_and_args, total_len, "%s?%s", path_start, query);
+            }
+            curl_free(query);
         } else {
-            parts->path_and_args = strdup(path);
+            /* Just the path */
+            parts->path_and_args = strdup(path_start);
         }
+        curl_free(path);
+    } else {
+        /* No path found, use empty string */
+        parts->path_and_args = strdup("");
     }
 
     /* Store original URL */
     parts->url = strdup(url);
 
-    curl_free(scheme);
-    curl_free(host);
-    curl_free(port_str);
-    curl_free(path);
-    curl_free(query);
-    curl_url_cleanup(h);
-
+    curl_url_cleanup(url_handle);
     return parts;
 }
 
