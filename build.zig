@@ -8,7 +8,8 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // Determine C standard based on platform
-    const c_std = if (target.result.os.tag == .linux) "-std=gnu11" else "-std=c11";
+    // Use gnu11 for Linux and Windows (MinGW), c11 for other platforms
+    const c_std = if (target.result.os.tag == .linux or target.result.os.tag == .windows) "-std=gnu11" else "-std=c11";
 
     // Build options
     const build_shared = b.option(bool, "shared", "Build shared library") orelse false;
@@ -21,16 +22,24 @@ pub fn build(b: *std.Build) void {
     // ========================================================================
 
     // Generate config.h for wslay based on target platform
-    // For most common platforms (Unix-like systems)
-    const wslay_config_h = b.addConfigHeader(.{
-        .style = .blank,
-        .include_path = "config.h",
-    }, .{
-        .HAVE_ARPA_INET_H = 1, // Available on Unix-like systems
-        .HAVE_NETINET_IN_H = 1, // Available on Unix-like systems
-        // HAVE_WINSOCK2_H not defined on Unix
-        // WORDS_BIGENDIAN not defined (little-endian is most common)
-    });
+    const is_windows = target.result.os.tag == .windows;
+
+    // Create config header with platform-specific values
+    const wslay_config_h: *std.Build.Step.ConfigHeader = if (is_windows)
+        b.addConfigHeader(.{
+            .style = .blank,
+            .include_path = "config.h",
+        }, .{
+            .HAVE_WINSOCK2_H = 1,
+        })
+    else
+        b.addConfigHeader(.{
+            .style = .blank,
+            .include_path = "config.h",
+        }, .{
+            .HAVE_ARPA_INET_H = 1,
+            .HAVE_NETINET_IN_H = 1,
+        });
 
     // Generate wslayver.h for wslay
     const wslay_version_h = b.addConfigHeader(.{
