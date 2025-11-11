@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 #if !defined(HAVE_STRNDUP) && !defined(__APPLE__)
 #ifndef _GNU_SOURCE
