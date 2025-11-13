@@ -39,7 +39,9 @@ jobs:
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          vcpkg install curl:x64-windows
+          git clone https://github.com/microsoft/vcpkg.git ..\vcpkg
+          ..\vcpkg\bootstrap-vcpkg.bat
+          ..\vcpkg\vcpkg install curl:x64-windows
           git submodule update --init --recursive
 
       - name: Run tests

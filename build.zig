@@ -173,7 +173,11 @@ pub fn build(b: *std.Build) void {
         colyseus.linkFramework("CoreFoundation");
         colyseus.linkFramework("Security");
     } else if (target.result.os.tag == .windows) {
-        const vcpkg_root = "../vcpkg/installed/x64-windows";
+        // Allow vcpkg root to be overridden via environment variable
+        const vcpkg_root_env = std.process.getEnvVarOwned(b.allocator, "VCPKG_ROOT") catch null;
+        const vcpkg_root = vcpkg_root_env orelse "../vcpkg/installed/x64-windows";
+        defer if (vcpkg_root_env) |env| b.allocator.free(env);
+
         colyseus.addIncludePath(b.path(vcpkg_root ++ "/include"));
 
         // Construct the path to libcurl.lib
