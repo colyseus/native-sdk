@@ -178,10 +178,11 @@ pub fn build(b: *std.Build) void {
         const vcpkg_root = vcpkg_root_env orelse "../vcpkg/installed/x64-windows";
         defer if (vcpkg_root_env) |env| b.allocator.free(env);
 
-        colyseus.addIncludePath(b.path(vcpkg_root ++ "/include"));
+        const vcpkg_include_path = b.fmt("{s}/include", .{vcpkg_root});
+        colyseus.addIncludePath(b.path(vcpkg_include_path));
 
         // Construct the path to libcurl.lib
-        const libcurl_path = b.pathJoin(&.{ vcpkg_root, "lib", "libcurl.lib" });
+        const libcurl_path = b.fmt("{s}/lib/libcurl.lib", .{vcpkg_root});
         colyseus.addObjectFile(b.path(libcurl_path));
         colyseus.linkSystemLibrary("ws2_32");
         colyseus.linkSystemLibrary("crypt32");
