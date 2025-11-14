@@ -174,29 +174,27 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(colyseus);
 
     // Install colyseus headers
-    const install_client_h = b.addInstallHeaderFile(b.path("include/colyseus/client.h"), "colyseus/client.h");
-    const install_http_h = b.addInstallHeaderFile(b.path("include/colyseus/http.h"), "colyseus/http.h");
-    const install_protocol_h = b.addInstallHeaderFile(b.path("include/colyseus/protocol.h"), "colyseus/protocol.h");
-    const install_room_h = b.addInstallHeaderFile(b.path("include/colyseus/room.h"), "colyseus/room.h");
-    const install_settings_h = b.addInstallHeaderFile(b.path("include/colyseus/settings.h"), "colyseus/settings.h");
-    const install_transport_h = b.addInstallHeaderFile(b.path("include/colyseus/transport.h"), "colyseus/transport.h");
-    const install_websocket_h = b.addInstallHeaderFile(b.path("include/colyseus/websocket_transport.h"), "colyseus/websocket_transport.h");
-    const install_sha1_h = b.addInstallHeaderFile(b.path("include/colyseus/utils/sha1_c.h"), "colyseus/utils/sha1_c.h");
-    const install_strutil_h = b.addInstallHeaderFile(b.path("include/colyseus/utils/strUtil.h"), "colyseus/utils/strUtil.h");
-    const install_auth_auth_h = b.addInstallHeaderFile(b.path("include/colyseus/auth/auth.h"), "colyseus/auth/auth.h");
-    const install_auth_secure_storage_h = b.addInstallHeaderFile(b.path("include/colyseus/auth/secure_storage.h"), "colyseus/auth/secure_storage.h");
+    const headers = .{
+        "client.h",
+        "http.h",
+        "protocol.h",
+        "room.h",
+        "settings.h",
+        "transport.h",
+        "websocket_transport.h",
+        "utils/sha1_c.h",
+        "utils/strUtil.h",
+        "auth/auth.h",
+        "auth/secure_storage.h",
+    };
 
-    b.getInstallStep().dependOn(&install_client_h.step);
-    b.getInstallStep().dependOn(&install_http_h.step);
-    b.getInstallStep().dependOn(&install_protocol_h.step);
-    b.getInstallStep().dependOn(&install_room_h.step);
-    b.getInstallStep().dependOn(&install_settings_h.step);
-    b.getInstallStep().dependOn(&install_transport_h.step);
-    b.getInstallStep().dependOn(&install_websocket_h.step);
-    b.getInstallStep().dependOn(&install_sha1_h.step);
-    b.getInstallStep().dependOn(&install_strutil_h.step);
-    b.getInstallStep().dependOn(&install_auth_auth_h.step);
-    b.getInstallStep().dependOn(&install_auth_secure_storage_h.step);
+    inline for (headers) |header| {
+        const install_header = b.addInstallHeaderFile(
+            b.path("include/colyseus/" ++ header),
+            "colyseus/" ++ header,
+        );
+        b.getInstallStep().dependOn(&install_header.step);
+    }
 
     // ========================================================================
     // Helper function to build examples
