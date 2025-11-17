@@ -17,20 +17,78 @@ pub fn build(b: *std.Build) void {
     const debug_tests = b.option(bool, "debug-tests", "Install test executables for debugging") orelse false;
 
     // ========================================================================
+    // Helper functions for Windows vcpkg setup
+    // ========================================================================
+    const getVcpkgSubPath = struct {
+        fn get(builder: *std.Build, subdir: []const u8) []const u8 {
+            const vcpkg_root_env = std.process.getEnvVarOwned(builder.allocator, "VCPKG_ROOT") catch null;
+            const vcpkg_root = vcpkg_root_env orelse "../vcpkg/installed/x64-windows";
+            defer if (vcpkg_root_env) |env| builder.allocator.free(env);
+            return builder.fmt("{s}/{s}", .{ vcpkg_root, subdir });
+        }
+    }.get;
+
+    const setupWindowsVcpkgLibPath = struct {
+        fn setup(builder: *std.Build, tgt: std.Build.ResolvedTarget, compile_step: *std.Build.Step.Compile) void {
+            if (tgt.result.os.tag == .windows) {
+                const vcpkg_lib_path = getVcpkgSubPath(builder, "lib");
+                compile_step.addLibraryPath(.{ .cwd_relative = vcpkg_lib_path });
+            }
+        }
+    }.setup;
+
+    const setupWindowsVcpkgIncludePath = struct {
+        fn setup(builder: *std.Build, tgt: std.Build.ResolvedTarget, compile_step: *std.Build.Step.Compile) void {
+            if (tgt.result.os.tag == .windows) {
+                const vcpkg_include_path = getVcpkgSubPath(builder, "include");
+                compile_step.addIncludePath(.{ .cwd_relative = vcpkg_include_path });
+            }
+        }
+    }.setup;
+
+    const setupWindowsPath = struct {
+        fn setup(builder: *std.Build, tgt: std.Build.ResolvedTarget, run_step: *std.Build.Step.Run) void {
+            if (tgt.result.os.tag == .windows) {
+                const vcpkg_bin_path = getVcpkgSubPath(builder, "bin");
+
+                // Get current PATH and prepend vcpkg/bin
+                const current_path = std.process.getEnvVarOwned(builder.allocator, "PATH") catch "";
+                defer if (current_path.len > 0) builder.allocator.free(current_path);
+
+                const new_path = if (current_path.len > 0)
+                    builder.fmt("{s};{s}", .{ vcpkg_bin_path, current_path })
+                else
+                    vcpkg_bin_path;
+
+                run_step.setEnvironmentVariable("PATH", new_path);
+            }
+        }
+    }.setup;
+
+    // ========================================================================
     // Build wslay library
     // ========================================================================
 
     // Generate config.h for wslay based on target platform
     // For most common platforms (Unix-like systems)
-    const wslay_config_h = b.addConfigHeader(.{
-        .style = .blank,
-        .include_path = "config.h",
-    }, .{
-        .HAVE_ARPA_INET_H = 1, // Available on Unix-like systems
-        .HAVE_NETINET_IN_H = 1, // Available on Unix-like systems
-        // HAVE_WINSOCK2_H not defined on Unix
-        // WORDS_BIGENDIAN not defined (little-endian is most common)
-    });
+    const is_windows = target.result.os.tag == .windows;
+
+    // Create config header with platform-specific values
+    const wslay_config_h: *std.Build.Step.ConfigHeader = if (is_windows)
+        b.addConfigHeader(.{
+            .style = .blank,
+            .include_path = "config.h",
+        }, .{
+            .HAVE_WINSOCK2_H = 1,
+        })
+    else
+        b.addConfigHeader(.{
+            .style = .blank,
+            .include_path = "config.h",
+        }, .{
+            .HAVE_ARPA_INET_H = 1,
+            .HAVE_NETINET_IN_H = 1,
+        });
 
     // Generate wslayver.h for wslay
     const wslay_version_h = b.addConfigHeader(.{
@@ -164,8 +222,13 @@ pub fn build(b: *std.Build) void {
         colyseus.linkFramework("CoreFoundation");
         colyseus.linkFramework("Security");
     } else if (target.result.os.tag == .windows) {
-        colyseus.linkSystemLibrary("curl");
+        setupWindowsVcpkgIncludePath(b, target, colyseus);
+        setupWindowsVcpkgLibPath(b, target, colyseus);
+
+        // Link libcurl as a system library
+        colyseus.linkSystemLibrary("libcurl");
         colyseus.linkSystemLibrary("ws2_32");
+        colyseus.linkSystemLibrary("crypt32");
     } else {
         colyseus.linkSystemLibrary("curl");
     }
@@ -215,6 +278,7 @@ pub fn build(b: *std.Build) void {
             colyseus_lib: *std.Build.Step.Compile,
             wslay_version_header: *std.Build.Step.ConfigHeader,
             c_standard: []const u8,
+            setup_path: fn (*std.Build, std.Build.ResolvedTarget, *std.Build.Step.Run) void,
         ) void {
             const example_module = builder.createModule(.{
                 .target = tgt,
@@ -244,10 +308,13 @@ pub fn build(b: *std.Build) void {
             example.addIncludePath(wslay_version_header.getOutput().dirname().dirname());
             example.linkLibrary(colyseus_lib);
 
+            setupWindowsVcpkgLibPath(builder, tgt, example);
+
             builder.installArtifact(example);
 
             const run_example = builder.addRunArtifact(example);
             run_example.step.dependOn(builder.getInstallStep());
+            setup_path(builder, tgt, run_example);
 
             const run_step = builder.step(config.run_step_name, config.run_step_desc);
             run_step.dependOn(&run_example.step);
@@ -263,14 +330,14 @@ pub fn build(b: *std.Build) void {
             .source_file = "examples/simple_example.c",
             .run_step_name = "run-example",
             .run_step_desc = "Run the simple example",
-        }, target, optimize, colyseus, wslay_version_h, c_std);
+        }, target, optimize, colyseus, wslay_version_h, c_std, setupWindowsPath);
 
         buildExample(b, .{
             .name = "auth_example",
             .source_file = "examples/auth_example.c",
             .run_step_name = "run-auth-example",
             .run_step_desc = "Run the auth example",
-        }, target, optimize, colyseus, wslay_version_h, c_std);
+        }, target, optimize, colyseus, wslay_version_h, c_std, setupWindowsPath);
     }
 
     // ========================================================================
@@ -318,6 +385,8 @@ pub fn build(b: *std.Build) void {
         test_exe.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
         test_exe.linkLibrary(colyseus);
 
+        setupWindowsVcpkgLibPath(b, target, test_exe);
+
         // If debug-tests is enabled, install the test executable
         if (debug_tests) {
             b.installArtifact(test_exe);
@@ -325,6 +394,7 @@ pub fn build(b: *std.Build) void {
 
         // Create run command for this test
         const run_test = b.addRunArtifact(test_exe);
+        setupWindowsPath(b, target, run_test);
 
         // Add to main test step
         test_step.dependOn(&run_test.step);

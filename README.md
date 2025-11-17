@@ -79,6 +79,7 @@ native-sdk/
 ## 📖 Documentation
 
 - [Building with Zig](BUILD_WITH_ZIG.md) - Comprehensive Zig build guide
+- [Windows Compilation](WINDOWS_COMPILATION.md) - Building on Windows with MinGW
 - [Colyseus Documentation](https://docs.colyseus.io/) - Server documentation
 
 ## ⚠️ Status

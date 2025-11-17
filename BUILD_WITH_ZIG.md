@@ -103,10 +103,12 @@ zig build -Dexamples=false
 
 One of Zig's best features is easy cross-compilation!
 
-**Build for Windows from macOS/Linux:**
+**Build for Windows (MinGW) from macOS/Linux:**
 ```bash
-zig build -Dtarget=x86_64-windows
+zig build -Dtarget=x86_64-windows-gnu
 ```
+
+> **Note:** The build system is configured to use MinGW (GNU ABI) on Windows. See [WINDOWS_COMPILATION.md](WINDOWS_COMPILATION.md) for detailed Windows build instructions.
 
 **Build for Linux from macOS:**
 ```bash
