@@ -8,6 +8,9 @@ const testing = std.testing;
 const c = @cImport({
     @cInclude("colyseus/schema/types.h");
     @cInclude("colyseus/schema/decode.h");
+    @cInclude("colyseus/schema/collections.h");
+    @cInclude("colyseus/schema/ref_tracker.h");
+    @cInclude("colyseus/schema/decoder.h");
 });
 
 // ============================================================================
@@ -340,4 +343,247 @@ test "decode_number_check" {
     const bytes_string = [_]u8{0xA5};
     var it3 = c.colyseus_iterator_t{ .offset = 0 };
     try testing.expect(!c.colyseus_decode_number_check(&bytes_string, &it3));
+}
+
+// ============================================================================
+// ArraySchema tests
+// ============================================================================
+
+test "array_schema_create_and_free" {
+    const arr = c.colyseus_array_schema_create();
+    try testing.expect(arr != null);
+
+    c.colyseus_array_schema_free(arr, null);
+}
+
+test "array_schema_set_and_get" {
+    const arr = c.colyseus_array_schema_create();
+    defer c.colyseus_array_schema_free(arr, null);
+
+    var value: i32 = 42;
+    c.colyseus_array_schema_set(arr, 0, &value, c.COLYSEUS_OP_ADD);
+
+    const retrieved = c.colyseus_array_schema_get(arr, 0);
+    try testing.expect(retrieved != null);
+
+    const int_ptr: *i32 = @ptrCast(@alignCast(retrieved));
+    try testing.expectEqual(@as(i32, 42), int_ptr.*);
+}
+
+test "array_schema_count" {
+    const arr = c.colyseus_array_schema_create();
+    defer c.colyseus_array_schema_free(arr, null);
+
+    try testing.expectEqual(@as(c_int, 0), arr.*.count);
+
+    var v1: i32 = 1;
+    var v2: i32 = 2;
+    var v3: i32 = 3;
+
+    c.colyseus_array_schema_set(arr, 0, &v1, c.COLYSEUS_OP_ADD);
+    try testing.expectEqual(@as(c_int, 1), arr.*.count);
+
+    c.colyseus_array_schema_set(arr, 1, &v2, c.COLYSEUS_OP_ADD);
+    try testing.expectEqual(@as(c_int, 2), arr.*.count);
+
+    c.colyseus_array_schema_set(arr, 2, &v3, c.COLYSEUS_OP_ADD);
+    try testing.expectEqual(@as(c_int, 3), arr.*.count);
+}
+
+test "array_schema_delete" {
+    const arr = c.colyseus_array_schema_create();
+    defer c.colyseus_array_schema_free(arr, null);
+
+    var value: i32 = 42;
+    c.colyseus_array_schema_set(arr, 0, &value, c.COLYSEUS_OP_ADD);
+    try testing.expectEqual(@as(c_int, 1), arr.*.count);
+
+    c.colyseus_array_schema_delete(arr, 0);
+
+    // Value should be null after delete
+    const retrieved = c.colyseus_array_schema_get(arr, 0);
+    try testing.expect(retrieved == null);
+}
+
+// ============================================================================
+// MapSchema tests
+// ============================================================================
+
+test "map_schema_create_and_free" {
+    const map = c.colyseus_map_schema_create();
+    try testing.expect(map != null);
+
+    c.colyseus_map_schema_free(map, null);
+}
+
+test "map_schema_set_and_get" {
+    const map = c.colyseus_map_schema_create();
+    defer c.colyseus_map_schema_free(map, null);
+
+    var value: i32 = 123;
+    c.colyseus_map_schema_set_by_index(map, 0, "testKey", &value);
+
+    const retrieved = c.colyseus_map_schema_get(map, "testKey");
+    try testing.expect(retrieved != null);
+
+    const int_ptr: *i32 = @ptrCast(@alignCast(retrieved));
+    try testing.expectEqual(@as(i32, 123), int_ptr.*);
+}
+
+test "map_schema_get_by_index" {
+    const map = c.colyseus_map_schema_create();
+    defer c.colyseus_map_schema_free(map, null);
+
+    var value: i32 = 456;
+    c.colyseus_map_schema_set_by_index(map, 5, "myKey", &value);
+
+    const retrieved = c.colyseus_map_schema_get_by_index(map, 5);
+    try testing.expect(retrieved != null);
+
+    const int_ptr: *i32 = @ptrCast(@alignCast(retrieved));
+    try testing.expectEqual(@as(i32, 456), int_ptr.*);
+}
+
+test "map_schema_contains" {
+    const map = c.colyseus_map_schema_create();
+    defer c.colyseus_map_schema_free(map, null);
+
+    try testing.expect(!c.colyseus_map_schema_contains(map, "key1"));
+
+    var value: i32 = 1;
+    c.colyseus_map_schema_set_by_index(map, 0, "key1", &value);
+
+    try testing.expect(c.colyseus_map_schema_contains(map, "key1"));
+    try testing.expect(!c.colyseus_map_schema_contains(map, "key2"));
+}
+
+test "map_schema_delete_by_index" {
+    const map = c.colyseus_map_schema_create();
+    defer c.colyseus_map_schema_free(map, null);
+
+    var value: i32 = 789;
+    c.colyseus_map_schema_set_by_index(map, 0, "deleteMe", &value);
+    try testing.expectEqual(@as(c_int, 1), map.*.count);
+
+    c.colyseus_map_schema_delete_by_index(map, 0);
+    try testing.expectEqual(@as(c_int, 0), map.*.count);
+
+    try testing.expect(!c.colyseus_map_schema_contains(map, "deleteMe"));
+}
+
+// ============================================================================
+// RefTracker tests
+// ============================================================================
+
+test "ref_tracker_create_and_free" {
+    const tracker = c.colyseus_ref_tracker_create();
+    try testing.expect(tracker != null);
+
+    c.colyseus_ref_tracker_free(tracker);
+}
+
+test "ref_tracker_add_and_get" {
+    const tracker = c.colyseus_ref_tracker_create();
+    defer c.colyseus_ref_tracker_free(tracker);
+
+    var dummy: i32 = 999;
+    c.colyseus_ref_tracker_add(tracker, 1, &dummy, c.COLYSEUS_REF_TYPE_SCHEMA, null, true);
+
+    const retrieved = c.colyseus_ref_tracker_get(tracker, 1);
+    try testing.expect(retrieved != null);
+
+    const int_ptr: *i32 = @ptrCast(@alignCast(retrieved));
+    try testing.expectEqual(@as(i32, 999), int_ptr.*);
+}
+
+test "ref_tracker_has" {
+    const tracker = c.colyseus_ref_tracker_create();
+    defer c.colyseus_ref_tracker_free(tracker);
+
+    try testing.expect(!c.colyseus_ref_tracker_has(tracker, 42));
+
+    var dummy: i32 = 0;
+    c.colyseus_ref_tracker_add(tracker, 42, &dummy, c.COLYSEUS_REF_TYPE_SCHEMA, null, true);
+
+    try testing.expect(c.colyseus_ref_tracker_has(tracker, 42));
+}
+
+test "ref_tracker_remove" {
+    const tracker = c.colyseus_ref_tracker_create();
+    defer c.colyseus_ref_tracker_free(tracker);
+
+    var dummy: i32 = 0;
+    c.colyseus_ref_tracker_add(tracker, 10, &dummy, c.COLYSEUS_REF_TYPE_SCHEMA, null, true);
+
+    try testing.expect(c.colyseus_ref_tracker_has(tracker, 10));
+
+    // Remove decrements count, returns true if scheduled for GC
+    const scheduled = c.colyseus_ref_tracker_remove(tracker, 10);
+    try testing.expect(scheduled);
+
+    // After GC, should be gone
+    c.colyseus_ref_tracker_gc(tracker);
+    try testing.expect(!c.colyseus_ref_tracker_has(tracker, 10));
+}
+
+// ============================================================================
+// Changes list tests
+// ============================================================================
+
+test "changes_create_and_free" {
+    const changes = c.colyseus_changes_create();
+    try testing.expect(changes != null);
+
+    c.colyseus_changes_free(changes);
+}
+
+test "changes_add" {
+    const changes = c.colyseus_changes_create();
+    defer c.colyseus_changes_free(changes);
+
+    try testing.expectEqual(@as(c_int, 0), changes.*.count);
+
+    var change = c.colyseus_data_change_t{
+        .ref_id = 1,
+        .op = c.COLYSEUS_OP_ADD,
+        .field = "testField",
+        .dynamic_index = null,
+        .value = null,
+        .previous_value = null,
+    };
+
+    c.colyseus_changes_add(changes, &change);
+    try testing.expectEqual(@as(c_int, 1), changes.*.count);
+}
+
+test "changes_clear" {
+    const changes = c.colyseus_changes_create();
+    defer c.colyseus_changes_free(changes);
+
+    var change = c.colyseus_data_change_t{
+        .ref_id = 1,
+        .op = c.COLYSEUS_OP_ADD,
+        .field = null,
+        .dynamic_index = null,
+        .value = null,
+        .previous_value = null,
+    };
+
+    c.colyseus_changes_add(changes, &change);
+    c.colyseus_changes_add(changes, &change);
+    try testing.expectEqual(@as(c_int, 2), changes.*.count);
+
+    c.colyseus_changes_clear(changes);
+    try testing.expectEqual(@as(c_int, 0), changes.*.count);
+}
+
+// ============================================================================
+// Type context tests
+// ============================================================================
+
+test "type_context_create_and_free" {
+    const ctx = c.colyseus_type_context_create();
+    try testing.expect(ctx != null);
+
+    c.colyseus_type_context_free(ctx);
 }
