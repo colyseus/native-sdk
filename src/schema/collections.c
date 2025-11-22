@@ -29,7 +29,7 @@ void colyseus_changes_add(colyseus_changes_t* changes, colyseus_data_change_t* c
 
     if (changes->count >= changes->capacity) {
         int new_capacity = changes->capacity == 0 ? 16 : changes->capacity * 2;
-        colyseus_data_change_t* new_items = realloc(changes->items, 
+        colyseus_data_change_t* new_items = realloc(changes->items,
             new_capacity * sizeof(colyseus_data_change_t));
         if (!new_items) return;
         changes->items = new_items;
@@ -73,14 +73,14 @@ void colyseus_array_schema_free(colyseus_array_schema_t* arr, colyseus_ref_track
     colyseus_array_item_t* item = arr->items;
     while (item) {
         colyseus_array_item_t* next = item->next;
-        
+
         /* Free value if it's a schema child */
         if (arr->has_schema_child && item->value && refs) {
             colyseus_schema_t* schema = (colyseus_schema_t*)item->value;
             colyseus_ref_tracker_remove(refs, schema->__refId);
         }
         /* Note: primitive values would need separate handling */
-        
+
         free(item);
         item = next;
     }
@@ -114,7 +114,7 @@ static void array_remove_deleted_key(colyseus_array_schema_t* arr, int index) {
     for (int i = 0; i < arr->deleted_count; i++) {
         if (arr->deleted_keys[i] == index) {
             /* Shift remaining keys */
-            memmove(&arr->deleted_keys[i], &arr->deleted_keys[i + 1], 
+            memmove(&arr->deleted_keys[i], &arr->deleted_keys[i + 1],
                 (arr->deleted_count - i - 1) * sizeof(int));
             arr->deleted_count--;
             return;
@@ -339,12 +339,12 @@ void colyseus_map_schema_free(colyseus_map_schema_t* map, colyseus_ref_tracker_t
     colyseus_map_item_t* tmp;
     HASH_ITER(hh, map->items, item, tmp) {
         HASH_DEL(map->items, item);
-        
+
         if (map->has_schema_child && item->value && refs) {
             colyseus_schema_t* schema = (colyseus_schema_t*)item->value;
             colyseus_ref_tracker_remove(refs, schema->__refId);
         }
-        
+
         free(item->key);
         free(item);
     }

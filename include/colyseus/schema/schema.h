@@ -53,6 +53,7 @@
  * player_t* state = (player_t*)colyseus_decoder_get_state(decoder);
  */
 
+#include "types.h"
 #include "schema/types.h"
 #include "schema/decode.h"
 #include "schema/collections.h"
@@ -129,6 +130,19 @@ void* colyseus_schema_serializer_get_state(colyseus_schema_serializer_t* seriali
 void colyseus_schema_serializer_patch(colyseus_schema_serializer_t* serializer, const uint8_t* data, size_t length, int offset);
 void colyseus_schema_serializer_teardown(colyseus_schema_serializer_t* serializer);
 void colyseus_schema_serializer_handshake(colyseus_schema_serializer_t* serializer, const uint8_t* bytes, size_t length, int offset);
+
+/* ============================================================================
+ * Vtable Registry (for complex schema hierarchies)
+ * ============================================================================ */
+
+/* Register a vtable by name for handshake matching */
+void colyseus_schema_register_vtable(const colyseus_schema_vtable_t* vtable);
+
+/* Get a registered vtable by name */
+const colyseus_schema_vtable_t* colyseus_schema_get_vtable(const char* name);
+
+/* Clear all registered vtables */
+void colyseus_schema_clear_registry(void);
 
 #ifdef __cplusplus
 }
