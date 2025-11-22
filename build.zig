@@ -177,9 +177,18 @@ pub fn build(b: *std.Build) void {
             "src/common/settings.c",
             "src/client.c",
             "src/room.c",
+
             // Network
             "src/network/http.c",
             "src/network/websocket_transport.c",
+
+            // Schema
+            "src/schema/decode.c",
+            "src/schema/ref_tracker.c",
+            "src/schema/collections.c",
+            "src/schema/decoder.c",
+            "src/schema/serializer.c",
+
             // Utils
             "src/utils/strUtil.c",
             "src/utils/sha1_c.c",
@@ -245,6 +254,12 @@ pub fn build(b: *std.Build) void {
         "settings.h",
         "transport.h",
         "websocket_transport.h",
+        "schema/schema.h",
+        "schema/types.h",
+        "schema/decode.h",
+        "schema/ref_tracker.h",
+        "schema/collections.h",
+        "schema/decoder.h",
         "utils/sha1_c.h",
         "utils/strUtil.h",
         "auth/auth.h",

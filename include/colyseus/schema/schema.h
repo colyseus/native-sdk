@@ -53,12 +53,9 @@
  * player_t* state = (player_t*)colyseus_decoder_get_state(decoder);
  */
 
-#include "types.h"
-#include "schema/types.h"
-#include "schema/decode.h"
-#include "schema/collections.h"
-#include "schema/ref_tracker.h"
-#include "schema/decoder.h"
+#include "colyseus/schema/types.h"
+#include "colyseus/schema/decode.h"
+
 
 #ifdef __cplusplus
 extern "C" {

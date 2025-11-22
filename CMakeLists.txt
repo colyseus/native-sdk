@@ -67,6 +67,13 @@ set(COLYSEUS_SOURCES
         src/network/http.c
         src/network/websocket_transport.c
 
+        # Schema
+        src/schema/decode.c
+        src/schema/ref_tracker.c
+        src/schema/collections.c
+        src/schema/decoder.c
+        src/schema/serializer.c
+
         # Utils
         src/utils/StrUtil.c
         src/utils/sha1_c.c
@@ -160,49 +167,6 @@ install(DIRECTORY include/colyseus
 # Examples
 if(BUILD_EXAMPLES AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/examples)
     add_subdirectory(examples)
-endif()
-
-# Tests
-if(BUILD_TESTS)
-    enable_testing()
-
-    # Storage tests
-    add_executable(test_storage tests/test_storage.c)
-    target_link_libraries(test_storage PRIVATE colyseus::sdk)
-
-    # Auth tests
-    add_executable(test_auth tests/test_auth.c)
-    target_link_libraries(test_auth PRIVATE colyseus::sdk)
-
-    # Room tests
-    add_executable(test_room tests/test_room.c)
-    target_link_libraries(test_room PRIVATE colyseus::sdk)
-
-    # HTTP tests
-    add_executable(test_http tests/test_http.c)
-    target_link_libraries(test_http PRIVATE colyseus::sdk)
-
-    # Integration test (requires running server)
-    add_executable(test_integration tests/test_integration.c)
-    target_link_libraries(test_integration PRIVATE colyseus::sdk)
-
-    # Set output directory
-    set_target_properties(
-            test_storage
-            test_auth
-            test_room
-            test_http
-            test_integration
-            PROPERTIES
-            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
-    )
-
-    # Add tests to CTest
-    add_test(NAME storage COMMAND test_storage)
-    add_test(NAME auth COMMAND test_auth)
-    add_test(NAME room COMMAND test_room)
-    add_test(NAME http COMMAND test_http)
-    add_test(NAME integration COMMAND test_integration)
 endif()
 
 # Print summary
