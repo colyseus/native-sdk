@@ -12,8 +12,10 @@
 extern "C" {
 #endif
 
-/* Forward declaration */
+/* Forward declarations */
 typedef struct colyseus_room colyseus_room_t;
+typedef struct colyseus_schema_serializer colyseus_schema_serializer_t;
+typedef struct colyseus_schema_vtable colyseus_schema_vtable_t;
 
 /* Room event callbacks */
 typedef void (*colyseus_room_on_join_fn)(void* userdata);
@@ -36,10 +38,20 @@ struct colyseus_room {
     char* room_id;
     char* session_id;
     char* reconnection_token;
+    char* serializer_id;
     bool has_joined;
 
     colyseus_transport_t* transport;
     colyseus_transport_factory_fn transport_factory;
+
+    /* Schema serializer */
+    colyseus_schema_serializer_t* serializer;
+    const colyseus_schema_vtable_t* state_vtable;
+
+    /* Connection callbacks (stored for async response) */
+    void (*connect_on_success)(void* userdata);
+    void (*connect_on_error)(int code, const char* message, void* userdata);
+    void* connect_userdata;
 
     /* Event callbacks */
     colyseus_room_on_join_fn on_join;
@@ -66,6 +78,12 @@ struct colyseus_room {
 colyseus_room_t* colyseus_room_create(const char* name, colyseus_transport_factory_fn transport_factory);
 void colyseus_room_free(colyseus_room_t* room);
 
+/* Set state type - must be called before connect for schema serialization */
+void colyseus_room_set_state_type(colyseus_room_t* room, const colyseus_schema_vtable_t* state_vtable);
+
+/* Get current state (returns pointer to schema state, or NULL if not available) */
+void* colyseus_room_get_state(colyseus_room_t* room);
+
 /* Connection */
 void colyseus_room_connect(
     colyseus_room_t* room,
@@ -87,6 +105,8 @@ void colyseus_room_set_session_id(colyseus_room_t* room, const char* session_id)
 const char* colyseus_room_get_name(const colyseus_room_t* room);
 bool colyseus_room_has_joined(const colyseus_room_t* room);
 
+const char* colyseus_room_get_reconnection_token(const colyseus_room_t* room);
+
 /* Event handlers */
 void colyseus_room_on_join(colyseus_room_t* room, colyseus_room_on_join_fn callback, void* userdata);
 void colyseus_room_on_state_change(colyseus_room_t* room, colyseus_room_on_state_change_fn callback, void* userdata);
@@ -100,10 +120,10 @@ void colyseus_room_on_message_any(colyseus_room_t* room, colyseus_room_on_messag
 
 /* Convenience macros */
 #define colyseus_room_on_message(room, type, callback, userdata) \
-colyseus_room_on_message_str(room, type, callback, userdata)
+    colyseus_room_on_message_str(room, type, callback, userdata)
 
 #define colyseus_room_on_message_index(room, type, callback, userdata) \
-colyseus_room_on_message_int(room, type, callback, userdata)
+    colyseus_room_on_message_int(room, type, callback, userdata)
 
 /* Send messages */
 void colyseus_room_send_str(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
@@ -111,7 +131,7 @@ void colyseus_room_send_int(colyseus_room_t* room, int type, const uint8_t* mess
 
 /* Convenience macro */
 #define colyseus_room_send(room, type, message, length) \
-colyseus_room_send_str(room, type, message, length)
+    colyseus_room_send_str(room, type, message, length)
 
 #ifdef __cplusplus
 }
