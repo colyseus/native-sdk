@@ -1,0 +1,66 @@
+#ifndef COLYSEUS_SCHEMA_REF_TRACKER_H
+#define COLYSEUS_SCHEMA_REF_TRACKER_H
+
+#include "types.h"
+#include "uthash.h"
+#include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+    /*
+     * Reference Tracker
+     *
+     * Tracks all schema/collection references by refId.
+     * Manages reference counting and garbage collection.
+     */
+
+    /* Reference entry in hash table */
+    typedef struct {
+        int ref_id;
+        void* ref;                  /* Pointer to schema or collection */
+        int ref_count;
+        bool is_schema;             /* true if schema, false if collection */
+        UT_hash_handle hh;
+    } colyseus_ref_entry_t;
+
+    /* Deleted ref entry */
+    typedef struct colyseus_deleted_ref {
+        int ref_id;
+        struct colyseus_deleted_ref* next;
+    } colyseus_deleted_ref_t;
+
+    /* Reference tracker */
+    struct colyseus_ref_tracker {
+        colyseus_ref_entry_t* refs;         /* Hash table of refs */
+        colyseus_deleted_ref_t* deleted;    /* List of refs pending deletion */
+    };
+
+    /* Create/destroy tracker */
+    colyseus_ref_tracker_t* colyseus_ref_tracker_create(void);
+    void colyseus_ref_tracker_free(colyseus_ref_tracker_t* tracker);
+
+    /* Add a reference */
+    void colyseus_ref_tracker_add(colyseus_ref_tracker_t* tracker, int ref_id, void* ref, bool is_schema, bool increment_count);
+
+    /* Get a reference by ID */
+    void* colyseus_ref_tracker_get(colyseus_ref_tracker_t* tracker, int ref_id);
+
+    /* Check if reference exists */
+    bool colyseus_ref_tracker_has(colyseus_ref_tracker_t* tracker, int ref_id);
+
+    /* Remove a reference (decrements count, schedules for GC if count reaches 0) */
+    bool colyseus_ref_tracker_remove(colyseus_ref_tracker_t* tracker, int ref_id);
+
+    /* Run garbage collection */
+    void colyseus_ref_tracker_gc(colyseus_ref_tracker_t* tracker);
+
+    /* Clear all references */
+    void colyseus_ref_tracker_clear(colyseus_ref_tracker_t* tracker);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* COLYSEUS_SCHEMA_REF_TRACKER_H */
