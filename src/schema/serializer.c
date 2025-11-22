@@ -1,4 +1,4 @@
-#include "colyseus/schema/schema.h"
+#include "colyseus/schema.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

@@ -88,7 +88,8 @@ float colyseus_decode_number(const uint8_t* bytes, colyseus_iterator_t* it) {
 }
 
 int8_t colyseus_decode_int8(const uint8_t* bytes, colyseus_iterator_t* it) {
-    return (int8_t)((colyseus_decode_uint8(bytes, it) << 24) >> 24);
+    uint8_t val = colyseus_decode_uint8(bytes, it);
+    return (int8_t)val;
 }
 
 uint8_t colyseus_decode_uint8(const uint8_t* bytes, colyseus_iterator_t* it) {
