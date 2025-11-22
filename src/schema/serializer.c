@@ -1,6 +1,8 @@
-#include "colyseus/schema.h"
+#include "colyseus/schema/schema.h"
 #include <stdlib.h>
 #include <string.h>
+
+#include "colyseus/schema/decoder.h"
 
 colyseus_schema_serializer_t* colyseus_schema_serializer_create(const colyseus_schema_vtable_t* state_vtable) {
     colyseus_schema_serializer_t* serializer = malloc(sizeof(colyseus_schema_serializer_t));
