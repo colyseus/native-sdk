@@ -1,6 +1,8 @@
 # Colyseus Native SDK
 
-Native SDK for the [Colyseus](https://colyseus.io/) multiplayer game server.
+> This repository is under active development. Not currently at a usable state. Contributions are welcome.
+
+Cross-platform Native SDK for [Colyseus](https://colyseus.io/). Aimed to be used for all native targets, such as Godot, Unreal Engine, Game Maker, and more.
 
 ## 🚀 Building the Project
 
@@ -61,7 +63,7 @@ cmake --build .
 ```
 native-sdk/
 ├── build.zig              # Zig build configuration
-├── CMakeLists.txt         # CMake build configuration  
+├── CMakeLists.txt         # CMake build configuration
 ├── include/               # Public API headers
 ├── src/                   # Implementation
 ├── examples/              # Example programs
