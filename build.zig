@@ -177,9 +177,18 @@ pub fn build(b: *std.Build) void {
             "src/common/settings.c",
             "src/client.c",
             "src/room.c",
+
             // Network
             "src/network/http.c",
             "src/network/websocket_transport.c",
+
+            // Schema
+            "src/schema/decode.c",
+            "src/schema/ref_tracker.c",
+            "src/schema/collections.c",
+            "src/schema/decoder.c",
+            "src/schema/serializer.c",
+
             // Utils
             "src/utils/strUtil.c",
             "src/utils/sha1_c.c",
@@ -245,6 +254,12 @@ pub fn build(b: *std.Build) void {
         "settings.h",
         "transport.h",
         "websocket_transport.h",
+        "schema.h",
+        "schema/types.h",
+        "schema/decode.h",
+        "schema/ref_tracker.h",
+        "schema/collections.h",
+        "schema/decoder.h",
         "utils/sha1_c.h",
         "utils/strUtil.h",
         "auth/auth.h",
@@ -355,6 +370,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_auth", .file = "tests/test_auth.zig", .description = "Run authentication tests" },
         .{ .name = "test_room", .file = "tests/test_room.zig", .description = "Run room tests" },
         .{ .name = "test_storage", .file = "tests/test_storage.zig", .description = "Run storage tests" },
+        .{ .name = "test_schema", .file = "tests/test_schema.zig", .description = "Run schema tests" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
     };
