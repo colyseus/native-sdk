@@ -229,27 +229,24 @@ static void client_on_matchmake_success(const colyseus_http_response_t* response
     }
 
     /* Parse room data */
-    cJSON* room = cJSON_GetObjectItem(json, "room");
-    if (room) {
-        cJSON* room_id = cJSON_GetObjectItem(room, "roomId");
-        if (room_id && cJSON_IsString(room_id)) {
-            reservation.room.room_id = strdup(room_id->valuestring);
-        }
+    cJSON* room_id = cJSON_GetObjectItem(json, "roomId");
+    if (room_id && cJSON_IsString(room_id)) {
+        reservation.room.room_id = strdup(room_id->valuestring);
+    }
 
-        cJSON* name = cJSON_GetObjectItem(room, "name");
-        if (name && cJSON_IsString(name)) {
-            reservation.room.name = strdup(name->valuestring);
-        }
+    cJSON* name = cJSON_GetObjectItem(json, "name");
+    if (name && cJSON_IsString(name)) {
+        reservation.room.name = strdup(name->valuestring);
+    }
 
-        cJSON* process_id = cJSON_GetObjectItem(room, "processId");
-        if (process_id && cJSON_IsString(process_id)) {
-            reservation.room.process_id = strdup(process_id->valuestring);
-        }
+    cJSON* process_id = cJSON_GetObjectItem(json, "processId");
+    if (process_id && cJSON_IsString(process_id)) {
+        reservation.room.process_id = strdup(process_id->valuestring);
+    }
 
-        cJSON* public_address = cJSON_GetObjectItem(room, "publicAddress");
-        if (public_address && cJSON_IsString(public_address)) {
-            reservation.room.public_address = strdup(public_address->valuestring);
-        }
+    cJSON* public_address = cJSON_GetObjectItem(json, "publicAddress");
+    if (public_address && cJSON_IsString(public_address)) {
+        reservation.room.public_address = strdup(public_address->valuestring);
     }
 
     cJSON_Delete(json);
