@@ -3,6 +3,7 @@ const testing = std.testing;
 
 const c = @cImport({
     @cInclude("colyseus/client.h");
+    @cInclude("schema/my_room_state.h");
     @cInclude("string.h");
 });
 
@@ -54,6 +55,9 @@ fn onError(code: c_int, message: [*c]const u8, userdata: ?*anyopaque) callconv(.
 }
 
 fn onRoomSuccess(room: [*c]c.colyseus_room_t, userdata: ?*anyopaque) callconv(.c) void {
+    // Set state type before room processes join message
+    c.colyseus_room_set_state_type(room, &c.my_room_state_vtable);
+
     c.colyseus_room_on_join(room, onJoin, null);
     c.colyseus_room_on_state_change(room, onStateChange, null);
     c.colyseus_room_on_message_any(room, onMessageAny, null);
@@ -109,6 +113,12 @@ test "integration: full connection flow" {
     c.colyseus_room_send(room.?, "test", &test_msg, test_msg.len);
 
     std.Thread.sleep(50 * std.time.ns_per_ms);
+
+    // Test if room state has mySynchronizedProperty
+    const state_ptr = c.colyseus_room_get_state(room.?);
+    try testing.expect(state_ptr != null);
+    const state: *const c.my_room_state_t = @ptrCast(@alignCast(state_ptr));
+    try testing.expectEqualStrings("Hello world", std.mem.span(state.mySynchronizedProperty));
 
     c.colyseus_room_leave(room.?, true);
     defer c.colyseus_room_free(room.?);

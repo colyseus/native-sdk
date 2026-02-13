@@ -394,6 +394,7 @@ pub fn build(b: *std.Build) void {
 
         test_exe.linkLibC();
         test_exe.addIncludePath(b.path("include"));
+        test_exe.addIncludePath(b.path("tests"));
         test_exe.addIncludePath(b.path("third_party/uthash/src"));
         test_exe.addIncludePath(b.path("third_party/sds"));
         test_exe.addIncludePath(b.path("third_party/cJSON"));
