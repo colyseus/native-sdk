@@ -1,0 +1,22 @@
+# Godot-specific
+.godot/
+*.import
+*.translation
+
+# Build artifacts
+bin/
+*.so
+*.dll
+*.dylib
+*.framework
+
+# Zig
+.zig-cache/
+zig-out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
