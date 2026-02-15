@@ -56,6 +56,9 @@ void colyseus_ref_tracker_add(colyseus_ref_tracker_t* tracker, int ref_id, void*
 /* Get a reference by ID */
 void* colyseus_ref_tracker_get(colyseus_ref_tracker_t* tracker, int ref_id);
 
+/* Get a reference entry by ID (returns full entry with type info) */
+colyseus_ref_entry_t* colyseus_ref_tracker_get_entry(colyseus_ref_tracker_t* tracker, int ref_id);
+
 /* Check if reference exists */
 bool colyseus_ref_tracker_has(colyseus_ref_tracker_t* tracker, int ref_id);
 

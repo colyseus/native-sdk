@@ -73,6 +73,7 @@ set(COLYSEUS_SOURCES
         src/schema/collections.c
         src/schema/decoder.c
         src/schema/serializer.c
+        src/schema/callbacks.c
 
         # Utils
         src/utils/StrUtil.c

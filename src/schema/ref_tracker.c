@@ -75,6 +75,15 @@ void* colyseus_ref_tracker_get(colyseus_ref_tracker_t* tracker, int ref_id) {
     return entry ? entry->ref : NULL;
 }
 
+colyseus_ref_entry_t* colyseus_ref_tracker_get_entry(colyseus_ref_tracker_t* tracker, int ref_id) {
+    if (!tracker) return NULL;
+
+    colyseus_ref_entry_t* entry = NULL;
+    HASH_FIND_INT(tracker->refs, &ref_id, entry);
+
+    return entry;
+}
+
 bool colyseus_ref_tracker_has(colyseus_ref_tracker_t* tracker, int ref_id) {
     if (!tracker) return false;
 
@@ -151,26 +160,33 @@ static void schedule_children_for_removal(colyseus_ref_tracker_t* tracker, colys
 
     switch (entry->ref_type) {
         case COLYSEUS_REF_TYPE_SCHEMA: {
-            if (!entry->vtable) break;
+            if (!entry->vtable || !entry->vtable->fields) break;
 
             colyseus_schema_t* schema = (colyseus_schema_t*)entry->ref;
 
             /* Iterate through schema fields looking for ref children */
             for (int i = 0; i < entry->vtable->field_count; i++) {
                 const colyseus_field_t* field = &entry->vtable->fields[i];
+
+                /* Only process ref/array/map fields - skip primitives entirely
+                 * to avoid reading non-pointer fields as pointers */
+                if (field->type != COLYSEUS_FIELD_REF &&
+                    field->type != COLYSEUS_FIELD_ARRAY &&
+                    field->type != COLYSEUS_FIELD_MAP) {
+                    continue;
+                }
+
                 void* field_ptr = (char*)schema + field->offset;
                 void* field_value = *(void**)field_ptr;
 
                 if (!field_value) continue;
 
-                if (field->type == COLYSEUS_FIELD_REF ||
-                    field->type == COLYSEUS_FIELD_ARRAY ||
-                    field->type == COLYSEUS_FIELD_MAP) {
+                int child_ref_id = COLYSEUS_REF_ID(field_value);
 
-                    int child_ref_id = COLYSEUS_REF_ID(field_value);
-                    if (!is_in_deleted_list(tracker, child_ref_id)) {
-                        colyseus_ref_tracker_remove(tracker, child_ref_id);
-                    }
+                /* Verify the child actually exists in the tracker before removing */
+                if (colyseus_ref_tracker_has(tracker, child_ref_id) &&
+                    !is_in_deleted_list(tracker, child_ref_id)) {
+                    colyseus_ref_tracker_remove(tracker, child_ref_id);
                 }
             }
             break;

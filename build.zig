@@ -188,6 +188,7 @@ pub fn build(b: *std.Build) void {
             "src/schema/collections.c",
             "src/schema/decoder.c",
             "src/schema/serializer.c",
+            "src/schema/callbacks.c",
 
             // Utils
             "src/utils/strUtil.c",
@@ -260,6 +261,7 @@ pub fn build(b: *std.Build) void {
         "schema/ref_tracker.h",
         "schema/collections.h",
         "schema/decoder.h",
+        "schema/callbacks.h",
         "utils/sha1_c.h",
         "utils/strUtil.h",
         "auth/auth.h",
@@ -373,6 +375,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_schema", .file = "tests/test_schema.zig", .description = "Run schema tests" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
+        .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
     };
 
     // Build each Zig test

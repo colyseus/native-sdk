@@ -308,33 +308,54 @@ void colyseus_schema_serializer_handshake(colyseus_schema_serializer_t* serializ
     /* Build list of local vtables from state_vtable and its children */
     const colyseus_schema_vtable_t* state_vtable = serializer->decoder->state_vtable;
 
-    /* Simple approach: iterate reflection types and try to match with state_vtable */
-    colyseus_array_item_t* item = reflection->types->items;
-    while (item) {
-        reflection_type_t* ref_type = (reflection_type_t*)item->value;
-        if (!ref_type) {
+    /* 
+     * Recursively match vtables with reflection types.
+     * We need to traverse the entire vtable tree (state -> children -> grandchildren)
+     * to register all schema types with the decoder's type context.
+     */
+    #define MAX_VTABLES 64
+    const colyseus_schema_vtable_t* vtable_queue[MAX_VTABLES];
+    int queue_head = 0;
+    int queue_tail = 0;
+
+    /* Add state vtable to queue */
+    vtable_queue[queue_tail++] = state_vtable;
+
+    /* Process vtables in BFS order */
+    while (queue_head < queue_tail) {
+        const colyseus_schema_vtable_t* vt = vtable_queue[queue_head++];
+        if (!vt) continue;
+
+        /* Try to match this vtable with reflection types */
+        colyseus_array_item_t* item = reflection->types->items;
+        while (item) {
+            reflection_type_t* ref_type = (reflection_type_t*)item->value;
+            if (ref_type && compare_vtable_with_reflection(vt, ref_type, reflection)) {
+                colyseus_type_context_set(serializer->decoder->context, (int)ref_type->id, vt);
+            }
             item = item->next;
-            continue;
         }
 
-        /* Try to match with state vtable */
-        if (compare_vtable_with_reflection(state_vtable, ref_type, reflection)) {
-            colyseus_type_context_set(serializer->decoder->context, (int)ref_type->id, state_vtable);
-        }
-
-        /* Try to match with child vtables */
-        for (int i = 0; i < state_vtable->field_count; i++) {
-            const colyseus_field_t* field = &state_vtable->fields[i];
-            if (field->child_vtable) {
-                if (compare_vtable_with_reflection(field->child_vtable, ref_type, reflection)) {
-                    colyseus_type_context_set(serializer->decoder->context,
-                        (int)ref_type->id, field->child_vtable);
+        /* Add child vtables to queue (if not already processed) */
+        for (int i = 0; i < vt->field_count; i++) {
+            const colyseus_field_t* field = &vt->fields[i];
+            if (field->child_vtable && queue_tail < MAX_VTABLES) {
+                /* Check if already in queue */
+                bool found = false;
+                for (int j = 0; j < queue_tail; j++) {
+                    if (vtable_queue[j] == field->child_vtable) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    vtable_queue[queue_tail++] = field->child_vtable;
                 }
             }
         }
-
-        item = item->next;
     }
+
+    #undef MAX_VTABLES
 
     /* Cleanup */
     colyseus_decoder_free(ref_decoder);

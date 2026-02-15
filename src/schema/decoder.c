@@ -130,37 +130,24 @@ typedef struct decode_ref_info {
     UT_hash_handle hh;
 } decode_ref_info_t;
 
-static decode_ref_info_t* g_ref_types = NULL;
-
-static void set_ref_type(int ref_id, decode_ref_type_t type) {
-    decode_ref_info_t* info = NULL;
-    HASH_FIND_INT(g_ref_types, &ref_id, info);
-    if (info) {
-        info->type = type;
-    } else {
-        info = malloc(sizeof(decode_ref_info_t));
-        if (info) {
-            info->ref_id = ref_id;
-            info->type = type;
-            HASH_ADD_INT(g_ref_types, ref_id, info);
-        }
+/* Get decode ref type from ref_tracker's stored type */
+static decode_ref_type_t get_ref_type(colyseus_decoder_t* decoder, int ref_id) {
+    if (!decoder || !decoder->refs) return DECODE_REF_UNKNOWN;
+    
+    colyseus_ref_entry_t* entry = colyseus_ref_tracker_get_entry(decoder->refs, ref_id);
+    if (!entry) return DECODE_REF_UNKNOWN;
+    
+    /* Map ref_tracker's ref_type to decode_ref_type */
+    switch (entry->ref_type) {
+        case COLYSEUS_REF_TYPE_SCHEMA:
+            return DECODE_REF_SCHEMA;
+        case COLYSEUS_REF_TYPE_ARRAY:
+            return DECODE_REF_ARRAY;
+        case COLYSEUS_REF_TYPE_MAP:
+            return DECODE_REF_MAP;
+        default:
+            return DECODE_REF_UNKNOWN;
     }
-}
-
-static decode_ref_type_t get_ref_type(int ref_id) {
-    decode_ref_info_t* info = NULL;
-    HASH_FIND_INT(g_ref_types, &ref_id, info);
-    return info ? info->type : DECODE_REF_UNKNOWN;
-}
-
-static void clear_ref_types(void) {
-    decode_ref_info_t* info;
-    decode_ref_info_t* tmp;
-    HASH_ITER(hh, g_ref_types, info, tmp) {
-        HASH_DEL(g_ref_types, info);
-        free(info);
-    }
-    g_ref_types = NULL;
 }
 
 /* ============================================================================
@@ -383,7 +370,6 @@ static void* decode_value(
                 if (value) {
                     ((colyseus_schema_t*)value)->__refId = ref_id;
                     ((colyseus_schema_t*)value)->__vtable = concrete_type;
-                    set_ref_type(ref_id, DECODE_REF_SCHEMA);
                 }
             }
 
@@ -416,10 +402,12 @@ static void* decode_value(
             } else if (child_primitive_type) {
                 colyseus_array_schema_set_child_primitive(arr, child_primitive_type);
             }
-            set_ref_type(ref_id, DECODE_REF_ARRAY);
         }
 
-        bool increment = (arr_ref != previous_value) ||
+        /* For new arrays (arr_ref==NULL), always increment so ref_count starts at 1.
+         * For existing arrays, increment when the reference changed. */
+        bool increment = (arr_ref == NULL) ||
+            (arr_ref != previous_value) ||
             (operation == (uint8_t)COLYSEUS_OP_DELETE_AND_ADD && arr_ref == previous_value);
 
         colyseus_ref_tracker_add(decoder->refs, ref_id, arr,
@@ -448,10 +436,12 @@ static void* decode_value(
             } else if (child_primitive_type) {
                 colyseus_map_schema_set_child_primitive(map, child_primitive_type);
             }
-            set_ref_type(ref_id, DECODE_REF_MAP);
         }
 
-        bool increment = (map_ref != previous_value) ||
+        /* For new maps (map_ref==NULL), always increment so ref_count starts at 1.
+         * For existing maps, increment when the reference changed. */
+        bool increment = (map_ref == NULL) ||
+            (map_ref != previous_value) ||
             (operation == (uint8_t)COLYSEUS_OP_DELETE_AND_ADD && map_ref == previous_value);
 
         colyseus_ref_tracker_add(decoder->refs, ref_id, map,
@@ -742,9 +732,6 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
     void* _ref = decoder->state;
     decode_ref_type_t current_ref_type = DECODE_REF_SCHEMA;
 
-    /* Mark root state as schema */
-    set_ref_type(0, DECODE_REF_SCHEMA);
-
     colyseus_changes_clear(decoder->changes);
 
     while (it->offset < (int)length) {
@@ -760,11 +747,11 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
 
             _ref = colyseus_ref_tracker_get(decoder->refs, ref_id);
             if (!_ref) {
-                fprintf(stderr, "refId not found: %d\n", ref_id);
+                /* refId not in tracker - might be from stale message during cleanup */
                 return;
             }
 
-            current_ref_type = get_ref_type(ref_id);
+            current_ref_type = get_ref_type(decoder, ref_id);
             continue;
         }
 
@@ -817,7 +804,4 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
 
     /* Run garbage collection */
     colyseus_ref_tracker_gc(decoder->refs);
-
-    /* Clear ref type tracking for next decode */
-    clear_ref_types();
 }

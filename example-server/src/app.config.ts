@@ -10,10 +10,12 @@ import {
  * Import your Room files
  */
 import { MyRoom } from "./rooms/MyRoom";
+import { TestRoom } from "./rooms/TestRoom";
 
 export const server = defineServer({
     rooms: {
-        my_room: defineRoom(MyRoom)
+        my_room: defineRoom(MyRoom),
+        test_room: defineRoom(TestRoom),
     },
 
     express: (app) => {
