@@ -673,6 +673,17 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
         ? get_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field)
         : get_schema_field(schema, field);
     void* value = NULL;
+    
+    /* For string fields being deleted, we need to duplicate previous_value before it gets freed.
+     * Otherwise the change record will point to freed memory when callbacks are triggered. */
+    // TODO: refactor this!
+    void* previous_value_for_change = previous_value;
+    bool owns_previous_value = false;
+    if (previous_value && field_type == COLYSEUS_FIELD_STRING && 
+        (operation & (uint8_t)COLYSEUS_OP_DELETE) == (uint8_t)COLYSEUS_OP_DELETE) {
+        previous_value_for_change = strdup((const char*)previous_value);
+        owns_previous_value = true;
+    }
 
     /* Handle DELETE operations */
     if ((operation & (uint8_t)COLYSEUS_OP_DELETE) == (uint8_t)COLYSEUS_OP_DELETE) {
@@ -704,9 +715,17 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
                 .field = field_name,
                 .dynamic_index = NULL,
                 .value = value,
-                .previous_value = previous_value
+                .previous_value = previous_value_for_change,
+                .field_type = field_type,
+                .owns_previous_value = owns_previous_value
             };
             colyseus_changes_add(decoder->changes, &change);
+            /* Transfer ownership of duplicated string to changes - don't free here */
+            owns_previous_value = false;
+        }
+        /* Free duplicated string if change wasn't added */
+        if (owns_previous_value) {
+            free(previous_value_for_change);
         }
         return true;
     }
@@ -741,9 +760,18 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
             .field = field_name,
             .dynamic_index = NULL,
             .value = value,
-            .previous_value = previous_value
+            .previous_value = previous_value_for_change,
+            .field_type = field_type,
+            .owns_previous_value = owns_previous_value
         };
         colyseus_changes_add(decoder->changes, &change);
+        /* Transfer ownership of duplicated string to changes - don't free here */
+        owns_previous_value = false;
+    }
+    
+    /* Free duplicated string if change wasn't added */
+    if (owns_previous_value) {
+        free(previous_value_for_change);
     }
 
     return true;
@@ -809,7 +837,9 @@ static bool decode_map_schema(colyseus_decoder_t* decoder, const uint8_t* bytes,
             .field = NULL,
             .dynamic_index = dynamic_index,  /* Ownership transfers */
             .value = value,
-            .previous_value = previous_value
+            .previous_value = previous_value,
+            .field_type = map->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
+            .owns_previous_value = false
         };
         colyseus_changes_add(decoder->changes, &change);
     } else {
@@ -858,7 +888,9 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
                 .field = NULL,
                 .dynamic_index = idx_ptr,
                 .value = NULL,
-                .previous_value = item_by_ref
+                .previous_value = item_by_ref,
+                .field_type = arr->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
+                .owns_previous_value = false
             };
             colyseus_changes_add(decoder->changes, &change);
         }
@@ -915,7 +947,9 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
             .field = NULL,
             .dynamic_index = idx_ptr,
             .value = value,
-            .previous_value = previous_value
+            .previous_value = previous_value,
+            .field_type = arr->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
+            .owns_previous_value = false
         };
         colyseus_changes_add(decoder->changes, &change);
     }

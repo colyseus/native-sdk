@@ -1,24 +1,29 @@
+class_name ColyseusSchema
 ## Colyseus Schema Definition Library
 ## 
 ## This library allows you to define your state schema in GDScript.
 ## 
-## Example:
-##   const colyseus = preload("res://addons/godot_colyseus/lib/colyseus.gd")
+## Example (using global class_name):
 ##   
-##   class Player extends colyseus.Schema:
+##   class Player extends ColyseusSchema.Schema:
 ##       static func definition():
 ##           return [
-##               colyseus.Field.new("x", colyseus.NUMBER),
-##               colyseus.Field.new("y", colyseus.NUMBER)
+##               ColyseusSchema.Field.new("x", ColyseusSchema.NUMBER),
+##               ColyseusSchema.Field.new("y", ColyseusSchema.NUMBER)
 ##           ]
 ##   
-##   class RoomState extends colyseus.Schema:
+##   class RoomState extends ColyseusSchema.Schema:
 ##       static func definition():
 ##           return [
-##               colyseus.Field.new("players", colyseus.MAP, Player),
+##               ColyseusSchema.Field.new("players", ColyseusSchema.MAP, Player),
 ##           ]
 ##   
 ##   room.set_state_type(RoomState)
+##
+## Alternative (using preload):
+##   const Colyseus = preload("res://addons/colyseus/schema.gd")
+##   class Player extends Colyseus.Schema:
+##       ...
 
 # =============================================================================
 # Type Constants
@@ -108,6 +113,15 @@ class Schema extends RefCounted:
 	var __fields: Dictionary = {}
 	## Internal: Reference to the schema vtable/definition
 	var __vtable = null
+	## Internal: Cache of field definitions
+	var __field_defs: Array = []
+	
+	func _init():
+		# Initialize fields with default values from definition
+		__field_defs = definition()
+		for field in __field_defs:
+			if field is Field:
+				__fields[field.name] = ColyseusSchema.get_default_value(field.type)
 	
 	## Override this in your subclass to define the schema fields.
 	## Returns an array of Field objects.
@@ -150,14 +164,23 @@ class Schema extends RefCounted:
 		var prop_str = str(property)
 		if __fields.has(prop_str):
 			return __fields[prop_str]
+		# Check if it's a known field from definition and return default
+		for field in __field_defs:
+			if field is Field and field.name == prop_str:
+				return ColyseusSchema.get_default_value(field.type)
 		return null
 	
 	func _set(property: StringName, value) -> bool:
 		var prop_str = str(property)
-		# Only allow setting known fields
+		# Allow setting known fields or internal properties
 		if __fields.has(prop_str) or prop_str.begins_with("__"):
 			__fields[prop_str] = value
 			return true
+		# Check if it's a known field from definition
+		for field in __field_defs:
+			if field is Field and field.name == prop_str:
+				__fields[prop_str] = value
+				return true
 		return false
 	
 	func _get_property_list() -> Array:

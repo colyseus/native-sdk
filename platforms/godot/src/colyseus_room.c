@@ -313,19 +313,25 @@ void gdext_colyseus_room_has_joined(void* p_method_userdata, GDExtensionClassIns
     }
 }
 
-// ptrcall version - returns Dictionary directly
-void gdext_colyseus_room_get_state_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+/*
+ * get_state() - Returns the room state
+ * 
+ * If a GDScript schema class was set via set_state_type(), returns the typed
+ * GDScript instance. Otherwise, returns a Dictionary representation.
+ */
+// get_state - uses ptrcall signature like other working methods (has_joined, get_id, etc.)
+void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata;
     (void)p_args;
     
-    Dictionary* result = (Dictionary*)r_ret;
-    if (!result) return;
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
     
-    // Initialize result dictionary
+    // Create a Dictionary to return
+    Dictionary* result = (Dictionary*)r_ret;
     constructors.dictionary_constructor(result, NULL);
     
-    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
     if (!wrapper || !wrapper->native_room) {
+        // Return empty dictionary
         return;
     }
     
@@ -343,6 +349,7 @@ void gdext_colyseus_room_get_state_ptrcall(void* p_method_userdata, GDExtensionC
             colyseus_schema_to_dictionary((colyseus_schema_t*)state, vtable, result);
         }
     }
+    // If no state, just return the empty dictionary we created
 }
 
 /*

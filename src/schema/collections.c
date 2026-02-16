@@ -41,6 +41,14 @@ void colyseus_changes_add(colyseus_changes_t* changes, colyseus_data_change_t* c
 
 void colyseus_changes_clear(colyseus_changes_t* changes) {
     if (!changes) return;
+    
+    /* Free owned previous_value strings for deleted string fields */
+    for (int i = 0; i < changes->count; i++) {
+        if (changes->items[i].owns_previous_value && changes->items[i].previous_value) {
+            free(changes->items[i].previous_value);
+        }
+    }
+    
     changes->count = 0;
 }
 
@@ -216,7 +224,9 @@ void colyseus_array_schema_clear(colyseus_array_schema_t* arr, colyseus_changes_
                 .field = NULL,
                 .dynamic_index = malloc(sizeof(int)),
                 .value = NULL,
-                .previous_value = item->value
+                .previous_value = item->value,
+                .field_type = arr->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
+                .owns_previous_value = false
             };
             if (change.dynamic_index) {
                 *(int*)change.dynamic_index = item->index;
@@ -480,7 +490,9 @@ void colyseus_map_schema_clear(colyseus_map_schema_t* map, colyseus_changes_t* c
                 .field = NULL,
                 .dynamic_index = strdup(item->key),
                 .value = NULL,
-                .previous_value = item->value
+                .previous_value = item->value,
+                .field_type = map->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
+                .owns_previous_value = false
             };
             colyseus_changes_add(changes, &change);
         }

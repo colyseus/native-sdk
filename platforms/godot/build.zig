@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+
     // Get target information
     const os_tag = target.result.os.tag;
     const arch = target.result.cpu.arch;
@@ -122,10 +123,18 @@ pub fn build(b: *std.Build) void {
         lib.linkSystemLibrary("pthread");
     }
 
-    // Install to bin directory
-    const install_step = b.addInstallArtifact(lib, .{
-        .dest_dir = .{ .override = .{ .custom = "bin" } },
-    });
+    // Install to addons/colyseus/bin directory (relative to source root, not zig-out)
+    const lib_prefix = if (os_tag == .windows) "" else "lib";
+    const lib_ext = switch (os_tag) {
+        .macos => ".dylib",
+        .windows => ".dll",
+        else => ".so",
+    };
+    const install_file = b.addInstallFile(lib.getEmittedBin(), b.fmt("../addons/colyseus/bin/{s}{s}{s}", .{
+        lib_prefix,
+        lib_name,
+        lib_ext,
+    }));
 
-    b.getInstallStep().dependOn(&install_step.step);
+    b.getInstallStep().dependOn(&install_file.step);
 }

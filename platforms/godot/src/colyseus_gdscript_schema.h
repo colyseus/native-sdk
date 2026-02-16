@@ -94,51 +94,51 @@ void gdscript_value_to_variant(colyseus_dynamic_value_t* value, Variant* r_varia
  * Create a colyseus.Map instance in GDScript.
  * 
  * @param child_class The child type class (or NULL for primitives)
- * @return New GDScript Map object
+ * @return New GDScript Map object as Variant* (caller owns memory)
  */
-GDExtensionObjectPtr gdscript_create_map_instance(GDExtensionObjectPtr child_class);
+Variant* gdscript_create_map_instance(GDExtensionObjectPtr child_class);
 
 /*
  * Create a colyseus.ArraySchema instance in GDScript.
  * 
  * @param child_class The child type class (or NULL for primitives)
- * @return New GDScript ArraySchema object
+ * @return New GDScript ArraySchema object as Variant* (caller owns memory)
  */
-GDExtensionObjectPtr gdscript_create_array_instance(GDExtensionObjectPtr child_class);
+Variant* gdscript_create_array_instance(GDExtensionObjectPtr child_class);
 
 /*
  * Set an item in a GDScript Map instance.
  * 
- * @param map_obj The Map object
+ * @param map_variant The Map object as Variant*
  * @param key The key
  * @param value_variant The value as a Variant
  */
-void gdscript_map_set_item(GDExtensionObjectPtr map_obj, const char* key, Variant* value_variant);
+void gdscript_map_set_item(Variant* map_variant, const char* key, Variant* value_variant);
 
 /*
  * Remove an item from a GDScript Map instance.
  * 
- * @param map_obj The Map object
+ * @param map_variant The Map object as Variant*
  * @param key The key
  */
-void gdscript_map_remove_item(GDExtensionObjectPtr map_obj, const char* key);
+void gdscript_map_remove_item(Variant* map_variant, const char* key);
 
 /*
  * Set an item in a GDScript ArraySchema instance.
  * 
- * @param array_obj The ArraySchema object
+ * @param array_variant The ArraySchema object as Variant*
  * @param index The index
  * @param value_variant The value as a Variant
  */
-void gdscript_array_set_at(GDExtensionObjectPtr array_obj, int index, Variant* value_variant);
+void gdscript_array_set_at(Variant* array_variant, int index, Variant* value_variant);
 
 /*
  * Push an item to a GDScript ArraySchema instance.
  * 
- * @param array_obj The ArraySchema object
+ * @param array_variant The ArraySchema object as Variant*
  * @param value_variant The value as a Variant
  */
-void gdscript_array_push(GDExtensionObjectPtr array_obj, Variant* value_variant);
+void gdscript_array_push(Variant* array_variant, Variant* value_variant);
 
 #ifdef __cplusplus
 }

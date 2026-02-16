@@ -1,0 +1,11 @@
+[configuration]
+entry_symbol = "colyseus_sdk_init"
+compatibility_minimum = "4.1"
+
+[libraries]
+macos.debug = "res://addons/colyseus/bin/libcolyseus_godot.macos.debug.dylib"
+macos.release = "res://addons/colyseus/bin/libcolyseus_godot.macos.release.dylib"
+windows.debug.x86_64 = "res://addons/colyseus/bin/libcolyseus_godot.windows.x86_64.debug.dll"
+windows.release.x86_64 = "res://addons/colyseus/bin/libcolyseus_godot.windows.x86_64.release.dll"
+linux.debug.x86_64 = "res://addons/colyseus/bin/libcolyseus_godot.linux.x86_64.debug.so"
+linux.release.x86_64 = "res://addons/colyseus/bin/libcolyseus_godot.linux.x86_64.release.so"

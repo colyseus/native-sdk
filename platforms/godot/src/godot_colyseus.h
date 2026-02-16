@@ -191,8 +191,8 @@ void gdext_colyseus_room_get_session_id(void* p_method_userdata, GDExtensionClas
 void gdext_colyseus_room_get_name(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 void gdext_colyseus_room_has_joined(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 
-// get_state() - returns current state as Dictionary
-void gdext_colyseus_room_get_state_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+// get_state() - returns current state as Dictionary (uses ptrcall signature like other methods)
+void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 
 // set_state_type(type) - sets the schema vtable for state decoding
 // Accepts either:

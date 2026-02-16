@@ -73,6 +73,8 @@ typedef struct {
     void* dynamic_index;        /* int* for array, char* for map */
     void* value;
     void* previous_value;
+    colyseus_field_type_t field_type;  /* Field type - used for cleanup of string previous_value */
+    bool owns_previous_value;   /* If true, previous_value should be freed (for deleted strings) */
 } colyseus_data_change_t;
 
 /* Iterator for decoding */

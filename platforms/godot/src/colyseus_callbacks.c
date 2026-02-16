@@ -55,6 +55,43 @@ static int64_t variant_to_int64(GDExtensionConstVariantPtr var) {
     return result;
 }
 
+// Helper to extract __ref_id from a GDScript Schema object
+static int colyseus_extract_ref_id_from_object(GDExtensionConstVariantPtr obj_var) {
+    // Get the "__ref_id" property from the object
+    StringName prop_name;
+    constructors.string_name_new_with_latin1_chars(&prop_name, "__ref_id", false);
+    
+    // Call "get" method on the object variant
+    StringName get_method;
+    constructors.string_name_new_with_latin1_chars(&get_method, "get", false);
+    
+    String prop_str;
+    constructors.string_new_with_utf8_chars(&prop_str, "__ref_id");
+    Variant prop_var;
+    constructors.variant_from_string_constructor(&prop_var, &prop_str);
+    
+    GDExtensionConstVariantPtr args[1] = { &prop_var };
+    Variant result;
+    GDExtensionCallError error;
+    
+    api.variant_call((GDExtensionVariantPtr)obj_var, &get_method, args, 1, &result, &error);
+    
+    destructors.string_name_destructor(&get_method);
+    destructors.string_name_destructor(&prop_name);
+    destructors.variant_destroy(&prop_var);
+    destructors.string_destructor(&prop_str);
+    
+    if (error.error == GDEXTENSION_CALL_OK) {
+        int64_t ref_id = 0;
+        constructors.int_from_variant_constructor(&ref_id, &result);
+        destructors.variant_destroy(&result);
+        return (int)ref_id;
+    }
+    
+    destructors.variant_destroy(&result);
+    return -1;
+}
+
 // Find a free entry slot
 static GodotCallbackEntry* find_free_entry(ColyseusCallbacksWrapper* wrapper) {
     for (int i = 0; i < COLYSEUS_MAX_CALLBACK_ENTRIES; i++) {
@@ -149,10 +186,26 @@ static void native_value_to_variant(void* value, int field_type, const colyseus_
             colyseus_schema_t* schema = (colyseus_schema_t*)value;
             const colyseus_schema_vtable_t* vtable = item_vtable ? item_vtable : schema->__vtable;
             if (schema && vtable) {
-                Dictionary dict;
-                constructors.dictionary_constructor(&dict, NULL);
-                colyseus_schema_to_dictionary(schema, vtable, &dict);
-                constructors.variant_from_dictionary_constructor(out_variant, &dict);
+                // Check if this is a dynamic schema with GDScript userdata
+                if (colyseus_vtable_is_dynamic(vtable)) {
+                    colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
+                    if (dyn_schema->userdata) {
+                        // Return the GDScript instance directly
+                        api.variant_new_copy(out_variant, (Variant*)dyn_schema->userdata);
+                        break;
+                    }
+                    // Fall back to Dictionary for dynamic schema without userdata
+                    Dictionary dict;
+                    constructors.dictionary_constructor(&dict, NULL);
+                    colyseus_dynamic_schema_to_dictionary(dyn_schema, &dict);
+                    constructors.variant_from_dictionary_constructor(out_variant, &dict);
+                } else {
+                    // Static vtable - convert to Dictionary
+                    Dictionary dict;
+                    constructors.dictionary_constructor(&dict, NULL);
+                    colyseus_schema_to_dictionary(schema, vtable, &dict);
+                    constructors.variant_from_dictionary_constructor(out_variant, &dict);
+                }
             } else {
                 memset(out_variant, 0, sizeof(Variant));
             }
@@ -200,12 +253,26 @@ static void item_add_trampoline(void* value, void* key, void* userdata) {
     Variant value_variant;
     Variant key_variant;
     
-    // Convert value (schema) to Dictionary
+    // Convert value (schema) to GDScript instance or Dictionary
     if (value) {
         colyseus_schema_t* schema = (colyseus_schema_t*)value;
         const colyseus_schema_vtable_t* vtable = entry->item_vtable ? entry->item_vtable : schema->__vtable;
-        if (vtable) {
-            // Create Dictionary and convert schema
+        
+        // Check if this is a dynamic schema with GDScript userdata
+        if (vtable && colyseus_vtable_is_dynamic(vtable)) {
+            colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
+            if (dyn_schema->userdata) {
+                // Return the GDScript instance directly
+                api.variant_new_copy(&value_variant, (Variant*)dyn_schema->userdata);
+            } else {
+                // Fall back to Dictionary for dynamic schema without userdata
+                Dictionary dict;
+                constructors.dictionary_constructor(&dict, NULL);
+                colyseus_dynamic_schema_to_dictionary(dyn_schema, &dict);
+                constructors.variant_from_dictionary_constructor(&value_variant, &dict);
+            }
+        } else if (vtable) {
+            // Static vtable - convert to Dictionary
             Dictionary dict;
             constructors.dictionary_constructor(&dict, NULL);
             colyseus_schema_to_dictionary(schema, vtable, &dict);
@@ -261,11 +328,26 @@ static void item_remove_trampoline(void* value, void* key, void* userdata) {
     Variant value_variant;
     Variant key_variant;
     
-    // Convert value (schema) to Dictionary
+    // Convert value (schema) to GDScript instance or Dictionary
     if (value) {
         colyseus_schema_t* schema = (colyseus_schema_t*)value;
         const colyseus_schema_vtable_t* vtable = entry->item_vtable ? entry->item_vtable : schema->__vtable;
-        if (vtable) {
+        
+        // Check if this is a dynamic schema with GDScript userdata
+        if (vtable && colyseus_vtable_is_dynamic(vtable)) {
+            colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
+            if (dyn_schema->userdata) {
+                // Return the GDScript instance directly
+                api.variant_new_copy(&value_variant, (Variant*)dyn_schema->userdata);
+            } else {
+                // Fall back to Dictionary for dynamic schema without userdata
+                Dictionary dict;
+                constructors.dictionary_constructor(&dict, NULL);
+                colyseus_dynamic_schema_to_dictionary(dyn_schema, &dict);
+                constructors.variant_from_dictionary_constructor(&value_variant, &dict);
+            }
+        } else if (vtable) {
+            // Static vtable - convert to Dictionary
             Dictionary dict;
             constructors.dictionary_constructor(&dict, NULL);
             colyseus_schema_to_dictionary(schema, vtable, &dict);
@@ -537,6 +619,30 @@ void gdext_colyseus_callbacks_listen(
             }
         }
         
+    } else if (first_arg_type == GDEXTENSION_VARIANT_TYPE_OBJECT) {
+        // listen(schema_object, "property", callback) - GDScript Schema object
+        if (p_argument_count < 3) {
+            if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+            return;
+        }
+        
+        // Extract ref_id from GDScript object's __ref_id property
+        int ref_id = colyseus_extract_ref_id_from_object(p_args[0]);
+        property_name = variant_string_to_c_str(p_args[1]);
+        callable_arg = p_args[2];
+        
+        // Look up instance by ref_id
+        if (wrapper->room_wrapper && wrapper->room_wrapper->native_room &&
+            wrapper->room_wrapper->native_room->serializer &&
+            wrapper->room_wrapper->native_room->serializer->decoder) {
+            
+            colyseus_ref_tracker_t* refs = 
+                wrapper->room_wrapper->native_room->serializer->decoder->refs;
+            if (refs) {
+                instance = colyseus_ref_tracker_get(refs, ref_id);
+            }
+        }
+        
     } else {
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
         return;
@@ -556,7 +662,9 @@ void gdext_colyseus_callbacks_listen(
     entry->type = COLYSEUS_GDCB_LISTEN;
     entry->property = property_name;
     entry->ref_id = (first_arg_type == GDEXTENSION_VARIANT_TYPE_DICTIONARY) ? 
-                    colyseus_extract_ref_id(p_args[0]) : 0;
+                    colyseus_extract_ref_id(p_args[0]) : 
+                    ((first_arg_type == GDEXTENSION_VARIANT_TYPE_OBJECT) ?
+                     colyseus_extract_ref_id_from_object(p_args[0]) : 0);
     entry->field_type = COLYSEUS_FIELD_STRING;  // Default
     entry->item_vtable = NULL;
     
@@ -665,6 +773,27 @@ void gdext_colyseus_callbacks_on_add(
                 instance = colyseus_ref_tracker_get(refs, ref_id);
             }
         }
+    } else if (first_arg_type == GDEXTENSION_VARIANT_TYPE_OBJECT) {
+        // GDScript Schema object - extract __ref_id from it
+        if (p_argument_count < 3) {
+            if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+            return;
+        }
+        
+        int ref_id = colyseus_extract_ref_id_from_object(p_args[0]);
+        property_name = variant_string_to_c_str(p_args[1]);
+        callable_arg = p_args[2];
+        
+        if (wrapper->room_wrapper && wrapper->room_wrapper->native_room &&
+            wrapper->room_wrapper->native_room->serializer &&
+            wrapper->room_wrapper->native_room->serializer->decoder) {
+            
+            colyseus_ref_tracker_t* refs = 
+                wrapper->room_wrapper->native_room->serializer->decoder->refs;
+            if (refs) {
+                instance = colyseus_ref_tracker_get(refs, ref_id);
+            }
+        }
     } else {
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
         return;
@@ -682,7 +811,9 @@ void gdext_colyseus_callbacks_on_add(
     entry->type = COLYSEUS_GDCB_ON_ADD;
     entry->property = property_name;
     entry->ref_id = (first_arg_type == GDEXTENSION_VARIANT_TYPE_DICTIONARY) ?
-                    colyseus_extract_ref_id(p_args[0]) : 0;
+                    colyseus_extract_ref_id(p_args[0]) : 
+                    ((first_arg_type == GDEXTENSION_VARIANT_TYPE_OBJECT) ?
+                     colyseus_extract_ref_id_from_object(p_args[0]) : 0);
     entry->field_type = COLYSEUS_FIELD_MAP;  // Default for collections
     entry->item_vtable = NULL;
     
@@ -787,6 +918,27 @@ void gdext_colyseus_callbacks_on_remove(
                 instance = colyseus_ref_tracker_get(refs, ref_id);
             }
         }
+    } else if (first_arg_type == GDEXTENSION_VARIANT_TYPE_OBJECT) {
+        // GDScript Schema object - extract __ref_id from it
+        if (p_argument_count < 3) {
+            if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+            return;
+        }
+        
+        int ref_id = colyseus_extract_ref_id_from_object(p_args[0]);
+        property_name = variant_string_to_c_str(p_args[1]);
+        callable_arg = p_args[2];
+        
+        if (wrapper->room_wrapper && wrapper->room_wrapper->native_room &&
+            wrapper->room_wrapper->native_room->serializer &&
+            wrapper->room_wrapper->native_room->serializer->decoder) {
+            
+            colyseus_ref_tracker_t* refs = 
+                wrapper->room_wrapper->native_room->serializer->decoder->refs;
+            if (refs) {
+                instance = colyseus_ref_tracker_get(refs, ref_id);
+            }
+        }
     } else {
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
         return;
@@ -804,7 +956,9 @@ void gdext_colyseus_callbacks_on_remove(
     entry->type = COLYSEUS_GDCB_ON_REMOVE;
     entry->property = property_name;
     entry->ref_id = (first_arg_type == GDEXTENSION_VARIANT_TYPE_DICTIONARY) ?
-                    colyseus_extract_ref_id(p_args[0]) : 0;
+                    colyseus_extract_ref_id(p_args[0]) : 
+                    ((first_arg_type == GDEXTENSION_VARIANT_TYPE_OBJECT) ?
+                     colyseus_extract_ref_id_from_object(p_args[0]) : 0);
     entry->field_type = COLYSEUS_FIELD_MAP;  // Default for collections
     entry->item_vtable = NULL;
     

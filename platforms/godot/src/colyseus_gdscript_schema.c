@@ -1,4 +1,5 @@
 #include "colyseus_gdscript_schema.h"
+#include <colyseus/schema/collections.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -110,8 +111,6 @@ static colyseus_dynamic_field_t* parse_field_from_variant(Variant* field_variant
     
     /* Actually, for GDScript objects, we need to use the property access pattern */
     /* Let's use variant_call to call the getter for "name" property */
-    
-    Variant get_result;
     
     /* Access 'name' property */
     String name_str_prop;
@@ -225,7 +224,7 @@ gdscript_schema_context_t* gdscript_schema_context_create(GDExtensionConstVarian
     
     /* Get the Object pointer from the variant */
     GDExtensionObjectPtr script_obj = NULL;
-    constructors.object_from_variant_constructor(&script_obj, script_variant);
+    constructors.object_from_variant_constructor(&script_obj, (GDExtensionVariantPtr)script_variant);
     ctx->script_class = script_obj;
     
     /* Call the static definition() method to get field definitions */
@@ -435,6 +434,64 @@ void gdscript_set_field(void* userdata, const char* name, colyseus_dynamic_value
  * Value Conversion
  * ============================================================================ */
 
+/* Forward declare helper to convert a raw value to variant based on vtable */
+static void raw_value_to_variant(void* raw_value, bool has_schema_child, 
+    const colyseus_schema_vtable_t* child_vtable, const char* child_primitive_type,
+    Variant* r_variant);
+
+/* Callback context for map iteration */
+typedef struct {
+    Variant* map_instance;
+} map_populate_ctx_t;
+
+/* Callback for populating GDScript Map */
+static void populate_map_callback(const char* key, void* value, void* userdata) {
+    map_populate_ctx_t* ctx = (map_populate_ctx_t*)userdata;
+    if (!ctx || !ctx->map_instance || !key) return;
+    
+    /* Get the map schema to determine child type */
+    /* For now, assume schema children have userdata */
+    colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
+    
+    Variant value_variant;
+    if (dyn_schema && dyn_schema->userdata) {
+        /* Schema child - get the GDScript instance */
+        api.variant_new_copy(&value_variant, (Variant*)dyn_schema->userdata);
+    } else {
+        /* Primitive or null - try to convert */
+        memset(&value_variant, 0, sizeof(value_variant));
+    }
+    
+    gdscript_map_set_item(ctx->map_instance, key, &value_variant);
+    destructors.variant_destroy(&value_variant);
+}
+
+/* Callback context for array iteration */
+typedef struct {
+    Variant* array_instance;
+} array_populate_ctx_t;
+
+/* Callback for populating GDScript ArraySchema */
+static void populate_array_callback(int index, void* value, void* userdata) {
+    array_populate_ctx_t* ctx = (array_populate_ctx_t*)userdata;
+    if (!ctx || !ctx->array_instance) return;
+    
+    /* Get the array schema to determine child type */
+    colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
+    
+    Variant value_variant;
+    if (dyn_schema && dyn_schema->userdata) {
+        /* Schema child - get the GDScript instance */
+        api.variant_new_copy(&value_variant, (Variant*)dyn_schema->userdata);
+    } else {
+        /* Primitive or null - try to convert */
+        memset(&value_variant, 0, sizeof(value_variant));
+    }
+    
+    gdscript_array_set_at(ctx->array_instance, index, &value_variant);
+    destructors.variant_destroy(&value_variant);
+}
+
 void gdscript_value_to_variant(colyseus_dynamic_value_t* value, Variant* r_variant) {
     if (!value || !r_variant) return;
     
@@ -499,71 +556,210 @@ void gdscript_value_to_variant(colyseus_dynamic_value_t* value, Variant* r_varia
                 api.variant_new_copy(r_variant, instance_variant);
             } else {
                 /* Null ref */
-                Variant nil;
-                memset(&nil, 0, sizeof(nil));
-                api.variant_new_copy(r_variant, &nil);
+                memset(r_variant, 0, sizeof(Variant));
             }
             break;
         }
         
-        case COLYSEUS_FIELD_ARRAY:
         case COLYSEUS_FIELD_MAP: {
-            /* These should be handled separately via the collection objects */
-            /* For now, return nil */
-            Variant nil;
-            memset(&nil, 0, sizeof(nil));
-            api.variant_new_copy(r_variant, &nil);
+            /* Create a GDScript Map and populate it */
+            colyseus_map_schema_t* map = value->data.map;
+            if (!map) {
+                memset(r_variant, 0, sizeof(Variant));
+                break;
+            }
+            
+            Variant* map_instance = gdscript_create_map_instance(NULL);
+            if (!map_instance) {
+                memset(r_variant, 0, sizeof(Variant));
+                break;
+            }
+            
+            /* Populate the map with items */
+            map_populate_ctx_t ctx = { .map_instance = map_instance };
+            colyseus_map_schema_foreach(map, populate_map_callback, &ctx);
+            
+            /* Return the map instance */
+            api.variant_new_copy(r_variant, map_instance);
+            
+            /* Free the temporary map instance holder */
+            destructors.variant_destroy(map_instance);
+            free(map_instance);
+            break;
+        }
+        
+        case COLYSEUS_FIELD_ARRAY: {
+            /* Create a GDScript ArraySchema and populate it */
+            colyseus_array_schema_t* arr = value->data.array;
+            if (!arr) {
+                memset(r_variant, 0, sizeof(Variant));
+                break;
+            }
+            
+            Variant* array_instance = gdscript_create_array_instance(NULL);
+            if (!array_instance) {
+                memset(r_variant, 0, sizeof(Variant));
+                break;
+            }
+            
+            /* Populate the array with items */
+            array_populate_ctx_t ctx = { .array_instance = array_instance };
+            colyseus_array_schema_foreach(arr, populate_array_callback, &ctx);
+            
+            /* Return the array instance */
+            api.variant_new_copy(r_variant, array_instance);
+            
+            /* Free the temporary array instance holder */
+            destructors.variant_destroy(array_instance);
+            free(array_instance);
             break;
         }
         
         default: {
             /* Unknown type - return nil */
-            Variant nil;
-            memset(&nil, 0, sizeof(nil));
-            api.variant_new_copy(r_variant, &nil);
+            memset(r_variant, 0, sizeof(Variant));
             break;
         }
     }
 }
 
 /* ============================================================================
- * Collection Helpers (stubs for now)
+ * Collection Helpers
+ * 
+ * For collections (Map and ArraySchema), we use native Godot Dictionary and Array
+ * instead of trying to instantiate GDScript classes from C. This gives good 
+ * interoperability while avoiding the complexity of loading GDScript modules
+ * from C code.
  * ============================================================================ */
 
-GDExtensionObjectPtr gdscript_create_map_instance(GDExtensionObjectPtr child_class) {
-    /* TODO: Create a colyseus.Map instance */
-    (void)child_class;
-    return NULL;
+Variant* gdscript_create_map_instance(GDExtensionObjectPtr child_class) {
+    (void)child_class;  /* Reserved for future typed map support */
+    
+    /* Create a Godot Dictionary to hold map items */
+    Dictionary dict;
+    constructors.dictionary_constructor(&dict, NULL);
+    
+    /* Wrap in a Variant and return */
+    Variant* result = malloc(sizeof(Variant));
+    if (result) {
+        constructors.variant_from_dictionary_constructor(result, &dict);
+    }
+    destructors.dictionary_destructor(&dict);
+    
+    return result;
 }
 
-GDExtensionObjectPtr gdscript_create_array_instance(GDExtensionObjectPtr child_class) {
-    /* TODO: Create a colyseus.ArraySchema instance */
-    (void)child_class;
-    return NULL;
+Variant* gdscript_create_array_instance(GDExtensionObjectPtr child_class) {
+    (void)child_class;  /* Reserved for future typed array support */
+    
+    /* Create a Godot Array to hold array items */
+    Array arr;
+    constructors.array_constructor(&arr, NULL);
+    
+    /* Wrap in a Variant and return */
+    Variant* result = malloc(sizeof(Variant));
+    if (result) {
+        constructors.variant_from_array_constructor(result, &arr);
+    }
+    destructors.array_destructor(&arr);
+    
+    return result;
 }
 
-void gdscript_map_set_item(GDExtensionObjectPtr map_obj, const char* key, Variant* value_variant) {
-    /* TODO: Call _set_item on the Map */
-    (void)map_obj;
-    (void)key;
-    (void)value_variant;
+void gdscript_map_set_item(Variant* map_variant, const char* key, Variant* value_variant) {
+    if (!map_variant || !key || !value_variant) return;
+    
+    /* Get Dictionary from variant */
+    Dictionary dict;
+    constructors.dictionary_from_variant_constructor(&dict, map_variant);
+    
+    /* Create key variant */
+    String key_str;
+    constructors.string_new_with_utf8_chars(&key_str, key);
+    Variant key_var;
+    constructors.variant_from_string_constructor(&key_var, &key_str);
+    
+    /* Set item using dictionary_operator_index */
+    Variant* slot = api.dictionary_operator_index(&dict, &key_var);
+    if (slot) {
+        api.variant_new_copy(slot, value_variant);
+    }
+    
+    /* Update the original variant with the modified dictionary */
+    constructors.variant_from_dictionary_constructor(map_variant, &dict);
+    
+    destructors.variant_destroy(&key_var);
+    destructors.string_destructor(&key_str);
+    destructors.dictionary_destructor(&dict);
 }
 
-void gdscript_map_remove_item(GDExtensionObjectPtr map_obj, const char* key) {
-    /* TODO: Call _remove_item on the Map */
-    (void)map_obj;
-    (void)key;
+void gdscript_map_remove_item(Variant* map_variant, const char* key) {
+    if (!map_variant || !key) return;
+    
+    /* Get Dictionary from variant and call erase */
+    String key_str;
+    constructors.string_new_with_utf8_chars(&key_str, key);
+    Variant key_var;
+    constructors.variant_from_string_constructor(&key_var, &key_str);
+    
+    GDExtensionConstVariantPtr args[1] = { &key_var };
+    Variant result;
+    
+    variant_call_method(map_variant, "erase", args, 1, &result);
+    
+    destructors.variant_destroy(&result);
+    destructors.variant_destroy(&key_var);
+    destructors.string_destructor(&key_str);
 }
 
-void gdscript_array_set_at(GDExtensionObjectPtr array_obj, int index, Variant* value_variant) {
-    /* TODO: Call _set_at on the ArraySchema */
-    (void)array_obj;
-    (void)index;
-    (void)value_variant;
+void gdscript_array_set_at(Variant* array_variant, int index, Variant* value_variant) {
+    if (!array_variant || !value_variant) return;
+    
+    /* Get Array from variant */
+    Array arr;
+    constructors.array_from_variant_constructor(&arr, array_variant);
+    
+    /* Resize array if needed and set the value */
+    /* First, get current size */
+    Variant size_result;
+    variant_call_method(array_variant, "size", NULL, 0, &size_result);
+    int64_t current_size = 0;
+    constructors.int_from_variant_constructor(&current_size, &size_result);
+    destructors.variant_destroy(&size_result);
+    
+    /* Resize if index is beyond current size */
+    if (index >= current_size) {
+        int64_t new_size = index + 1;
+        Variant new_size_var;
+        constructors.variant_from_int_constructor(&new_size_var, &new_size);
+        GDExtensionConstVariantPtr resize_args[1] = { &new_size_var };
+        Variant resize_result;
+        variant_call_method(array_variant, "resize", resize_args, 1, &resize_result);
+        destructors.variant_destroy(&resize_result);
+        destructors.variant_destroy(&new_size_var);
+    }
+    
+    /* Set the value at index using operator[] */
+    int64_t idx = index;
+    Variant* slot = api.array_operator_index(&arr, idx);
+    if (slot) {
+        api.variant_new_copy(slot, value_variant);
+    }
+    
+    /* Update the original variant */
+    constructors.variant_from_array_constructor(array_variant, &arr);
+    
+    destructors.array_destructor(&arr);
 }
 
-void gdscript_array_push(GDExtensionObjectPtr array_obj, Variant* value_variant) {
-    /* TODO: Call _push on the ArraySchema */
-    (void)array_obj;
-    (void)value_variant;
+void gdscript_array_push(Variant* array_variant, Variant* value_variant) {
+    if (!array_variant || !value_variant) return;
+    
+    /* Call push_back on the array */
+    GDExtensionConstVariantPtr args[1] = { value_variant };
+    Variant result;
+    
+    variant_call_method(array_variant, "push_back", args, 1, &result);
+    
+    destructors.variant_destroy(&result);
 }

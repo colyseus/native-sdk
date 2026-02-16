@@ -338,16 +338,52 @@ static void on_room_state_change(void* userdata) {
 
 static void on_room_error(int code, const char* message, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
-    if (!room_wrapper) return;
-    // TODO: Emit "error" signal with code and message
-    (void)code;
-    (void)message;
+    if (!room_wrapper || !room_wrapper->godot_object) return;
+    
+    // Create code Variant (int)
+    int64_t code_value = code;
+    Variant code_variant;
+    constructors.variant_from_int_constructor(&code_variant, &code_value);
+    
+    // Create message Variant (String)
+    String message_string;
+    constructors.string_new_with_utf8_chars(&message_string, message ? message : "");
+    Variant message_variant;
+    constructors.variant_from_string_constructor(&message_variant, &message_string);
+    
+    // Emit signal: error(code, message)
+    GDExtensionConstVariantPtr args[2] = { &code_variant, &message_variant };
+    emit_signal(room_wrapper->godot_object, "error", args, 2);
+    
+    // Cleanup
+    destructors.variant_destroy(&code_variant);
+    destructors.string_destructor(&message_string);
+    destructors.variant_destroy(&message_variant);
 }
 
 static void on_room_leave(int code, const char* reason, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
-    if (!room_wrapper) return;
-    // TODO: Emit "left" signal with code and reason
+    if (!room_wrapper || !room_wrapper->godot_object) return;
+    
+    // Create code Variant (int)
+    int64_t code_value = code;
+    Variant code_variant;
+    constructors.variant_from_int_constructor(&code_variant, &code_value);
+    
+    // Create reason Variant (String)
+    String reason_string;
+    constructors.string_new_with_utf8_chars(&reason_string, reason ? reason : "");
+    Variant reason_variant;
+    constructors.variant_from_string_constructor(&reason_variant, &reason_string);
+    
+    // Emit signal: left(code, reason)
+    GDExtensionConstVariantPtr args[2] = { &code_variant, &reason_variant };
+    emit_signal(room_wrapper->godot_object, "left", args, 2);
+    
+    // Cleanup
+    destructors.variant_destroy(&code_variant);
+    destructors.string_destructor(&reason_string);
+    destructors.variant_destroy(&reason_variant);
 }
 
 // Matchmaking success callback

@@ -694,11 +694,12 @@ static void register_colyseus_room(void) {
         GDEXTENSION_VARIANT_TYPE_BOOL
     );
 
-    // get_state - returns Dictionary (always dictionary for now to avoid variant issues)
+    // get_state - returns Dictionary with current state
+    // Uses bind_method_0_with_ret like other working methods (has_joined, get_id, etc.)
     bind_method_0_with_ret(
         "ColyseusRoom",
         "get_state",
-        gdext_colyseus_room_get_state_ptrcall,
+        gdext_colyseus_room_get_state,
         GDEXTENSION_VARIANT_TYPE_DICTIONARY
     );
 

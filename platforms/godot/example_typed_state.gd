@@ -5,17 +5,18 @@ extends Node
 ## allowing you to access state properties with type safety and custom methods.
 
 # Load the Colyseus schema library
-const colyseus = preload("res://addons/colyseus/schema.gd")
+#const colyseus = preload("res://addons/colyseus/schema.gd")
+
 
 # Define your schema classes
-class Player extends colyseus.Schema:
+class Player extends ColyseusSchema.Schema:
 	## Define the schema fields
 	static func definition():
 		return [
-			colyseus.Field.new("x", colyseus.NUMBER),
-			colyseus.Field.new("y", colyseus.NUMBER),
-			colyseus.Field.new("name", colyseus.STRING),
-			colyseus.Field.new("hp", colyseus.NUMBER),
+			ColyseusSchema.Field.new("x", ColyseusSchema.NUMBER),
+			ColyseusSchema.Field.new("y", ColyseusSchema.NUMBER),
+			ColyseusSchema.Field.new("name", ColyseusSchema.STRING),
+			ColyseusSchema.Field.new("hp", ColyseusSchema.NUMBER),
 		]
 	
 	## Custom method: nice string representation
@@ -28,23 +29,23 @@ class Player extends colyseus.Schema:
 		var dy = self.y - other.y
 		return sqrt(dx * dx + dy * dy)
 
-class Item extends colyseus.Schema:
+class Item extends ColyseusSchema.Schema:
 	static func definition():
 		return [
-			colyseus.Field.new("id", colyseus.STRING),
-			colyseus.Field.new("name", colyseus.STRING),
-			colyseus.Field.new("quantity", colyseus.NUMBER),
+			ColyseusSchema.Field.new("id", ColyseusSchema.STRING),
+			ColyseusSchema.Field.new("name", ColyseusSchema.STRING),
+			ColyseusSchema.Field.new("quantity", ColyseusSchema.NUMBER),
 		]
 	
 	func _to_string() -> String:
 		return str("Item(", self.name, " x", self.quantity, ")")
 
-class RoomState extends colyseus.Schema:
+class RoomState extends ColyseusSchema.Schema:
 	static func definition():
 		return [
-			colyseus.Field.new("currentTurn", colyseus.STRING),
-			colyseus.Field.new("players", colyseus.MAP, Player),
-			colyseus.Field.new("items", colyseus.ARRAY, Item),
+			ColyseusSchema.Field.new("currentTurn", ColyseusSchema.STRING),
+			ColyseusSchema.Field.new("players", ColyseusSchema.MAP, Player),
+			ColyseusSchema.Field.new("items", ColyseusSchema.ARRAY, Item),
 		]
 
 # Client and room references
