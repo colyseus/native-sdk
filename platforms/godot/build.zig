@@ -29,10 +29,20 @@ pub fn build(b: *std.Build) void {
     else
         b.fmt("colyseus_godot.{s}.{s}.{s}", .{ os_str, arch_str, build_type });
 
-    // Create module for the shared library
-    const lib_module = b.createModule(.{
+    // Get zig-msgpack dependency
+    const msgpack_dep = b.dependency("zig_msgpack", .{
         .target = target,
         .optimize = optimize,
+    });
+
+    // Create module for the shared library with Zig source file
+    const lib_module = b.createModule(.{
+        .root_source_file = b.path("src/msgpack_godot.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "msgpack", .module = msgpack_dep.module("msgpack") },
+        },
     });
 
     // Create the shared library for the GDExtension
@@ -48,6 +58,11 @@ pub fn build(b: *std.Build) void {
             "src/register_types.c",
             "src/colyseus_client.c",
             "src/colyseus_room.c",
+            "src/colyseus_callbacks.c",
+            "src/colyseus_state.c",
+            "src/colyseus_schema_registry.c",
+            "src/msgpack_variant.c",
+            "src/msgpack_encoder.c",
             // wslay sources (needed because libcolyseus.a doesn't include them)
             "../../third_party/wslay/lib/wslay_event.c",
             "../../third_party/wslay/lib/wslay_frame.c",
@@ -66,7 +81,9 @@ pub fn build(b: *std.Build) void {
     lib.addIncludePath(b.path("../../third_party/uthash/src"));
     lib.addIncludePath(b.path("../../third_party/wslay/lib/includes"));
     lib.addIncludePath(b.path("../../third_party/wslay/lib"));
+    lib.addIncludePath(b.path("../../tests/schema"));  // For test_room_state.h (dev testing)
     lib.addIncludePath(b.path("include"));
+    lib.addIncludePath(b.path("src"));  // For colyseus_callbacks.h, colyseus_state.h
 
     // Link against the colyseus static library
     lib.addObjectFile(b.path("../../zig-out/lib/libcolyseus.a"));
@@ -83,9 +100,25 @@ pub fn build(b: *std.Build) void {
     // Link against system libraries
     lib.linkLibC();
 
-    // Link libraries that colyseus depends on
-    lib.linkSystemLibrary("curl");
-    lib.linkSystemLibrary("pthread");
+    // Link libraries that colyseus depends on (platform-specific)
+    // TODO: have a shared place for this. We have the same code in the root build.zig.
+    if (os_tag == .macos) {
+        lib.linkSystemLibrary("curl");
+        lib.linkSystemLibrary("pthread");
+        lib.linkFramework("CoreFoundation");
+        lib.linkFramework("Security");
+    } else if (os_tag == .linux) {
+        lib.linkSystemLibrary("curl");
+        lib.linkSystemLibrary("pthread");
+        lib.linkSystemLibrary("m");
+    } else if (os_tag == .windows) {
+        lib.linkSystemLibrary("libcurl");
+        lib.linkSystemLibrary("ws2_32");
+        lib.linkSystemLibrary("crypt32");
+    } else {
+        lib.linkSystemLibrary("curl");
+        lib.linkSystemLibrary("pthread");
+    }
 
     // Install to bin directory
     const install_step = b.addInstallArtifact(lib, .{

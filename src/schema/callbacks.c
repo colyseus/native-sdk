@@ -490,6 +490,7 @@ typedef struct {
 } deferred_collection_context_t;
 
 static void on_collection_available(void* value, void* previous_value, void* userdata) {
+    (void)previous_value;
     deferred_collection_context_t* ctx = (deferred_collection_context_t*)userdata;
     if (!ctx || !value) return;
 
@@ -506,8 +507,12 @@ static void on_collection_available(void* value, void* previous_value, void* use
         ctx->userdata
     );
 
-    /* If immediate and ADD operation, call for existing items */
-    if (ctx->immediate && ctx->operation == (int)COLYSEUS_OP_ADD) {
+    /* 
+     * If immediate and ADD operation, call for existing items.
+     * BUT skip if we're currently triggering changes - the actual ADD changes
+     * will handle notifying about existing items.
+     */
+    if (ctx->immediate && !ctx->callbacks->is_triggering && ctx->operation == (int)COLYSEUS_OP_ADD) {
         /* Check if it's an array or map and iterate */
         colyseus_ref_entry_t* entry = colyseus_ref_tracker_get_entry(
             ctx->callbacks->decoder->refs, collection_ref_id);

@@ -21,6 +21,7 @@ typedef struct colyseus_schema_vtable colyseus_schema_vtable_t;
 typedef void (*colyseus_room_on_join_fn)(void* userdata);
 typedef void (*colyseus_room_on_state_change_fn)(void* userdata);
 typedef void (*colyseus_room_on_message_fn)(const uint8_t* data, size_t length, void* userdata);
+typedef void (*colyseus_room_on_message_with_type_fn)(const char* type, const uint8_t* data, size_t length, void* userdata);
 typedef void (*colyseus_room_on_error_fn)(int code, const char* message, void* userdata);
 typedef void (*colyseus_room_on_leave_fn)(int code, const char* reason, void* userdata);
 
@@ -72,6 +73,10 @@ struct colyseus_room {
     /* Wildcard message handler (for all messages) */
     colyseus_room_on_message_fn on_message_any;
     void* on_message_any_userdata;
+
+    /* Wildcard message handler with type info (for all messages with type) */
+    colyseus_room_on_message_with_type_fn on_message_any_with_type;
+    void* on_message_any_with_type_userdata;
 };
 
 /* Create and destroy room */
@@ -117,6 +122,7 @@ void colyseus_room_on_leave(colyseus_room_t* room, colyseus_room_on_leave_fn cal
 void colyseus_room_on_message_str(colyseus_room_t* room, const char* type, colyseus_room_on_message_fn callback, void* userdata);
 void colyseus_room_on_message_int(colyseus_room_t* room, int type, colyseus_room_on_message_fn callback, void* userdata);
 void colyseus_room_on_message_any(colyseus_room_t* room, colyseus_room_on_message_fn callback, void* userdata);
+void colyseus_room_on_message_any_with_type(colyseus_room_t* room, colyseus_room_on_message_with_type_fn callback, void* userdata);
 
 /* Convenience macros */
 #define colyseus_room_on_message(room, type, callback, userdata) \

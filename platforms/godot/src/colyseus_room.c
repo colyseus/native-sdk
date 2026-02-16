@@ -1,8 +1,58 @@
 #include "godot_colyseus.h"
+#include "colyseus_state.h"
+#include "colyseus_schema_registry.h"
+#include "msgpack_encoder.h"
 #include <colyseus/room.h>
+#include <colyseus/schema.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+// Temporary storage for the last created wrapper
+// Used to pass wrapper reference from constructor to caller
+static ColyseusRoomWrapper* g_last_created_room_wrapper = NULL;
+
+// Room wrapper registry for lookup by instance ID
+#define MAX_ROOM_WRAPPERS 64
+static struct {
+    GDObjectInstanceID instance_id;
+    ColyseusRoomWrapper* wrapper;
+} g_room_registry[MAX_ROOM_WRAPPERS] = {0};
+
+static void register_room_wrapper(GDObjectInstanceID instance_id, ColyseusRoomWrapper* wrapper) {
+    for (int i = 0; i < MAX_ROOM_WRAPPERS; i++) {
+        if (g_room_registry[i].wrapper == NULL) {
+            g_room_registry[i].instance_id = instance_id;
+            g_room_registry[i].wrapper = wrapper;
+            return;
+        }
+    }
+}
+
+static void unregister_room_wrapper(ColyseusRoomWrapper* wrapper) {
+    for (int i = 0; i < MAX_ROOM_WRAPPERS; i++) {
+        if (g_room_registry[i].wrapper == wrapper) {
+            g_room_registry[i].instance_id = 0;
+            g_room_registry[i].wrapper = NULL;
+            return;
+        }
+    }
+}
+
+ColyseusRoomWrapper* gdext_colyseus_room_get_wrapper_by_id(GDObjectInstanceID instance_id) {
+    for (int i = 0; i < MAX_ROOM_WRAPPERS; i++) {
+        if (g_room_registry[i].instance_id == instance_id) {
+            return g_room_registry[i].wrapper;
+        }
+    }
+    return NULL;
+}
+
+ColyseusRoomWrapper* gdext_colyseus_room_get_last_wrapper(void) {
+    ColyseusRoomWrapper* wrapper = g_last_created_room_wrapper;
+    g_last_created_room_wrapper = NULL;  // Clear after retrieval
+    return wrapper;
+}
 
 // Helper function to create a Godot String from a C string
 static void string_from_c_str(String *p_dest, const char *p_src) {
@@ -13,23 +63,73 @@ static void string_from_c_str(String *p_dest, const char *p_src) {
     }
 }
 
+// Helper function to convert Godot String to C string (caller must free)
+static char* string_to_c_str(const String *p_src) {
+    if (!p_src) return strdup("");
+    
+    // Get string length
+    int32_t length = api.string_to_utf8_chars(p_src, NULL, 0);
+    if (length <= 0) return strdup("");
+    
+    // Allocate buffer (+1 for null terminator)
+    char* buffer = (char*)malloc(length + 1);
+    if (!buffer) return strdup("");
+    
+    // Extract string
+    api.string_to_utf8_chars(p_src, buffer, length);
+    buffer[length] = '\0';
+    
+    return buffer;
+}
+
 GDExtensionObjectPtr gdext_colyseus_room_constructor(void* p_class_userdata) {
     (void)p_class_userdata;
     
+    // Create the Godot Object (construct parent RefCounted class)
+    StringName parent_class_name;
+    constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
+    
+    GDExtensionObjectPtr object = api.classdb_construct_object(&parent_class_name);
+    destructors.string_name_destructor(&parent_class_name);
+    
+    if (!object) return NULL;
+    
+    // Create our wrapper instance data
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)malloc(sizeof(ColyseusRoomWrapper));
-    wrapper->native_room = NULL; // Will be set when joining
-    wrapper->godot_object = NULL; // Will be set when returned from join_or_create
-    return (GDExtensionObjectPtr)wrapper;
+    if (!wrapper) return NULL;
+    
+    wrapper->native_room = NULL;
+    wrapper->godot_object = object;
+    wrapper->pending_vtable = NULL;
+    
+    // Attach our wrapper to the Godot object
+    StringName class_name;
+    constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusRoom", false);
+    api.object_set_instance(object, &class_name, wrapper);
+    destructors.string_name_destructor(&class_name);
+    
+    // Store wrapper for retrieval by caller (e.g., join_or_create)
+    g_last_created_room_wrapper = wrapper;
+    
+    // Register in the global registry for lookup by instance ID
+    GDObjectInstanceID instance_id = api.object_get_instance_id(object);
+    register_room_wrapper(instance_id, wrapper);
+    
+    printf("[ColyseusRoom] Constructor: instance_id=%llu, wrapper=%p\n", 
+           (unsigned long long)instance_id, (void*)wrapper);
+    fflush(stdout);
+    
+    return object;
 }
 
 void gdext_colyseus_room_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
     (void)p_class_userdata;
     
-    printf("[ColyseusRoom] Destructor called for instance: %p\n", p_instance);
-    fflush(stdout);
-    
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
     if (wrapper) {
+        // Unregister from global registry
+        unregister_room_wrapper(wrapper);
+        
         if (wrapper->native_room) {
             colyseus_room_free(wrapper->native_room);
         }
@@ -37,46 +137,114 @@ void gdext_colyseus_room_destructor(void* p_class_userdata, GDExtensionClassInst
     }
 }
 
-// Reference counting for RefCounted base class
+// Reference counting callbacks (unused, let Godot handle RefCounted)
 void gdext_colyseus_room_reference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
     (void)p_class_userdata;
     (void)p_instance;
-    printf("[ColyseusRoom] Reference called\n");
-    fflush(stdout);
 }
 
 void gdext_colyseus_room_unreference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
     (void)p_class_userdata;
     (void)p_instance;
-    printf("[ColyseusRoom] Unreference called\n");
-    fflush(stdout);
 }
 
-void gdext_colyseus_room_send_message(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+void gdext_colyseus_room_send_message(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
     (void)p_method_userdata;
-    (void)r_ret; // void return
+    (void)r_return; // void return
     
-    // p_args[0] is a pointer to a String
-    // p_args[1] is a pointer to a PackedByteArray
-    (void)p_args;
+    // Vararg call: p_args[0] is type (String), p_args[1] is data (any Variant)
+    
+    if (p_argument_count < 2) {
+        if (r_error) {
+            r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+            r_error->argument = 2;
+        }
+        return;
+    }
     
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
-    if (wrapper && wrapper->native_room) {
-        // TODO: Extract String and PackedByteArray from p_args and send message
+    if (!wrapper || !wrapper->native_room) {
+        return;
+    }
+    
+    // Extract message type string from p_args[0] (Variant containing String)
+    String type_str;
+    constructors.string_from_variant_constructor(&type_str, p_args[0]);
+    
+    int32_t type_len = api.string_to_utf8_chars(&type_str, NULL, 0);
+    if (type_len <= 0) {
+        printf("[ColyseusRoom] send_message: empty type string\n");
+        fflush(stdout);
+        destructors.string_destructor(&type_str);
+        return;
+    }
+    
+    char* type_cstr = (char*)malloc(type_len + 1);
+    if (!type_cstr) {
+        destructors.string_destructor(&type_str);
+        return;
+    }
+    api.string_to_utf8_chars(&type_str, type_cstr, type_len);
+    type_cstr[type_len] = '\0';
+    destructors.string_destructor(&type_str);
+    
+    // Encode the data variant to msgpack (p_args[1] is already a Variant pointer)
+    const Variant* data_variant = (const Variant*)p_args[1];
+    size_t msgpack_len = 0;
+    uint8_t* msgpack_data = godot_variant_to_msgpack(data_variant, &msgpack_len);
+    
+    // Send the message
+    colyseus_room_send_str(wrapper->native_room, type_cstr, msgpack_data, msgpack_len);
+    
+    // Cleanup
+    free(type_cstr);
+    if (msgpack_data) {
+        free(msgpack_data);
+    }
+    
+    if (r_error) {
+        r_error->error = GDEXTENSION_CALL_OK;
     }
 }
 
-void gdext_colyseus_room_send_message_int(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+void gdext_colyseus_room_send_message_int(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
     (void)p_method_userdata;
-    (void)r_ret; // void return
+    (void)r_return; // void return
     
-    // p_args[0] is a pointer to an int64_t (Godot's int)
-    // p_args[1] is a pointer to a PackedByteArray
-    (void)p_args;
+    // Vararg call: p_args[0] is type (int), p_args[1] is data (any Variant)
+    
+    if (p_argument_count < 2) {
+        if (r_error) {
+            r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+            r_error->argument = 2;
+        }
+        return;
+    }
     
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
-    if (wrapper && wrapper->native_room) {
-        // TODO: Extract int and PackedByteArray from p_args and send message
+    if (!wrapper || !wrapper->native_room) {
+        return;
+    }
+    
+    // Extract message type int from p_args[0] (Variant containing int)
+    int64_t type_int = 0;
+    constructors.int_from_variant_constructor(&type_int, p_args[0]);
+    
+    // Encode the data variant to msgpack (p_args[1] is already a Variant pointer)
+    const Variant* data_variant = (const Variant*)p_args[1];
+    size_t msgpack_len = 0;
+    uint8_t* msgpack_data = godot_variant_to_msgpack(data_variant, &msgpack_len);
+    
+    // Send the message
+    colyseus_room_send_int(wrapper->native_room, (int)type_int, msgpack_data, msgpack_len);
+    
+    // Cleanup
+    if (msgpack_data) {
+        free(msgpack_data);
+    }
+    
+    if (r_error) {
+        r_error->error = GDEXTENSION_CALL_OK;
     }
 }
 
@@ -134,4 +302,81 @@ void gdext_colyseus_room_has_joined(void* p_method_userdata, GDExtensionClassIns
         // For bool, we cast the result directly to the pointer location
         *(GDExtensionBool*)r_ret = has_joined ? 1 : 0;
     }
+}
+
+void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+    (void)p_method_userdata;
+    (void)p_args; // no arguments
+    
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
+    if (!wrapper || !wrapper->native_room || !r_ret) {
+        // Return empty dictionary
+        if (r_ret) {
+            constructors.dictionary_constructor((Dictionary*)r_ret, NULL);
+        }
+        return;
+    }
+    
+    // Get the state from the room
+    void* state = colyseus_room_get_state(wrapper->native_room);
+    const colyseus_schema_vtable_t* vtable = wrapper->native_room->state_vtable;
+    
+    if (state && vtable) {
+        // Convert schema to dictionary
+        Dictionary* result = (Dictionary*)r_ret;
+        constructors.dictionary_constructor(result, NULL);
+        colyseus_schema_to_dictionary((colyseus_schema_t*)state, vtable, result);
+        
+        printf("[ColyseusRoom] get_state() returned state with vtable: %s\n", vtable->name);
+        fflush(stdout);
+    } else {
+        // Return empty dictionary
+        constructors.dictionary_constructor((Dictionary*)r_ret, NULL);
+        printf("[ColyseusRoom] get_state() - no state available\n");
+        fflush(stdout);
+    }
+}
+
+void gdext_colyseus_room_set_state_type(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+    (void)p_method_userdata;
+    (void)r_ret; // void return
+    
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
+    if (!wrapper) {
+        printf("[ColyseusRoom] set_state_type() - no wrapper\n");
+        fflush(stdout);
+        return;
+    }
+    
+    // Extract String from p_args[0]
+    char* name = string_to_c_str((const String*)p_args[0]);
+    if (!name || name[0] == '\0') {
+        printf("[ColyseusRoom] set_state_type() - empty type name\n");
+        fflush(stdout);
+        if (name) free(name);
+        return;
+    }
+    
+    // Look up vtable in registry
+    const colyseus_schema_vtable_t* vtable = colyseus_schema_lookup(name);
+    if (!vtable) {
+        printf("[ColyseusRoom] set_state_type('%s') - vtable not found in registry\n", name);
+        fflush(stdout);
+        free(name);
+        return;
+    }
+    
+    if (wrapper->native_room) {
+        // Native room already exists, set state type directly
+        colyseus_room_set_state_type(wrapper->native_room, vtable);
+        printf("[ColyseusRoom] set_state_type('%s') - vtable set on native room (%d fields)\n", name, vtable->field_count);
+        fflush(stdout);
+    } else {
+        // Store for later when native room is assigned
+        wrapper->pending_vtable = vtable;
+        printf("[ColyseusRoom] set_state_type('%s') - stored as pending vtable (%d fields)\n", name, vtable->field_count);
+        fflush(stdout);
+    }
+    
+    free(name);
 }

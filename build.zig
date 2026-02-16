@@ -381,7 +381,10 @@ pub fn build(b: *std.Build) void {
     // Build each Zig test
     for (zig_test_files) |test_file| {
         // Skip integration test if requested
-        if (skip_integration and std.mem.eql(u8, test_file.name, "test_integration")) {
+        if (
+            skip_integration and
+            (std.mem.eql(u8, test_file.name, "test_integration") or std.mem.eql(u8, test_file.name, "test_schema_callbacks"))
+        ) {
             continue;
         }
 

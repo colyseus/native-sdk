@@ -1,6 +1,9 @@
 #include "godot_colyseus.h"
+#include "msgpack_variant.h"
 #include <colyseus/client.h>
+#include <colyseus/room.h>
 #include <colyseus/settings.h>
+#include <colyseus/schema/types.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -95,9 +98,6 @@ static void on_room_leave(int code, const char* reason, void* userdata);
 GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata) {
     (void)p_class_userdata;
     
-    printf("[ColyseusClient] Constructor called\n");
-    fflush(stdout);
-    
     // Create the Godot Object (construct parent RefCounted class)
     StringName class_name;
     constructors.string_name_new_with_latin1_chars(&class_name, "RefCounted", false);
@@ -105,27 +105,13 @@ GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata) {
     GDExtensionObjectPtr object = api.classdb_construct_object(&class_name);
     destructors.string_name_destructor(&class_name);
     
-    if (!object) {
-        printf("[ColyseusClient] ERROR: Failed to construct Godot object!\n");
-        fflush(stdout);
-        return NULL;
-    }
-    
-    printf("[ColyseusClient] Godot object created: %p\n", (void*)object);
-    fflush(stdout);
+    if (!object) return NULL;
     
     // Create our wrapper instance data
     ColyseusClientWrapper* wrapper = (ColyseusClientWrapper*)malloc(sizeof(ColyseusClientWrapper));
-    if (!wrapper) {
-        printf("[ColyseusClient] ERROR: Failed to allocate wrapper!\n");
-        fflush(stdout);
-        return NULL;
-    }
+    if (!wrapper) return NULL;
     
-    wrapper->native_client = NULL; // Will be initialized on connect
-    
-    printf("[ColyseusClient] Wrapper created: %p\n", (void*)wrapper);
-    fflush(stdout);
+    wrapper->native_client = NULL;
     
     // Attach our wrapper to the Godot object
     StringName class_name2;
@@ -133,17 +119,11 @@ GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata) {
     api.object_set_instance(object, &class_name2, wrapper);
     destructors.string_name_destructor(&class_name2);
     
-    printf("[ColyseusClient] Wrapper attached to object\n");
-    fflush(stdout);
-    
     return object;
 }
 
 void gdext_colyseus_client_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
     (void)p_class_userdata;
-    
-    printf("[ColyseusClient] Destructor called for instance: %p\n", p_instance);
-    fflush(stdout);
     
     ColyseusClientWrapper* wrapper = (ColyseusClientWrapper*)p_instance;
     if (wrapper) {
@@ -175,43 +155,20 @@ void gdext_colyseus_client_unreference(void* p_class_userdata, GDExtensionClassI
 
 void gdext_colyseus_client_connect_to(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata;
-    (void)r_ret; // void return
+    (void)r_ret;
     
-    printf("[ColyseusClient] connect_to called with instance: %p\n", p_instance);
-    fflush(stdout);
-    
-    // p_args[0] is a pointer to a String (GDExtensionStringPtr)
     const String* endpoint = (const String*)p_args[0];
-    
-    printf("[ColyseusClient] String pointer: %p\n", (void*)endpoint);
-    fflush(stdout);
-    
     ColyseusClientWrapper* wrapper = (ColyseusClientWrapper*)p_instance;
-    if (!wrapper) {
-        printf("[ColyseusClient] ERROR: wrapper is NULL!\n");
-        fflush(stdout);
-        return;
-    }
+    if (!wrapper) return;
     
-    printf("[ColyseusClient] Wrapper valid: %p\n", (void*)wrapper);
-    fflush(stdout);
-    
-    // Extract the endpoint string
     char* endpoint_str = string_to_c_str(endpoint);
     if (!endpoint_str) return;
-    
-    printf("[ColyseusClient] Connecting to: %s\n", endpoint_str);
-    fflush(stdout);
     
     // Parse endpoint and create settings
     char* address = NULL;
     char* port = NULL;
     bool use_secure = false;
-    
     parse_endpoint(endpoint_str, &address, &port, &use_secure);
-    
-    printf("[ColyseusClient] Parsed - address: %s, port: %s, secure: %d\n", address, port, use_secure);
-    fflush(stdout);
     
     // Create settings
     colyseus_settings_t* settings = colyseus_settings_create();
@@ -224,9 +181,6 @@ void gdext_colyseus_client_connect_to(void* p_method_userdata, GDExtensionClassI
         colyseus_client_free(wrapper->native_client);
     }
     wrapper->native_client = colyseus_client_create(settings);
-    
-    printf("[ColyseusClient] Native client created\n");
-    fflush(stdout);
     
     // Cleanup
     free(endpoint_str);
@@ -244,10 +198,10 @@ const char* gdext_colyseus_client_get_endpoint(const ColyseusClientWrapper* self
     return "";
 }
 
-// GDExtension wrapper for the simple getter
-void gdext_colyseus_client_get_endpoint_wrapper(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+// GDExtension ptrcall wrapper for get_endpoint (raw type return)
+void gdext_colyseus_client_get_endpoint_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata;
-    (void)p_args; // no arguments
+    (void)p_args;
     
     const ColyseusClientWrapper* self = (const ColyseusClientWrapper*)p_instance;
     if (self && r_ret) {
@@ -256,60 +210,140 @@ void gdext_colyseus_client_get_endpoint_wrapper(void* p_method_userdata, GDExten
     }
 }
 
-// Helper function to emit Godot signals
+// GDExtension call wrapper for get_endpoint (Variant return)
+void gdext_colyseus_client_get_endpoint_call(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
+    (void)p_method_userdata;
+    (void)p_args;
+    (void)p_argument_count;
+    (void)r_error;
+    
+    const ColyseusClientWrapper* self = (const ColyseusClientWrapper*)p_instance;
+    if (self && r_return) {
+        const char* endpoint = gdext_colyseus_client_get_endpoint(self);
+        String result_string;
+        string_from_c_str(&result_string, endpoint);
+        constructors.variant_from_string_constructor(r_return, &result_string);
+        destructors.string_destructor(&result_string);
+    }
+}
+
+// Helper function to emit Godot signals via variant_call
 static void emit_signal(GDExtensionObjectPtr object, const char* signal_name, GDExtensionConstVariantPtr* args, int arg_count) {
     if (!object) return;
     
-    // Get object_emit_signal function pointer
-    GDExtensionInterfaceObjectMethodBindPtrcall object_emit_signal = 
-        (GDExtensionInterfaceObjectMethodBindPtrcall)api.classdb_construct_object; // placeholder
+    Variant object_variant;
+    constructors.variant_from_object_constructor(&object_variant, &object);
     
-    // TODO: Properly implement signal emission
-    // For now we'll just log it
-    printf("[ColyseusRoom] Would emit signal: %s\n", signal_name);
-    fflush(stdout);
+    StringName emit_method;
+    constructors.string_name_new_with_latin1_chars(&emit_method, "emit_signal", false);
+    
+    StringName signal_string_name;
+    constructors.string_name_new_with_latin1_chars(&signal_string_name, signal_name, false);
+    
+    String signal_string;
+    constructors.string_new_with_utf8_chars(&signal_string, signal_name);
+    
+    Variant signal_name_variant;
+    constructors.variant_from_string_constructor(&signal_name_variant, &signal_string);
+    
+    GDExtensionConstVariantPtr call_args[16];
+    call_args[0] = &signal_name_variant;
+    for (int i = 0; i < arg_count && i < 15; i++) {
+        call_args[i + 1] = args[i];
+    }
+    
+    Variant return_value;
+    GDExtensionCallError error;
+    api.variant_call(&object_variant, &emit_method, call_args, arg_count + 1, &return_value, &error);
+    
+    destructors.string_name_destructor(&emit_method);
+    destructors.string_name_destructor(&signal_string_name);
+    destructors.string_destructor(&signal_string);
+    destructors.variant_destroy(&signal_name_variant);
+    destructors.variant_destroy(&return_value);
+    destructors.variant_destroy(&object_variant);
+}
+
+// Message callback - receives messages with type info and emits signal
+// Decodes msgpack payload to native Godot types (Dictionary, Array, etc.)
+static void on_room_message_with_type(const char* type, const uint8_t* data, size_t length, void* userdata) {
+    ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
+    if (!room_wrapper || !room_wrapper->godot_object) return;
+    
+    // Create type Variant (as String)
+    String type_string;
+    constructors.string_new_with_utf8_chars(&type_string, type);
+    Variant type_variant;
+    constructors.variant_from_string_constructor(&type_variant, &type_string);
+    
+    // Decode msgpack payload to Godot Variant
+    Variant data_variant;
+    bool decode_success = msgpack_to_godot_variant(data, length, &data_variant);
+    
+    if (!decode_success) {
+        // Fallback: if decoding fails, return raw bytes as PackedByteArray
+        PackedByteArray byte_array;
+        constructors.packed_byte_array_constructor(&byte_array, NULL);
+        constructors.variant_from_packed_byte_array_constructor(&data_variant, &byte_array);
+        
+        if (length > 0) {
+            // Resize and copy
+            StringName resize_method;
+            constructors.string_name_new_with_latin1_chars(&resize_method, "resize", false);
+            int64_t size_val = (int64_t)length;
+            Variant size_variant;
+            constructors.variant_from_int_constructor(&size_variant, &size_val);
+            GDExtensionConstVariantPtr resize_args[1] = { &size_variant };
+            Variant resize_return;
+            GDExtensionCallError error;
+            api.variant_call(&data_variant, &resize_method, resize_args, 1, &resize_return, &error);
+            destructors.string_name_destructor(&resize_method);
+            destructors.variant_destroy(&size_variant);
+            destructors.variant_destroy(&resize_return);
+            
+            if (error.error == GDEXTENSION_CALL_OK) {
+                for (size_t i = 0; i < length; i++) {
+                    uint8_t* ptr = api.packed_byte_array_operator_index(&byte_array, (GDExtensionInt)i);
+                    if (ptr) *ptr = data[i];
+                }
+            }
+        }
+    }
+    
+    // Emit signal: message_received(type, data)
+    GDExtensionConstVariantPtr args[2] = { &type_variant, &data_variant };
+    emit_signal(room_wrapper->godot_object, "message_received", args, 2);
+    
+    // Cleanup
+    destructors.string_destructor(&type_string);
+    destructors.variant_destroy(&type_variant);
+    destructors.variant_destroy(&data_variant);
 }
 
 // Room event callbacks
 static void on_room_join(void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper) return;
-    
-    printf("[ColyseusRoom] Joined room!\n");
-    fflush(stdout);
-    
-    // Emit "joined" signal
     emit_signal(room_wrapper->godot_object, "joined", NULL, 0);
 }
 
 static void on_room_state_change(void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper) return;
-    
-    printf("[ColyseusRoom] State changed\n");
-    fflush(stdout);
-    
-    // Emit "state_changed" signal
     emit_signal(room_wrapper->godot_object, "state_changed", NULL, 0);
 }
 
 static void on_room_error(int code, const char* message, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper) return;
-    
-    printf("[ColyseusRoom] Error [%d]: %s\n", code, message);
-    fflush(stdout);
-    
     // TODO: Emit "error" signal with code and message
+    (void)code;
+    (void)message;
 }
 
 static void on_room_leave(int code, const char* reason, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper) return;
-    
-    printf("[ColyseusRoom] Left room [%d]: %s\n", code, reason);
-    fflush(stdout);
-    
     // TODO: Emit "left" signal with code and reason
 }
 
@@ -318,10 +352,15 @@ static void on_join_or_create_success(colyseus_room_t* room, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper) return;
     
-    printf("[ColyseusClient] Join/Create success! Room: %p\n", (void*)room);
-    fflush(stdout);
+    // Apply pending vtable BEFORE assigning native room (so it's set before join message processing)
+    if (room_wrapper->pending_vtable) {
+        colyseus_room_set_state_type(room, room_wrapper->pending_vtable);
+        printf("[ColyseusClient] Applied pending vtable: %s (%d fields)\n", 
+               room_wrapper->pending_vtable->name, room_wrapper->pending_vtable->field_count);
+        fflush(stdout);
+        room_wrapper->pending_vtable = NULL;  // Clear after applying
+    }
     
-    // Store the native room
     room_wrapper->native_room = room;
     
     // Register room event callbacks
@@ -329,19 +368,12 @@ static void on_join_or_create_success(colyseus_room_t* room, void* userdata) {
     colyseus_room_on_state_change(room, on_room_state_change, room_wrapper);
     colyseus_room_on_error(room, on_room_error, room_wrapper);
     colyseus_room_on_leave(room, on_room_leave, room_wrapper);
-    
-    printf("[ColyseusClient] Room callbacks registered\n");
-    fflush(stdout);
+    colyseus_room_on_message_any_with_type(room, on_room_message_with_type, room_wrapper);
 }
 
 // Matchmaking error callback
 static void on_join_or_create_error(int code, const char* message, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
-    
-    printf("[ColyseusClient] Join/Create error [%d]: %s\n", code, message);
-    fflush(stdout);
-    
-    // Emit error on the room object
     if (room_wrapper) {
         on_room_error(code, message, room_wrapper);
     }
@@ -351,14 +383,8 @@ static void on_join_or_create_error(int code, const char* message, void* userdat
 void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata;
     
-    printf("[ColyseusClient] join_or_create called\n");
-    fflush(stdout);
-    
     ColyseusClientWrapper* client_wrapper = (ColyseusClientWrapper*)p_instance;
     if (!client_wrapper || !client_wrapper->native_client) {
-        printf("[ColyseusClient] ERROR: Client not connected!\n");
-        fflush(stdout);
-        // Return null object
         if (r_ret) {
             GDExtensionObjectPtr null_obj = NULL;
             constructors.variant_from_object_constructor(r_ret, &null_obj);
@@ -374,7 +400,7 @@ void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExt
     fflush(stdout);
     
     // Create a ColyseusRoom Godot object
-    // This will call our constructor (gdext_colyseus_room_constructor) automatically
+    // This will call gdext_colyseus_room_constructor which creates the wrapper
     StringName class_name;
     constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusRoom", false);
     
@@ -382,10 +408,7 @@ void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExt
     destructors.string_name_destructor(&class_name);
     
     if (!room_object) {
-        printf("[ColyseusClient] ERROR: Failed to construct ColyseusRoom object!\n");
-        fflush(stdout);
         free(room_name);
-        // Return null object
         if (r_ret) {
             GDExtensionObjectPtr null_obj = NULL;
             constructors.variant_from_object_constructor(r_ret, &null_obj);
@@ -393,20 +416,12 @@ void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExt
         return;
     }
     
-    printf("[ColyseusClient] ColyseusRoom object created: %p\n", (void*)room_object);
-    fflush(stdout);
-    
-    // Get the wrapper instance that was created by our constructor
-    // The wrapper is the instance pointer associated with the object
-    // Since we just created it, the wrapper is the object itself for now (we need to get the binding)
-    // For extension classes, the instance IS the wrapper we returned from constructor
-    ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)room_object;
-    
-    // Store the Godot object reference
-    room_wrapper->godot_object = room_object;
-    
-    printf("[ColyseusClient] Room wrapper: %p\n", (void*)room_wrapper);
-    fflush(stdout);
+    // Get the wrapper that was created by the constructor
+    ColyseusRoomWrapper* room_wrapper = gdext_colyseus_room_get_last_wrapper();
+    if (!room_wrapper) {
+        free(room_name);
+        return;
+    }
     
     // Call native join_or_create (async)
     colyseus_client_join_or_create(
@@ -418,8 +433,22 @@ void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExt
         room_wrapper
     );
     
-    printf("[ColyseusClient] Native join_or_create called\n");
-    fflush(stdout);
+    // For RefCounted objects, call reference() to keep the object alive when returning
+    {
+        StringName ref_method;
+        constructors.string_name_new_with_latin1_chars(&ref_method, "reference", false);
+        
+        Variant room_variant;
+        constructors.variant_from_object_constructor(&room_variant, &room_object);
+        
+        Variant return_val;
+        GDExtensionCallError call_error;
+        api.variant_call(&room_variant, &ref_method, NULL, 0, &return_val, &call_error);
+        
+        destructors.string_name_destructor(&ref_method);
+        destructors.variant_destroy(&return_val);
+        // NOTE: Intentionally not destroying room_variant to keep the reference
+    }
     
     // Return the room object (ptrcall - write object pointer directly)
     if (r_ret) {
@@ -437,7 +466,7 @@ void gdext_colyseus_client_join_or_create(void* p_method_userdata, GDExtensionCl
     
     // Extract the string argument from variant
     String room_name_string;
-    constructors.string_from_variant_constructor(&room_name_string, p_args[0]);
+    constructors.string_from_variant_constructor(&room_name_string, (GDExtensionVariantPtr)p_args[0]);
     
     // Call the ptrcall version with converted arguments
     GDExtensionObjectPtr result = NULL;

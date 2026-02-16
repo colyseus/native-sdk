@@ -243,6 +243,12 @@ void colyseus_room_on_message_any(colyseus_room_t* room, colyseus_room_on_messag
     room->on_message_any_userdata = userdata;
 }
 
+void colyseus_room_on_message_any_with_type(colyseus_room_t* room, colyseus_room_on_message_with_type_fn callback, void* userdata) {
+    if (!room) return;
+    room->on_message_any_with_type = callback;
+    room->on_message_any_with_type_userdata = userdata;
+}
+
 /* Helper function to encode msgpack string */
 static size_t msgpack_encode_string(uint8_t* dest, const char* str, size_t str_len) {
     if (str_len <= 31) {
@@ -580,6 +586,11 @@ static void room_dispatch_message(colyseus_room_t* room, const char* type, const
         handler->callback(message, length, handler->userdata);
     } else if (room->on_message_any) {
         room->on_message_any(message, length, room->on_message_any_userdata);
+    }
+
+    /* Also call the "with type" callback if registered */
+    if (room->on_message_any_with_type) {
+        room->on_message_any_with_type(type, message, length, room->on_message_any_with_type_userdata);
     }
 
     free(key);
