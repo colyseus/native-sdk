@@ -189,6 +189,7 @@ pub fn build(b: *std.Build) void {
             "src/schema/decoder.c",
             "src/schema/serializer.c",
             "src/schema/callbacks.c",
+            "src/schema/dynamic_schema.c",
 
             // Utils
             "src/utils/strUtil.c",

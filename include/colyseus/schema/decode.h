@@ -15,7 +15,7 @@ extern "C" {
      */
 
     /* Decode a variable-length number (msgpack format) */
-    float colyseus_decode_number(const uint8_t* bytes, colyseus_iterator_t* it);
+    double colyseus_decode_number(const uint8_t* bytes, colyseus_iterator_t* it);
 
     /* Decode primitive types */
     int8_t colyseus_decode_int8(const uint8_t* bytes, colyseus_iterator_t* it);
@@ -41,6 +41,9 @@ extern "C" {
 
     /* Check if current byte represents a number */
     bool colyseus_decode_number_check(const uint8_t* bytes, colyseus_iterator_t* it);
+
+    /* Decode a varint as int (safe bounds checking) */
+    int colyseus_decode_varint(const uint8_t* bytes, colyseus_iterator_t* it);
 
 #ifdef __cplusplus
 }

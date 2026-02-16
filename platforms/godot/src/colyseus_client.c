@@ -6,7 +6,6 @@
 #include <colyseus/schema/types.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 // Helper function to create a Godot String from a C string
 static void string_from_c_str(String *p_dest, const char *p_src) {
@@ -140,8 +139,6 @@ void gdext_colyseus_client_reference(void* p_class_userdata, GDExtensionClassIns
     (void)p_instance;
     // For RefCounted, Godot manages the reference count internally
     // We don't need to do anything here
-    printf("[ColyseusClient] Reference called\n");
-    fflush(stdout);
 }
 
 void gdext_colyseus_client_unreference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
@@ -149,8 +146,6 @@ void gdext_colyseus_client_unreference(void* p_class_userdata, GDExtensionClassI
     (void)p_instance;
     // For RefCounted, Godot manages the reference count internally
     // We don't need to do anything here
-    printf("[ColyseusClient] Unreference called\n");
-    fflush(stdout);
 }
 
 void gdext_colyseus_client_connect_to(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
@@ -227,37 +222,45 @@ void gdext_colyseus_client_get_endpoint_call(void* p_method_userdata, GDExtensio
     }
 }
 
-// Helper function to emit Godot signals via variant_call
+// Helper function to emit Godot signals via call_deferred
+// This ensures signals are emitted on the main thread, avoiding thread safety issues
 static void emit_signal(GDExtensionObjectPtr object, const char* signal_name, GDExtensionConstVariantPtr* args, int arg_count) {
     if (!object) return;
     
     Variant object_variant;
     constructors.variant_from_object_constructor(&object_variant, &object);
     
-    StringName emit_method;
-    constructors.string_name_new_with_latin1_chars(&emit_method, "emit_signal", false);
+    // Use call_deferred to ensure signal emission happens on main thread
+    StringName call_deferred_method;
+    constructors.string_name_new_with_latin1_chars(&call_deferred_method, "call_deferred", false);
     
-    StringName signal_string_name;
-    constructors.string_name_new_with_latin1_chars(&signal_string_name, signal_name, false);
+    // First arg to call_deferred is the method name "emit_signal"
+    String emit_signal_str;
+    constructors.string_new_with_utf8_chars(&emit_signal_str, "emit_signal");
+    Variant emit_signal_variant;
+    constructors.variant_from_string_constructor(&emit_signal_variant, &emit_signal_str);
     
+    // Second arg to call_deferred is the signal name
     String signal_string;
     constructors.string_new_with_utf8_chars(&signal_string, signal_name);
-    
     Variant signal_name_variant;
     constructors.variant_from_string_constructor(&signal_name_variant, &signal_string);
     
+    // Build args array: ["emit_signal", signal_name, ...args]
     GDExtensionConstVariantPtr call_args[16];
-    call_args[0] = &signal_name_variant;
-    for (int i = 0; i < arg_count && i < 15; i++) {
-        call_args[i + 1] = args[i];
+    call_args[0] = &emit_signal_variant;
+    call_args[1] = &signal_name_variant;
+    for (int i = 0; i < arg_count && i < 14; i++) {
+        call_args[i + 2] = args[i];
     }
     
     Variant return_value;
     GDExtensionCallError error;
-    api.variant_call(&object_variant, &emit_method, call_args, arg_count + 1, &return_value, &error);
+    api.variant_call(&object_variant, &call_deferred_method, call_args, arg_count + 2, &return_value, &error);
     
-    destructors.string_name_destructor(&emit_method);
-    destructors.string_name_destructor(&signal_string_name);
+    destructors.string_name_destructor(&call_deferred_method);
+    destructors.string_destructor(&emit_signal_str);
+    destructors.variant_destroy(&emit_signal_variant);
     destructors.string_destructor(&signal_string);
     destructors.variant_destroy(&signal_name_variant);
     destructors.variant_destroy(&return_value);
@@ -355,9 +358,6 @@ static void on_join_or_create_success(colyseus_room_t* room, void* userdata) {
     // Apply pending vtable BEFORE assigning native room (so it's set before join message processing)
     if (room_wrapper->pending_vtable) {
         colyseus_room_set_state_type(room, room_wrapper->pending_vtable);
-        printf("[ColyseusClient] Applied pending vtable: %s (%d fields)\n", 
-               room_wrapper->pending_vtable->name, room_wrapper->pending_vtable->field_count);
-        fflush(stdout);
         room_wrapper->pending_vtable = NULL;  // Clear after applying
     }
     
@@ -395,9 +395,6 @@ void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExt
     // p_args[0] is a pointer to a String (room name)
     const String* room_name_string = (const String*)p_args[0];
     char* room_name = string_to_c_str(room_name_string);
-    
-    printf("[ColyseusClient] Room name: %s\n", room_name);
-    fflush(stdout);
     
     // Create a ColyseusRoom Godot object
     // This will call gdext_colyseus_room_constructor which creates the wrapper

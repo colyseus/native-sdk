@@ -443,16 +443,21 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
 
             /* Create serializer based on serializer ID */
             if (room->serializer_id && strcmp(room->serializer_id, "schema") == 0) {
-                if (room->state_vtable) {
-                    room->serializer = colyseus_schema_serializer_create(room->state_vtable);
+                /* Create serializer - pass NULL if no vtable, handshake will auto-detect */
+                room->serializer = colyseus_schema_serializer_create(room->state_vtable);
 
-                    /* Handle handshake if there's more data */
-                    if (offset < length && room->serializer) {
-                        colyseus_schema_serializer_handshake(room->serializer, data, length, (int)offset);
+                /* Handle handshake if there's more data */
+                if (offset < length && room->serializer) {
+                    colyseus_schema_serializer_handshake(room->serializer, data, length, (int)offset);
+                    
+                    /* If auto-detection happened, copy the vtable reference to room */
+                    if (!room->state_vtable) {
+                        const colyseus_schema_vtable_t* detected_vtable = 
+                            colyseus_schema_serializer_get_vtable(room->serializer);
+                        if (detected_vtable) {
+                            room->state_vtable = detected_vtable;
+                        }
                     }
-                } else {
-                    fprintf(stderr, "Warning: Schema serializer requested but no state vtable set. "
-                                    "Call colyseus_room_set_state_type() before connecting.\n");
                 }
             } else if (room->serializer_id && strcmp(room->serializer_id, "fossil-delta") == 0) {
                 fprintf(stderr, "Error: FossilDelta serialization has been deprecated.\n");

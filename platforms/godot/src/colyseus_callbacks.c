@@ -3,9 +3,9 @@
 #include <colyseus/room.h>
 #include <colyseus/schema.h>
 #include <colyseus/schema/ref_tracker.h>
+#include <colyseus/schema/dynamic_schema.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 // Storage for the last created wrapper (for factory method)
 static ColyseusCallbacksWrapper* g_last_created_callbacks_wrapper = NULL;
@@ -168,10 +168,6 @@ static void property_change_trampoline(void* value, void* previous_value, void* 
     GodotCallbackEntry* entry = (GodotCallbackEntry*)userdata;
     if (!entry || !entry->active) return;
     
-    printf("[ColyseusCallbacks] Property change: %s (value=%p, prev=%p, type=%d)\n", 
-           entry->property ? entry->property : "(unknown)", value, previous_value, entry->field_type);
-    fflush(stdout);
-    
     // Create Variant arguments for the callable
     Variant current_variant;
     Variant previous_variant;
@@ -191,15 +187,6 @@ static void property_change_trampoline(void* value, void* previous_value, void* 
     
     destructors.string_name_destructor(&call_method);
     
-    if (error.error != GDEXTENSION_CALL_OK) {
-        printf("[ColyseusCallbacks] Error calling property callback: %d (arg_expected=%d)\n", 
-               error.error, error.expected);
-        fflush(stdout);
-    } else {
-        printf("[ColyseusCallbacks] Property callback invoked successfully\n");
-        fflush(stdout);
-    }
-    
     destructors.variant_destroy(&return_value);
     destructors.variant_destroy(&current_variant);
     destructors.variant_destroy(&previous_variant);
@@ -208,10 +195,6 @@ static void property_change_trampoline(void* value, void* previous_value, void* 
 static void item_add_trampoline(void* value, void* key, void* userdata) {
     GodotCallbackEntry* entry = (GodotCallbackEntry*)userdata;
     if (!entry || !entry->active) return;
-    
-    printf("[ColyseusCallbacks] Item add: %s (value=%p, key=%p, field_type=%d)\n",
-           entry->property ? entry->property : "(unknown)", value, key, entry->field_type);
-    fflush(stdout);
     
     // Create Variant arguments
     Variant value_variant;
@@ -265,14 +248,6 @@ static void item_add_trampoline(void* value, void* key, void* userdata) {
     
     destructors.string_name_destructor(&call_method);
     
-    if (error.error != GDEXTENSION_CALL_OK) {
-        printf("[ColyseusCallbacks] Error calling on_add callback: %d\n", error.error);
-        fflush(stdout);
-    } else {
-        printf("[ColyseusCallbacks] on_add callback invoked successfully\n");
-        fflush(stdout);
-    }
-    
     destructors.variant_destroy(&return_value);
     destructors.variant_destroy(&value_variant);
     destructors.variant_destroy(&key_variant);
@@ -281,10 +256,6 @@ static void item_add_trampoline(void* value, void* key, void* userdata) {
 static void item_remove_trampoline(void* value, void* key, void* userdata) {
     GodotCallbackEntry* entry = (GodotCallbackEntry*)userdata;
     if (!entry || !entry->active) return;
-    
-    printf("[ColyseusCallbacks] Item remove: %s (value=%p, key=%p, field_type=%d)\n",
-           entry->property ? entry->property : "(unknown)", value, key, entry->field_type);
-    fflush(stdout);
     
     // Create Variant arguments
     Variant value_variant;
@@ -336,14 +307,6 @@ static void item_remove_trampoline(void* value, void* key, void* userdata) {
     
     destructors.string_name_destructor(&call_method);
     
-    if (error.error != GDEXTENSION_CALL_OK) {
-        printf("[ColyseusCallbacks] Error calling on_remove callback: %d\n", error.error);
-        fflush(stdout);
-    } else {
-        printf("[ColyseusCallbacks] on_remove callback invoked successfully\n");
-        fflush(stdout);
-    }
-    
     destructors.variant_destroy(&return_value);
     destructors.variant_destroy(&value_variant);
     destructors.variant_destroy(&key_variant);
@@ -389,9 +352,6 @@ GDExtensionObjectPtr gdext_colyseus_callbacks_constructor(void* p_class_userdata
     // Store for retrieval by factory method
     g_last_created_callbacks_wrapper = wrapper;
     
-    printf("[ColyseusCallbacks] Constructor called, wrapper=%p\n", (void*)wrapper);
-    fflush(stdout);
-    
     return object;
 }
 
@@ -400,9 +360,6 @@ void gdext_colyseus_callbacks_destructor(void* p_class_userdata, GDExtensionClas
     
     ColyseusCallbacksWrapper* wrapper = (ColyseusCallbacksWrapper*)p_instance;
     if (!wrapper) return;
-    
-    printf("[ColyseusCallbacks] Destructor called, wrapper=%p\n", (void*)wrapper);
-    fflush(stdout);
     
     // Free all callback entries
     for (int i = 0; i < COLYSEUS_MAX_CALLBACK_ENTRIES; i++) {
@@ -437,36 +394,17 @@ void gdext_colyseus_callbacks_init_with_room(
     
     wrapper->room_wrapper = room_wrapper;
     
-    printf("[ColyseusCallbacks] init_with_room: room_wrapper=%p, native_room=%p\n",
-           (void*)room_wrapper, (void*)(room_wrapper ? room_wrapper->native_room : NULL));
-    fflush(stdout);
-    
     // Get the decoder from the room's serializer
     if (room_wrapper->native_room) {
-        printf("[ColyseusCallbacks]   serializer=%p\n", 
-               (void*)room_wrapper->native_room->serializer);
-        fflush(stdout);
-        
         if (room_wrapper->native_room->serializer) {
-            printf("[ColyseusCallbacks]   decoder=%p\n", 
-                   (void*)room_wrapper->native_room->serializer->decoder);
-            fflush(stdout);
-            
             if (room_wrapper->native_room->serializer->decoder) {
                 wrapper->native_callbacks = colyseus_callbacks_create(
                     room_wrapper->native_room->serializer->decoder
                 );
-                
-                printf("[ColyseusCallbacks] Initialized with room, native_callbacks=%p\n", 
-                       (void*)wrapper->native_callbacks);
-                fflush(stdout);
                 return;
             }
         }
     }
-    
-    printf("[ColyseusCallbacks] Warning: Room has no serializer/decoder yet\n");
-    fflush(stdout);
 }
 
 // ============================================================================
@@ -484,9 +422,6 @@ void gdext_colyseus_callbacks_get(
     (void)p_method_userdata;
     (void)p_instance;  // NULL for static methods
     
-    printf("[ColyseusCallbacks] get() called with %lld args\n", (long long)p_argument_count);
-    fflush(stdout);
-    
     if (p_argument_count < 1) {
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
         return;
@@ -497,22 +432,15 @@ void gdext_colyseus_callbacks_get(
     constructors.object_from_variant_constructor(&room_obj, (GDExtensionVariantPtr)p_args[0]);
     
     if (!room_obj) {
-        printf("[ColyseusCallbacks] get() - room object is null\n");
-        fflush(stdout);
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
         return;
     }
     
     // Get the room's instance ID and look up the wrapper from our registry
     GDObjectInstanceID room_instance_id = api.object_get_instance_id(room_obj);
-    printf("[ColyseusCallbacks] Room instance ID: %llu\n", (unsigned long long)room_instance_id);
-    fflush(stdout);
     
     // Look up the room wrapper from our global registry
     ColyseusRoomWrapper* room_wrapper = gdext_colyseus_room_get_wrapper_by_id(room_instance_id);
-    
-    printf("[ColyseusCallbacks] Room wrapper from registry: %p\n", (void*)room_wrapper);
-    fflush(stdout);
     
     // Create a new ColyseusCallbacks instance
     StringName class_name;
@@ -535,9 +463,6 @@ void gdext_colyseus_callbacks_get(
     // For now, let's try to initialize if we have room info
     if (wrapper && room_wrapper) {
         gdext_colyseus_callbacks_init_with_room(wrapper, room_wrapper);
-    } else if (wrapper) {
-        printf("[ColyseusCallbacks] Could not get room wrapper, callbacks will not work properly\n");
-        fflush(stdout);
     }
     
     // Return the callbacks object as a variant
@@ -566,9 +491,6 @@ void gdext_colyseus_callbacks_listen(
         return;
     }
     
-    printf("[ColyseusCallbacks] listen() called with %lld args\n", (long long)p_argument_count);
-    fflush(stdout);
-    
     if (p_argument_count < 2) {
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
         return;
@@ -590,10 +512,6 @@ void gdext_colyseus_callbacks_listen(
         if (wrapper->room_wrapper && wrapper->room_wrapper->native_room) {
             instance = colyseus_room_get_state(wrapper->room_wrapper->native_room);
         }
-        
-        printf("[ColyseusCallbacks] listen() on root state property: %s, instance=%p\n", 
-               property_name, instance);
-        fflush(stdout);
         
     } else if (first_arg_type == GDEXTENSION_VARIANT_TYPE_DICTIONARY) {
         // listen(schema_dict, "property", callback) - nested schema
@@ -619,13 +537,7 @@ void gdext_colyseus_callbacks_listen(
             }
         }
         
-        printf("[ColyseusCallbacks] listen() on nested schema ref_id=%d, property: %s, instance=%p\n", 
-               ref_id, property_name, instance);
-        fflush(stdout);
-        
     } else {
-        printf("[ColyseusCallbacks] listen() - invalid first argument type: %d\n", first_arg_type);
-        fflush(stdout);
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
         return;
     }
@@ -633,8 +545,6 @@ void gdext_colyseus_callbacks_listen(
     // Find a free entry
     GodotCallbackEntry* entry = find_free_entry(wrapper);
     if (!entry) {
-        printf("[ColyseusCallbacks] Error: No free callback entries\n");
-        fflush(stdout);
         if (property_name) free(property_name);
         int64_t result = -1;
         if (r_return) constructors.variant_from_int_constructor(r_return, &result);
@@ -654,14 +564,22 @@ void gdext_colyseus_callbacks_listen(
     if (instance && property_name) {
         colyseus_schema_t* schema = (colyseus_schema_t*)instance;
         if (schema->__vtable) {
-            for (int i = 0; i < schema->__vtable->field_count; i++) {
-                if (strcmp(schema->__vtable->fields[i].name, property_name) == 0) {
-                    entry->field_type = schema->__vtable->fields[i].type;
-                    entry->item_vtable = schema->__vtable->fields[i].child_vtable;
-                    printf("[ColyseusCallbacks] Found field '%s' with type %d\n", 
-                           property_name, entry->field_type);
-                    fflush(stdout);
-                    break;
+            if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+                // Dynamic vtable - use dynamic field lookup
+                const colyseus_dynamic_vtable_t* dyn_vtable = colyseus_vtable_as_dynamic(schema->__vtable);
+                const colyseus_dynamic_field_t* dyn_field = colyseus_dynamic_vtable_find_field_by_name(dyn_vtable, property_name);
+                if (dyn_field) {
+                    entry->field_type = dyn_field->type;
+                    entry->item_vtable = dyn_field->child_vtable ? &dyn_field->child_vtable->base : NULL;
+                }
+            } else {
+                // Static vtable
+                for (int i = 0; i < schema->__vtable->field_count; i++) {
+                    if (schema->__vtable->fields[i].name && strcmp(schema->__vtable->fields[i].name, property_name) == 0) {
+                        entry->field_type = schema->__vtable->fields[i].type;
+                        entry->item_vtable = schema->__vtable->fields[i].child_vtable;
+                        break;
+                    }
                 }
             }
         }
@@ -680,13 +598,8 @@ void gdext_colyseus_callbacks_listen(
             entry,  // userdata
             true    // immediate
         );
-        
-        printf("[ColyseusCallbacks] Registered native listen callback, handle=%d\n", entry->handle);
-        fflush(stdout);
     } else {
         entry->handle = wrapper->entry_count;
-        printf("[ColyseusCallbacks] Native callbacks not available, using local handle=%d\n", entry->handle);
-        fflush(stdout);
     }
     
     wrapper->entry_count++;
@@ -711,9 +624,6 @@ void gdext_colyseus_callbacks_on_add(
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
         return;
     }
-    
-    printf("[ColyseusCallbacks] on_add() called with %lld args\n", (long long)p_argument_count);
-    fflush(stdout);
     
     if (p_argument_count < 2) {
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
@@ -780,14 +690,22 @@ void gdext_colyseus_callbacks_on_add(
     if (instance && property_name) {
         colyseus_schema_t* schema = (colyseus_schema_t*)instance;
         if (schema->__vtable) {
-            for (int i = 0; i < schema->__vtable->field_count; i++) {
-                if (strcmp(schema->__vtable->fields[i].name, property_name) == 0) {
-                    entry->field_type = schema->__vtable->fields[i].type;
-                    entry->item_vtable = schema->__vtable->fields[i].child_vtable;
-                    printf("[ColyseusCallbacks] on_add field '%s': type=%d, item_vtable=%p\n", 
-                           property_name, entry->field_type, (void*)entry->item_vtable);
-                    fflush(stdout);
-                    break;
+            if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+                // Dynamic vtable
+                const colyseus_dynamic_vtable_t* dyn_vtable = colyseus_vtable_as_dynamic(schema->__vtable);
+                const colyseus_dynamic_field_t* dyn_field = colyseus_dynamic_vtable_find_field_by_name(dyn_vtable, property_name);
+                if (dyn_field) {
+                    entry->field_type = dyn_field->type;
+                    entry->item_vtable = dyn_field->child_vtable ? &dyn_field->child_vtable->base : NULL;
+                }
+            } else {
+                // Static vtable
+                for (int i = 0; i < schema->__vtable->field_count; i++) {
+                    if (schema->__vtable->fields[i].name && strcmp(schema->__vtable->fields[i].name, property_name) == 0) {
+                        entry->field_type = schema->__vtable->fields[i].type;
+                        entry->item_vtable = schema->__vtable->fields[i].child_vtable;
+                        break;
+                    }
                 }
             }
         }
@@ -804,8 +722,6 @@ void gdext_colyseus_callbacks_on_add(
             entry,
             true  // immediate
         );
-        printf("[ColyseusCallbacks] Registered native on_add callback, handle=%d\n", entry->handle);
-        fflush(stdout);
     } else {
         entry->handle = wrapper->entry_count;
     }
@@ -831,9 +747,6 @@ void gdext_colyseus_callbacks_on_remove(
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
         return;
     }
-    
-    printf("[ColyseusCallbacks] on_remove() called with %lld args\n", (long long)p_argument_count);
-    fflush(stdout);
     
     if (p_argument_count < 2) {
         if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
@@ -899,11 +812,22 @@ void gdext_colyseus_callbacks_on_remove(
     if (instance && property_name) {
         colyseus_schema_t* schema = (colyseus_schema_t*)instance;
         if (schema->__vtable) {
-            for (int i = 0; i < schema->__vtable->field_count; i++) {
-                if (strcmp(schema->__vtable->fields[i].name, property_name) == 0) {
-                    entry->field_type = schema->__vtable->fields[i].type;
-                    entry->item_vtable = schema->__vtable->fields[i].child_vtable;
-                    break;
+            if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+                // Dynamic vtable
+                const colyseus_dynamic_vtable_t* dyn_vtable = colyseus_vtable_as_dynamic(schema->__vtable);
+                const colyseus_dynamic_field_t* dyn_field = colyseus_dynamic_vtable_find_field_by_name(dyn_vtable, property_name);
+                if (dyn_field) {
+                    entry->field_type = dyn_field->type;
+                    entry->item_vtable = dyn_field->child_vtable ? &dyn_field->child_vtable->base : NULL;
+                }
+            } else {
+                // Static vtable
+                for (int i = 0; i < schema->__vtable->field_count; i++) {
+                    if (schema->__vtable->fields[i].name && strcmp(schema->__vtable->fields[i].name, property_name) == 0) {
+                        entry->field_type = schema->__vtable->fields[i].type;
+                        entry->item_vtable = schema->__vtable->fields[i].child_vtable;
+                        break;
+                    }
                 }
             }
         }
@@ -919,8 +843,6 @@ void gdext_colyseus_callbacks_on_remove(
             item_remove_trampoline,
             entry
         );
-        printf("[ColyseusCallbacks] Registered native on_remove callback, handle=%d\n", entry->handle);
-        fflush(stdout);
     } else {
         entry->handle = wrapper->entry_count;
     }
@@ -969,8 +891,5 @@ void gdext_colyseus_callbacks_remove(
         }
         destructors.variant_destroy(&entry->callable);
         entry->active = false;
-        
-        printf("[ColyseusCallbacks] Removed callback handle %lld\n", (long long)handle);
-        fflush(stdout);
     }
 }

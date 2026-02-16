@@ -55,6 +55,7 @@
 
 #include "colyseus/schema/types.h"
 #include "colyseus/schema/decode.h"
+#include "colyseus/schema/dynamic_schema.h"
 
 
 #ifdef __cplusplus
@@ -124,6 +125,7 @@ void colyseus_schema_serializer_free(colyseus_schema_serializer_t* serializer);
 /* ISerializer interface */
 void colyseus_schema_serializer_set_state(colyseus_schema_serializer_t* serializer, const uint8_t* data, size_t length, int offset);
 void* colyseus_schema_serializer_get_state(colyseus_schema_serializer_t* serializer);
+const colyseus_schema_vtable_t* colyseus_schema_serializer_get_vtable(colyseus_schema_serializer_t* serializer);
 void colyseus_schema_serializer_patch(colyseus_schema_serializer_t* serializer, const uint8_t* data, size_t length, int offset);
 void colyseus_schema_serializer_teardown(colyseus_schema_serializer_t* serializer);
 void colyseus_schema_serializer_handshake(colyseus_schema_serializer_t* serializer, const uint8_t* bytes, size_t length, int offset);

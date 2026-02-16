@@ -1,12 +1,13 @@
 #include "godot_colyseus.h"
 #include "colyseus_state.h"
 #include "colyseus_schema_registry.h"
+#include "colyseus_gdscript_schema.h"
 #include "msgpack_encoder.h"
 #include <colyseus/room.h>
 #include <colyseus/schema.h>
+#include <colyseus/schema/dynamic_schema.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 // Temporary storage for the last created wrapper
 // Used to pass wrapper reference from constructor to caller
@@ -101,6 +102,8 @@ GDExtensionObjectPtr gdext_colyseus_room_constructor(void* p_class_userdata) {
     wrapper->native_room = NULL;
     wrapper->godot_object = object;
     wrapper->pending_vtable = NULL;
+    wrapper->gdscript_schema_ctx = NULL;
+    wrapper->gdscript_state_instance = NULL;
     
     // Attach our wrapper to the Godot object
     StringName class_name;
@@ -114,10 +117,6 @@ GDExtensionObjectPtr gdext_colyseus_room_constructor(void* p_class_userdata) {
     // Register in the global registry for lookup by instance ID
     GDObjectInstanceID instance_id = api.object_get_instance_id(object);
     register_room_wrapper(instance_id, wrapper);
-    
-    printf("[ColyseusRoom] Constructor: instance_id=%llu, wrapper=%p\n", 
-           (unsigned long long)instance_id, (void*)wrapper);
-    fflush(stdout);
     
     return object;
 }
@@ -133,6 +132,18 @@ void gdext_colyseus_room_destructor(void* p_class_userdata, GDExtensionClassInst
         if (wrapper->native_room) {
             colyseus_room_free(wrapper->native_room);
         }
+        
+        // Free GDScript schema context if present
+        if (wrapper->gdscript_schema_ctx) {
+            gdscript_schema_context_free(wrapper->gdscript_schema_ctx);
+        }
+        
+        // Free GDScript state instance if present
+        if (wrapper->gdscript_state_instance) {
+            destructors.variant_destroy(wrapper->gdscript_state_instance);
+            free(wrapper->gdscript_state_instance);
+        }
+        
         free(wrapper);
     }
 }
@@ -173,8 +184,6 @@ void gdext_colyseus_room_send_message(void* p_method_userdata, GDExtensionClassI
     
     int32_t type_len = api.string_to_utf8_chars(&type_str, NULL, 0);
     if (type_len <= 0) {
-        printf("[ColyseusRoom] send_message: empty type string\n");
-        fflush(stdout);
         destructors.string_destructor(&type_str);
         return;
     }
@@ -304,16 +313,19 @@ void gdext_colyseus_room_has_joined(void* p_method_userdata, GDExtensionClassIns
     }
 }
 
-void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+// ptrcall version - returns Dictionary directly
+void gdext_colyseus_room_get_state_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata;
-    (void)p_args; // no arguments
+    (void)p_args;
+    
+    Dictionary* result = (Dictionary*)r_ret;
+    if (!result) return;
+    
+    // Initialize result dictionary
+    constructors.dictionary_constructor(result, NULL);
     
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
-    if (!wrapper || !wrapper->native_room || !r_ret) {
-        // Return empty dictionary
-        if (r_ret) {
-            constructors.dictionary_constructor((Dictionary*)r_ret, NULL);
-        }
+    if (!wrapper || !wrapper->native_room) {
         return;
     }
     
@@ -322,61 +334,99 @@ void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInst
     const colyseus_schema_vtable_t* vtable = wrapper->native_room->state_vtable;
     
     if (state && vtable) {
-        // Convert schema to dictionary
-        Dictionary* result = (Dictionary*)r_ret;
-        constructors.dictionary_constructor(result, NULL);
-        colyseus_schema_to_dictionary((colyseus_schema_t*)state, vtable, result);
-        
-        printf("[ColyseusRoom] get_state() returned state with vtable: %s\n", vtable->name);
-        fflush(stdout);
-    } else {
-        // Return empty dictionary
-        constructors.dictionary_constructor((Dictionary*)r_ret, NULL);
-        printf("[ColyseusRoom] get_state() - no state available\n");
-        fflush(stdout);
+        // Check if this is a dynamic schema
+        if (colyseus_vtable_is_dynamic(vtable)) {
+            colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)state;
+            colyseus_dynamic_schema_to_dictionary(dyn_schema, result);
+        } else {
+            // Static schema - convert to dictionary
+            colyseus_schema_to_dictionary((colyseus_schema_t*)state, vtable, result);
+        }
     }
 }
 
-void gdext_colyseus_room_set_state_type(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+/*
+ * set_state_type() - Vararg version that accepts either:
+ *   - String: Legacy mode, looks up vtable by name in registry
+ *   - Object (GDScript class): New mode, parses class definition() method
+ */
+void gdext_colyseus_room_set_state_type(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
     (void)p_method_userdata;
-    (void)r_ret; // void return
+    (void)r_return;
+    
+    if (p_argument_count < 1) {
+        if (r_error) {
+            r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+            r_error->argument = 1;
+        }
+        return;
+    }
     
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
     if (!wrapper) {
-        printf("[ColyseusRoom] set_state_type() - no wrapper\n");
-        fflush(stdout);
         return;
     }
     
-    // Extract String from p_args[0]
-    char* name = string_to_c_str((const String*)p_args[0]);
-    if (!name || name[0] == '\0') {
-        printf("[ColyseusRoom] set_state_type() - empty type name\n");
-        fflush(stdout);
-        if (name) free(name);
-        return;
-    }
+    // Check the type of the first argument
+    GDExtensionVariantType arg_type = api.variant_get_type((GDExtensionVariantPtr)p_args[0]);
     
-    // Look up vtable in registry
-    const colyseus_schema_vtable_t* vtable = colyseus_schema_lookup(name);
-    if (!vtable) {
-        printf("[ColyseusRoom] set_state_type('%s') - vtable not found in registry\n", name);
-        fflush(stdout);
+    if (arg_type == GDEXTENSION_VARIANT_TYPE_STRING) {
+        // Legacy mode: String argument - look up in registry
+        String type_str;
+        constructors.string_from_variant_constructor(&type_str, p_args[0]);
+        
+        char* name = string_to_c_str(&type_str);
+        destructors.string_destructor(&type_str);
+        
+        if (!name || name[0] == '\0') {
+            if (name) free(name);
+            return;
+        }
+        
+        // Look up vtable in registry
+        const colyseus_schema_vtable_t* vtable = colyseus_schema_lookup(name);
+        if (!vtable) {
+            free(name);
+            return;
+        }
+        
+        if (wrapper->native_room) {
+            colyseus_room_set_state_type(wrapper->native_room, vtable);
+        } else {
+            wrapper->pending_vtable = vtable;
+        }
+        
         free(name);
-        return;
+        
+    } else if (arg_type == GDEXTENSION_VARIANT_TYPE_OBJECT) {
+        // New mode: GDScript class - parse definition() method
+        
+        // Free any existing GDScript schema context
+        if (wrapper->gdscript_schema_ctx) {
+            gdscript_schema_context_free(wrapper->gdscript_schema_ctx);
+            wrapper->gdscript_schema_ctx = NULL;
+        }
+        
+        // Parse the GDScript class
+        gdscript_schema_context_t* ctx = gdscript_schema_context_create(p_args[0]);
+        if (!ctx || !ctx->vtable) {
+            if (ctx) gdscript_schema_context_free(ctx);
+            return;
+        }
+        
+        wrapper->gdscript_schema_ctx = ctx;
+        
+        // Cast dynamic vtable to base vtable for the room
+        const colyseus_schema_vtable_t* vtable = (const colyseus_schema_vtable_t*)ctx->vtable;
+        
+        if (wrapper->native_room) {
+            colyseus_room_set_state_type(wrapper->native_room, vtable);
+        } else {
+            wrapper->pending_vtable = vtable;
+        }
     }
     
-    if (wrapper->native_room) {
-        // Native room already exists, set state type directly
-        colyseus_room_set_state_type(wrapper->native_room, vtable);
-        printf("[ColyseusRoom] set_state_type('%s') - vtable set on native room (%d fields)\n", name, vtable->field_count);
-        fflush(stdout);
-    } else {
-        // Store for later when native room is assigned
-        wrapper->pending_vtable = vtable;
-        printf("[ColyseusRoom] set_state_type('%s') - stored as pending vtable (%d fields)\n", name, vtable->field_count);
-        fflush(stdout);
+    if (r_error) {
+        r_error->error = GDEXTENSION_CALL_OK;
     }
-    
-    free(name);
 }

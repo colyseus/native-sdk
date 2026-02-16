@@ -61,8 +61,11 @@ pub fn build(b: *std.Build) void {
             "src/colyseus_callbacks.c",
             "src/colyseus_state.c",
             "src/colyseus_schema_registry.c",
+            "src/colyseus_gdscript_schema.c",  // GDScript schema bridge
             "src/msgpack_variant.c",
             "src/msgpack_encoder.c",
+            // Dynamic schema support (for GDScript-defined schemas)
+            "../../src/schema/dynamic_schema.c",
             // wslay sources (needed because libcolyseus.a doesn't include them)
             "../../third_party/wslay/lib/wslay_event.c",
             "../../third_party/wslay/lib/wslay_frame.c",
@@ -81,7 +84,6 @@ pub fn build(b: *std.Build) void {
     lib.addIncludePath(b.path("../../third_party/uthash/src"));
     lib.addIncludePath(b.path("../../third_party/wslay/lib/includes"));
     lib.addIncludePath(b.path("../../third_party/wslay/lib"));
-    lib.addIncludePath(b.path("../../tests/schema"));  // For test_room_state.h (dev testing)
     lib.addIncludePath(b.path("include"));
     lib.addIncludePath(b.path("src"));  // For colyseus_callbacks.h, colyseus_state.h
 

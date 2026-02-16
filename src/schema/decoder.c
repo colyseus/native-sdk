@@ -1,4 +1,5 @@
 #include "colyseus/schema/decoder.h"
+#include "colyseus/schema/dynamic_schema.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -57,6 +58,20 @@ const colyseus_schema_vtable_t* colyseus_type_context_get(colyseus_type_context_
  * Decoder
  * ============================================================================ */
 
+/* Helper to create a schema instance from a vtable (handles both static and dynamic) */
+static colyseus_schema_t* create_schema_from_vtable(const colyseus_schema_vtable_t* vtable) {
+    if (!vtable) return NULL;
+    
+    if (colyseus_vtable_is_dynamic(vtable)) {
+        /* Dynamic vtable - create dynamic schema */
+        const colyseus_dynamic_vtable_t* dyn_vtable = colyseus_vtable_as_dynamic(vtable);
+        return (colyseus_schema_t*)colyseus_dynamic_schema_create(dyn_vtable);
+    } else {
+        /* Static vtable - use create function */
+        return vtable->create ? vtable->create() : NULL;
+    }
+}
+
 colyseus_decoder_t* colyseus_decoder_create(const colyseus_schema_vtable_t* state_vtable) {
     colyseus_decoder_t* decoder = malloc(sizeof(colyseus_decoder_t));
     if (!decoder) return NULL;
@@ -68,8 +83,8 @@ colyseus_decoder_t* colyseus_decoder_create(const colyseus_schema_vtable_t* stat
     decoder->trigger_changes = NULL;
     decoder->trigger_userdata = NULL;
 
-    /* Create initial state */
-    decoder->state = state_vtable->create();
+    /* Create initial state (handles both static and dynamic vtables) */
+    decoder->state = create_schema_from_vtable(state_vtable);
     if (decoder->state) {
         decoder->state->__refId = 0;
         decoder->state->__vtable = state_vtable;
@@ -169,16 +184,28 @@ static const colyseus_schema_vtable_t* get_schema_type(colyseus_decoder_t* decod
 
     if (it->offset < (int)length && bytes[it->offset] == (uint8_t)COLYSEUS_SPEC_TYPE_ID) {
         it->offset++;
-        int type_id = (int)colyseus_decode_number(bytes, it);
+        int type_id = colyseus_decode_varint(bytes, it);
         const colyseus_schema_vtable_t* vtable = colyseus_type_context_get(decoder->context, type_id);
         return vtable ? vtable : default_type;
     }
     return default_type;
 }
 
-/* Find field by index in vtable */
+/* Find field by index in vtable (handles both static and dynamic vtables) */
 static const colyseus_field_t* find_field_by_index(const colyseus_schema_vtable_t* vtable, int index) {
-    if (!vtable || !vtable->fields) return NULL;
+    if (!vtable) return NULL;
+
+    /* Check for dynamic vtable first */
+    if (colyseus_vtable_is_dynamic(vtable)) {
+        const colyseus_dynamic_vtable_t* dyn_vtable = colyseus_vtable_as_dynamic(vtable);
+        const colyseus_dynamic_field_t* dyn_field = colyseus_dynamic_vtable_find_field(dyn_vtable, index);
+        /* Note: For dynamic fields, we return NULL and handle them separately */
+        (void)dyn_field;
+        return NULL;  /* Dynamic vtables use different field handling */
+    }
+    
+    /* Static vtable */
+    if (!vtable->fields) return NULL;
 
     for (int i = 0; i < vtable->field_count; i++) {
         if (vtable->fields[i].index == index) {
@@ -186,6 +213,14 @@ static const colyseus_field_t* find_field_by_index(const colyseus_schema_vtable_
         }
     }
     return NULL;
+}
+
+/* Find dynamic field by index */
+static const colyseus_dynamic_field_t* find_dyn_field_by_index(const colyseus_schema_vtable_t* vtable, int index) {
+    if (!vtable || !colyseus_vtable_is_dynamic(vtable)) return NULL;
+    
+    const colyseus_dynamic_vtable_t* dyn_vtable = colyseus_vtable_as_dynamic(vtable);
+    return colyseus_dynamic_vtable_find_field(dyn_vtable, index);
 }
 
 /* Helper: find index by value in array */
@@ -202,7 +237,125 @@ static int array_find_index_by_ref(colyseus_array_schema_t* arr, void* ref) {
     return -1;
 }
 
-/* Set field value in schema based on type */
+/* Set field value in dynamic schema */
+static void set_dyn_schema_field(colyseus_dynamic_schema_t* schema, 
+    const colyseus_dynamic_field_t* field, void* value) {
+    if (!schema || !field) return;
+    
+    colyseus_dynamic_value_t* dyn_value = colyseus_dynamic_value_create(field->type);
+    if (!dyn_value) return;
+    
+    switch (field->type) {
+        case COLYSEUS_FIELD_STRING:
+            dyn_value->data.str = (char*)value;  /* Transfer ownership */
+            break;
+        case COLYSEUS_FIELD_NUMBER:
+        case COLYSEUS_FIELD_FLOAT64:
+            if (value) {
+                dyn_value->data.num = *(double*)value;
+                printf("[DECODER] set_dyn number field '%s' = %f (ref_id=%d)\n", 
+                    field->name, dyn_value->data.num, schema->__refId);
+                fflush(stdout);
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_FLOAT32:
+            if (value) {
+                dyn_value->data.f32 = *(float*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_BOOLEAN:
+            if (value) {
+                dyn_value->data.boolean = *(bool*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_INT8:
+            if (value) {
+                dyn_value->data.i8 = *(int8_t*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_UINT8:
+            if (value) {
+                dyn_value->data.u8 = *(uint8_t*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_INT16:
+            if (value) {
+                dyn_value->data.i16 = *(int16_t*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_UINT16:
+            if (value) {
+                dyn_value->data.u16 = *(uint16_t*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_INT32:
+            if (value) {
+                dyn_value->data.i32 = *(int32_t*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_UINT32:
+            if (value) {
+                dyn_value->data.u32 = *(uint32_t*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_INT64:
+            if (value) {
+                dyn_value->data.i64 = *(int64_t*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_UINT64:
+            if (value) {
+                dyn_value->data.u64 = *(uint64_t*)value;
+                free(value);
+            }
+            break;
+        case COLYSEUS_FIELD_REF:
+            dyn_value->data.ref = (colyseus_dynamic_schema_t*)value;
+            break;
+        case COLYSEUS_FIELD_ARRAY:
+            dyn_value->data.array = (colyseus_array_schema_t*)value;
+            break;
+        case COLYSEUS_FIELD_MAP:
+            dyn_value->data.map = (colyseus_map_schema_t*)value;
+            break;
+    }
+    
+    colyseus_dynamic_schema_set(schema, field->index, field->name, dyn_value);
+}
+
+/* Get field value from dynamic schema */
+static void* get_dyn_schema_field(colyseus_dynamic_schema_t* schema, 
+    const colyseus_dynamic_field_t* field) {
+    if (!schema || !field) return NULL;
+    
+    colyseus_dynamic_value_t* dyn_value = colyseus_dynamic_schema_get(schema, field->index);
+    if (!dyn_value) return NULL;
+    
+    switch (field->type) {
+        case COLYSEUS_FIELD_REF:
+            return dyn_value->data.ref;
+        case COLYSEUS_FIELD_ARRAY:
+            return dyn_value->data.array;
+        case COLYSEUS_FIELD_MAP:
+            return dyn_value->data.map;
+        case COLYSEUS_FIELD_STRING:
+            return dyn_value->data.str;
+        default:
+            return &dyn_value->data;  /* Return pointer to primitive */
+    }
+}
+
+/* Set field value in schema based on type (static schema) */
 static void set_schema_field(colyseus_schema_t* schema, const colyseus_field_t* field, void* value) {
     if (!schema || !field) return;
 
@@ -217,7 +370,6 @@ static void set_schema_field(colyseus_schema_t* schema, const colyseus_field_t* 
             *(char**)field_ptr = (char*)value;
             break;
 
-        case COLYSEUS_FIELD_NUMBER:
         case COLYSEUS_FIELD_FLOAT32:
             if (value) {
                 *(float*)field_ptr = *(float*)value;
@@ -225,6 +377,7 @@ static void set_schema_field(colyseus_schema_t* schema, const colyseus_field_t* 
             }
             break;
 
+        case COLYSEUS_FIELD_NUMBER:
         case COLYSEUS_FIELD_FLOAT64:
             if (value) {
                 *(double*)field_ptr = *(double*)value;
@@ -303,7 +456,7 @@ static void set_schema_field(colyseus_schema_t* schema, const colyseus_field_t* 
     }
 }
 
-/* Get field value from schema */
+/* Get field value from schema (static schema) */
 static void* get_schema_field(colyseus_schema_t* schema, const colyseus_field_t* field) {
     if (!schema || !field) return NULL;
     void* field_ptr = (char*)schema + field->offset;
@@ -358,15 +511,21 @@ static void* decode_value(
 
     /* ref type (schema child) */
     if (strcmp(field_type, "ref") == 0) {
-        int ref_id = (int)colyseus_decode_number(bytes, it);
-        value = colyseus_ref_tracker_get(decoder->refs, ref_id);
+        int ref_id = colyseus_decode_varint(bytes, it);
+        
+        /* Check if ref exists AND is actually a SCHEMA type */
+        colyseus_ref_entry_t* entry = colyseus_ref_tracker_get_entry(decoder->refs, ref_id);
+        if (entry && entry->ref_type == COLYSEUS_REF_TYPE_SCHEMA) {
+            value = entry->ref;
+        }
 
         if ((operation & (uint8_t)COLYSEUS_OP_ADD) == (uint8_t)COLYSEUS_OP_ADD) {
             const colyseus_schema_vtable_t* concrete_type = get_schema_type(
                 decoder, bytes, length, it, child_vtable);
 
             if (value == NULL && concrete_type) {
-                value = concrete_type->create();
+                /* Use helper that handles both static and dynamic vtables */
+                value = create_schema_from_vtable(concrete_type);
                 if (value) {
                     ((colyseus_schema_t*)value)->__refId = ref_id;
                     ((colyseus_schema_t*)value)->__vtable = concrete_type;
@@ -384,12 +543,16 @@ static void* decode_value(
 
     /* array type */
     if (strcmp(field_type, "array") == 0) {
-        int ref_id = (int)colyseus_decode_number(bytes, it);
+        int ref_id = colyseus_decode_varint(bytes, it);
 
-        colyseus_array_schema_t* arr_ref = colyseus_ref_tracker_has(decoder->refs, ref_id)
-            ? (previous_value ? (colyseus_array_schema_t*)previous_value
-                              : (colyseus_array_schema_t*)colyseus_ref_tracker_get(decoder->refs, ref_id))
-            : NULL;
+        /* Check if ref exists AND is actually an ARRAY type */
+        colyseus_array_schema_t* arr_ref = NULL;
+        colyseus_ref_entry_t* entry = colyseus_ref_tracker_get_entry(decoder->refs, ref_id);
+        if (entry && entry->ref_type == COLYSEUS_REF_TYPE_ARRAY) {
+            arr_ref = previous_value 
+                ? (colyseus_array_schema_t*)previous_value
+                : (colyseus_array_schema_t*)entry->ref;
+        }
 
         colyseus_array_schema_t* arr = arr_ref
             ? colyseus_array_schema_clone(arr_ref)
@@ -418,12 +581,16 @@ static void* decode_value(
 
     /* map type */
     if (strcmp(field_type, "map") == 0) {
-        int ref_id = (int)colyseus_decode_number(bytes, it);
+        int ref_id = colyseus_decode_varint(bytes, it);
 
-        colyseus_map_schema_t* map_ref = colyseus_ref_tracker_has(decoder->refs, ref_id)
-            ? (previous_value ? (colyseus_map_schema_t*)previous_value
-                              : (colyseus_map_schema_t*)colyseus_ref_tracker_get(decoder->refs, ref_id))
-            : NULL;
+        /* Check if ref exists AND is actually a MAP type */
+        colyseus_map_schema_t* map_ref = NULL;
+        colyseus_ref_entry_t* entry = colyseus_ref_tracker_get_entry(decoder->refs, ref_id);
+        if (entry && entry->ref_type == COLYSEUS_REF_TYPE_MAP) {
+            map_ref = previous_value 
+                ? (colyseus_map_schema_t*)previous_value
+                : (colyseus_map_schema_t*)entry->ref;
+        }
 
         colyseus_map_schema_t* map = map_ref
             ? colyseus_map_schema_clone(map_ref)
@@ -466,28 +633,64 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
     uint8_t first_byte = bytes[it->offset++];
     uint8_t operation = (first_byte >> 6) << 6;  /* Extract operation from high bits */
     int field_index = first_byte % (operation == 0 ? 255 : operation);
-
-    const colyseus_field_t* field = find_field_by_index(schema->__vtable, field_index);
-    if (!field) {
-        return false;  /* Field not found - schema mismatch */
+    
+    /* Check if this is a dynamic vtable */
+    bool is_dynamic = colyseus_vtable_is_dynamic(schema->__vtable);
+    
+    /* For static vtables, use static field lookup */
+    const colyseus_field_t* field = NULL;
+    const colyseus_dynamic_field_t* dyn_field = NULL;
+    
+    colyseus_field_type_t field_type;
+    const char* field_name = NULL;
+    const char* field_type_str = NULL;
+    const colyseus_schema_vtable_t* child_vtable = NULL;
+    const char* child_primitive_type = NULL;
+    
+    if (is_dynamic) {
+        dyn_field = find_dyn_field_by_index(schema->__vtable, field_index);
+        if (!dyn_field) {
+            return false;  /* Field not found - schema mismatch */
+        }
+        field_type = dyn_field->type;
+        field_name = dyn_field->name;
+        field_type_str = dyn_field->type_str;
+        child_vtable = dyn_field->child_vtable ? &dyn_field->child_vtable->base : NULL;
+        child_primitive_type = dyn_field->child_primitive_type;
+    } else {
+        field = find_field_by_index(schema->__vtable, field_index);
+        if (!field) {
+            return false;  /* Field not found - schema mismatch */
+        }
+        field_type = field->type;
+        field_name = field->name;
+        field_type_str = field->type_str;
+        child_vtable = field->child_vtable;
+        child_primitive_type = field->child_primitive_type;
     }
 
-    void* previous_value = get_schema_field(schema, field);
+    void* previous_value = is_dynamic 
+        ? get_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field)
+        : get_schema_field(schema, field);
     void* value = NULL;
 
     /* Handle DELETE operations */
     if ((operation & (uint8_t)COLYSEUS_OP_DELETE) == (uint8_t)COLYSEUS_OP_DELETE) {
         if (previous_value != NULL) {
             /* Check if previous value is a ref type */
-            if (field->type == COLYSEUS_FIELD_REF ||
-                field->type == COLYSEUS_FIELD_ARRAY ||
-                field->type == COLYSEUS_FIELD_MAP) {
+            if (field_type == COLYSEUS_FIELD_REF ||
+                field_type == COLYSEUS_FIELD_ARRAY ||
+                field_type == COLYSEUS_FIELD_MAP) {
                 colyseus_ref_tracker_remove(decoder->refs, COLYSEUS_REF_ID(previous_value));
             }
         }
 
         if (operation != (uint8_t)COLYSEUS_OP_DELETE_AND_ADD) {
-            set_schema_field(schema, field, NULL);
+            if (is_dynamic) {
+                set_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field, NULL);
+            } else {
+                set_schema_field(schema, field, NULL);
+            }
             value = NULL;
         }
     }
@@ -498,7 +701,7 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
             colyseus_data_change_t change = {
                 .ref_id = schema->__refId,
                 .op = operation,
-                .field = field->name,
+                .field = field_name,
                 .dynamic_index = NULL,
                 .value = value,
                 .previous_value = previous_value
@@ -509,21 +712,25 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
     }
 
     /* Decode value using unified decode_value function */
-    const char* field_type_str;
-    switch (field->type) {
-        case COLYSEUS_FIELD_REF:   field_type_str = "ref"; break;
-        case COLYSEUS_FIELD_ARRAY: field_type_str = "array"; break;
-        case COLYSEUS_FIELD_MAP:   field_type_str = "map"; break;
-        default:                   field_type_str = field->type_str; break;
+    const char* decode_type_str;
+    switch (field_type) {
+        case COLYSEUS_FIELD_REF:   decode_type_str = "ref"; break;
+        case COLYSEUS_FIELD_ARRAY: decode_type_str = "array"; break;
+        case COLYSEUS_FIELD_MAP:   decode_type_str = "map"; break;
+        default:                   decode_type_str = field_type_str; break;
     }
 
     value = decode_value(decoder, bytes, length, it,
-        field_type_str, field->child_vtable, field->child_primitive_type,
+        decode_type_str, child_vtable, child_primitive_type,
         operation, previous_value);
 
     /* Set field value */
     if (value != NULL || operation == (uint8_t)COLYSEUS_OP_DELETE) {
-        set_schema_field(schema, field, value);
+        if (is_dynamic) {
+            set_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field, value);
+        } else {
+            set_schema_field(schema, field, value);
+        }
     }
 
     /* Record change */
@@ -531,7 +738,7 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
         colyseus_data_change_t change = {
             .ref_id = schema->__refId,
             .op = operation,
-            .field = field->name,
+            .field = field_name,
             .dynamic_index = NULL,
             .value = value,
             .previous_value = previous_value
@@ -556,7 +763,7 @@ static bool decode_map_schema(colyseus_decoder_t* decoder, const uint8_t* bytes,
         return true;
     }
 
-    int field_index = (int)colyseus_decode_number(bytes, it);
+    int field_index = colyseus_decode_varint(bytes, it);
 
     const char* field_type = map->has_schema_child ? "ref" : map->child_primitive_type;
     const colyseus_schema_vtable_t* child_vtable = map->child_vtable;
@@ -633,7 +840,7 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
     }
 
     if (operation == (uint8_t)COLYSEUS_OP_DELETE_BY_REFID) {
-        int ref_id = (int)colyseus_decode_number(bytes, it);
+        int ref_id = colyseus_decode_varint(bytes, it);
         void* item_by_ref = colyseus_ref_tracker_get(decoder->refs, ref_id);
 
         /* Find index of item */
@@ -659,7 +866,7 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
     }
 
     if (operation == (uint8_t)COLYSEUS_OP_ADD_BY_REFID) {
-        int ref_id = (int)colyseus_decode_number(bytes, it);
+        int ref_id = colyseus_decode_varint(bytes, it);
         void* item_by_ref = colyseus_ref_tracker_get(decoder->refs, ref_id);
         if (item_by_ref) {
             index = array_find_index_by_ref(arr, item_by_ref);
@@ -668,7 +875,7 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
             index = arr->count;
         }
     } else {
-        index = (int)colyseus_decode_number(bytes, it);
+        index = colyseus_decode_varint(bytes, it);
     }
 
     const char* field_type = arr->has_schema_child ? "ref" : arr->child_primitive_type;
@@ -738,7 +945,7 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
         /* Check for SWITCH_TO_STRUCTURE */
         if (bytes[it->offset] == (uint8_t)COLYSEUS_SPEC_SWITCH_TO_STRUCTURE) {
             it->offset++;
-            ref_id = (int)colyseus_decode_number(bytes, it);
+            ref_id = colyseus_decode_varint(bytes, it);
 
             /* Finalize previous array if needed */
             if (current_ref_type == DECODE_REF_ARRAY && _ref) {
@@ -781,7 +988,7 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
             while (it->offset < (int)length) {
                 if (colyseus_decode_switch_check(bytes, it)) {
                     next_it.offset = it->offset + 1;
-                    int potential_ref = (int)colyseus_decode_number(bytes, &next_it);
+                    int potential_ref = colyseus_decode_varint(bytes, &next_it);
                     if (colyseus_ref_tracker_has(decoder->refs, potential_ref)) {
                         break;
                     }

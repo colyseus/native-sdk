@@ -1,5 +1,6 @@
 #include "colyseus/schema/callbacks.h"
 #include "colyseus/schema/ref_tracker.h"
+#include "colyseus/schema/dynamic_schema.h"
 #include "uthash.h"
 #include <stdlib.h>
 #include <string.h>
@@ -395,8 +396,15 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
  * ============================================================================ */
 
 static const colyseus_field_t* get_field_by_name(const colyseus_schema_vtable_t* vtable, const char* name) {
-    if (!vtable || !vtable->fields || !name) return NULL;
+    if (!vtable || !name) return NULL;
+    
+    /* Dynamic vtables don't have a fields array */
+    if (colyseus_vtable_is_dynamic(vtable)) {
+        return NULL;  /* Use get_dyn_field_by_name instead */
+    }
 
+    if (!vtable->fields) return NULL;
+    
     for (int i = 0; i < vtable->field_count; i++) {
         if (vtable->fields[i].name && strcmp(vtable->fields[i].name, name) == 0) {
             return &vtable->fields[i];
@@ -405,18 +413,52 @@ static const colyseus_field_t* get_field_by_name(const colyseus_schema_vtable_t*
     return NULL;
 }
 
+/* Get dynamic field by name */
+static const colyseus_dynamic_field_t* get_dyn_field_by_name(const colyseus_schema_vtable_t* vtable, const char* name) {
+    if (!vtable || !name || !colyseus_vtable_is_dynamic(vtable)) return NULL;
+    
+    const colyseus_dynamic_vtable_t* dyn_vtable = colyseus_vtable_as_dynamic(vtable);
+    return colyseus_dynamic_vtable_find_field_by_name(dyn_vtable, name);
+}
+
 /* Get collection refId from schema instance + property name */
 static int get_collection_ref_id(colyseus_callbacks_t* cb, void* instance, const char* property) {
+    (void)cb;  /* unused */
     if (!instance || !property) return -1;
 
     colyseus_schema_t* schema = (colyseus_schema_t*)instance;
     if (!schema->__vtable) return -1;
+    
+    void* collection = NULL;
+    
+    /* Check for dynamic vtable */
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        const colyseus_dynamic_field_t* dyn_field = get_dyn_field_by_name(schema->__vtable, property);
+        if (!dyn_field) return -1;
+        
+        /* Get the collection value from dynamic schema */
+        colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)schema;
+        colyseus_dynamic_value_t* dyn_value = colyseus_dynamic_schema_get(dyn_schema, dyn_field->index);
+        if (!dyn_value) return -1;
+        
+        switch (dyn_field->type) {
+            case COLYSEUS_FIELD_ARRAY:
+                collection = dyn_value->data.array;
+                break;
+            case COLYSEUS_FIELD_MAP:
+                collection = dyn_value->data.map;
+                break;
+            default:
+                return -1;  /* Not a collection type */
+        }
+    } else {
+        const colyseus_field_t* field = get_field_by_name(schema->__vtable, property);
+        if (!field) return -1;
 
-    const colyseus_field_t* field = get_field_by_name(schema->__vtable, property);
-    if (!field) return -1;
-
-    /* Get the collection from the schema */
-    void* collection = *(void**)((char*)schema + field->offset);
+        /* Get the collection from the schema using offset */
+        collection = *(void**)((char*)schema + field->offset);
+    }
+    
     if (!collection) return -1;
 
     return COLYSEUS_REF_ID(collection);
@@ -444,27 +486,58 @@ colyseus_callback_handle_t colyseus_callbacks_listen(
     if (immediate && !callbacks->is_triggering) {
         colyseus_schema_t* schema = (colyseus_schema_t*)instance;
         if (schema->__vtable) {
-            const colyseus_field_t* field = get_field_by_name(schema->__vtable, property);
-            if (field) {
-                void* current_value = NULL;
-                void* field_ptr = (char*)schema + field->offset;
-
-                switch (field->type) {
-                    case COLYSEUS_FIELD_REF:
-                    case COLYSEUS_FIELD_ARRAY:
-                    case COLYSEUS_FIELD_MAP:
-                    case COLYSEUS_FIELD_STRING:
-                        current_value = *(void**)field_ptr;
-                        break;
-                    default:
-                        /* For primitives, only call if non-zero (heuristic) */
-                        current_value = field_ptr;
-                        break;
+            void* current_value = NULL;
+            
+            if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+                /* Dynamic schema */
+                const colyseus_dynamic_field_t* dyn_field = get_dyn_field_by_name(schema->__vtable, property);
+                if (dyn_field) {
+                    colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)schema;
+                    colyseus_dynamic_value_t* dyn_value = colyseus_dynamic_schema_get(dyn_schema, dyn_field->index);
+                    if (dyn_value) {
+                        switch (dyn_field->type) {
+                            case COLYSEUS_FIELD_REF:
+                                current_value = dyn_value->data.ref;
+                                break;
+                            case COLYSEUS_FIELD_ARRAY:
+                                current_value = dyn_value->data.array;
+                                break;
+                            case COLYSEUS_FIELD_MAP:
+                                current_value = dyn_value->data.map;
+                                break;
+                            case COLYSEUS_FIELD_STRING:
+                                current_value = dyn_value->data.str;
+                                break;
+                            default:
+                                /* For primitives, pass the value pointer */
+                                current_value = &dyn_value->data;
+                                break;
+                        }
+                    }
                 }
+            } else {
+                /* Static schema */
+                const colyseus_field_t* field = get_field_by_name(schema->__vtable, property);
+                if (field) {
+                    void* field_ptr = (char*)schema + field->offset;
 
-                if (current_value != NULL) {
-                    handler(current_value, NULL, userdata);
+                    switch (field->type) {
+                        case COLYSEUS_FIELD_REF:
+                        case COLYSEUS_FIELD_ARRAY:
+                        case COLYSEUS_FIELD_MAP:
+                        case COLYSEUS_FIELD_STRING:
+                            current_value = *(void**)field_ptr;
+                            break;
+                        default:
+                            /* For primitives, only call if non-zero (heuristic) */
+                            current_value = field_ptr;
+                            break;
+                    }
                 }
+            }
+
+            if (current_value != NULL) {
+                handler(current_value, NULL, userdata);
             }
         }
     }
@@ -560,10 +633,35 @@ static colyseus_callback_handle_t add_collection_callback_or_wait(
     colyseus_schema_t* schema = (colyseus_schema_t*)instance;
     if (!schema->__vtable) return COLYSEUS_INVALID_CALLBACK_HANDLE;
 
-    const colyseus_field_t* field = get_field_by_name(schema->__vtable, property);
-    if (!field) return COLYSEUS_INVALID_CALLBACK_HANDLE;
-
-    void* collection = *(void**)((char*)schema + field->offset);
+    void* collection = NULL;
+    
+    /* Get collection from schema - handle both static and dynamic vtables */
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        /* Dynamic schema */
+        const colyseus_dynamic_field_t* dyn_field = get_dyn_field_by_name(schema->__vtable, property);
+        if (!dyn_field) return COLYSEUS_INVALID_CALLBACK_HANDLE;
+        
+        colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)schema;
+        colyseus_dynamic_value_t* dyn_value = colyseus_dynamic_schema_get(dyn_schema, dyn_field->index);
+        if (dyn_value) {
+            switch (dyn_field->type) {
+                case COLYSEUS_FIELD_ARRAY:
+                    collection = dyn_value->data.array;
+                    break;
+                case COLYSEUS_FIELD_MAP:
+                    collection = dyn_value->data.map;
+                    break;
+                default:
+                    return COLYSEUS_INVALID_CALLBACK_HANDLE;  /* Not a collection type */
+            }
+        }
+    } else {
+        /* Static schema */
+        const colyseus_field_t* field = get_field_by_name(schema->__vtable, property);
+        if (!field) return COLYSEUS_INVALID_CALLBACK_HANDLE;
+        
+        collection = *(void**)((char*)schema + field->offset);
+    }
 
     if (!collection) {
         /* Collection not available yet - wait for it */
@@ -687,10 +785,36 @@ colyseus_callback_handle_t colyseus_callbacks_on_change_collection(
     colyseus_schema_t* schema = (colyseus_schema_t*)instance;
     if (!schema->__vtable) return COLYSEUS_INVALID_CALLBACK_HANDLE;
 
-    const colyseus_field_t* field = get_field_by_name(schema->__vtable, property);
-    if (!field) return COLYSEUS_INVALID_CALLBACK_HANDLE;
-
-    void* collection = *(void**)((char*)schema + field->offset);
+    void* collection = NULL;
+    
+    /* Get collection from schema - handle both static and dynamic vtables */
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        /* Dynamic schema */
+        const colyseus_dynamic_field_t* dyn_field = get_dyn_field_by_name(schema->__vtable, property);
+        if (!dyn_field) return COLYSEUS_INVALID_CALLBACK_HANDLE;
+        
+        colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)schema;
+        colyseus_dynamic_value_t* dyn_value = colyseus_dynamic_schema_get(dyn_schema, dyn_field->index);
+        if (dyn_value) {
+            switch (dyn_field->type) {
+                case COLYSEUS_FIELD_ARRAY:
+                    collection = dyn_value->data.array;
+                    break;
+                case COLYSEUS_FIELD_MAP:
+                    collection = dyn_value->data.map;
+                    break;
+                default:
+                    return COLYSEUS_INVALID_CALLBACK_HANDLE;
+            }
+        }
+    } else {
+        /* Static schema */
+        const colyseus_field_t* field = get_field_by_name(schema->__vtable, property);
+        if (!field) return COLYSEUS_INVALID_CALLBACK_HANDLE;
+        
+        collection = *(void**)((char*)schema + field->offset);
+    }
+    
     if (!collection) {
         /* Collection not available yet - would need deferred registration */
         /* For simplicity, return invalid handle (user should wait for collection) */

@@ -6,9 +6,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-// Test schema for development (generated from @colyseus/schema codegen)
-#include "test_room_state.h"
-
 #ifndef GDE_EXPORT
 #ifdef _WIN32
 #define GDE_EXPORT __declspec(dllexport)
@@ -419,9 +416,6 @@ static void bind_signal_2(
 }
 
 static void register_colyseus_client(void) {
-    printf("[ColyseusClient] Starting registration\n");
-    fflush(stdout);
-
     GDExtensionClassCreationInfo2 class_info = {
         .is_virtual = false,
         .is_abstract = false,
@@ -447,31 +441,16 @@ static void register_colyseus_client(void) {
         .class_userdata = NULL,
     };
 
-    printf("[ColyseusClient] Allocating StringNames\n");
-    fflush(stdout);
-
     // Initialize StringNames
     StringName class_name;
     StringName parent_class_name;
 
-    printf("[ColyseusClient] Creating class_name StringName\n");
-    fflush(stdout);
     constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusClient", false);
-
-    printf("[ColyseusClient] Creating parent_class_name StringName\n");
-    fflush(stdout);
     constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
 
-    printf("[ColyseusClient] Registering class\n");
-    fflush(stdout);
     api.classdb_register_extension_class2(class_library, &class_name, &parent_class_name, &class_info);
-    printf("[ColyseusClient] Class registered successfully\n");
-    fflush(stdout);
 
     // Register methods using generic helpers
-    printf("[ColyseusClient] Registering connect_to method\n");
-    fflush(stdout);
-
     bind_method_1_no_ret(
         "ColyseusClient",
         "connect_to",
@@ -479,12 +458,6 @@ static void register_colyseus_client(void) {
         "endpoint",
         GDEXTENSION_VARIANT_TYPE_STRING
     );
-
-    printf("[ColyseusClient] connect_to method registered successfully\n");
-    fflush(stdout);
-
-    printf("[ColyseusClient] Registering get_endpoint method\n");
-    fflush(stdout);
 
     // Manual registration for get_endpoint (needs separate call/ptrcall functions)
     {
@@ -518,12 +491,6 @@ static void register_colyseus_client(void) {
         destructors.string_name_destructor(&class_name_string);
         destruct_property(&return_info);
     }
-
-    printf("[ColyseusClient] get_endpoint method registered successfully\n");
-    fflush(stdout);
-
-    printf("[ColyseusClient] Registering join_or_create method\n");
-    fflush(stdout);
 
     // Manual registration for join_or_create (needs separate call/ptrcall functions)
     {
@@ -565,21 +532,12 @@ static void register_colyseus_client(void) {
         destruct_property(&args_info[0]);
         destruct_property(&return_info);
     }
-
-    printf("[ColyseusClient] join_or_create method registered successfully\n");
-    fflush(stdout);
-
-    printf("[ColyseusClient] Registration complete\n");
-    fflush(stdout);
 }
 
 // Forward declaration for vararg call wrapper (defined later)
 static void call_vararg(void *method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr *p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError *r_error);
 
 static void register_colyseus_room(void) {
-    printf("[ColyseusRoom] Starting registration\n");
-    fflush(stdout);
-    
     GDExtensionClassCreationInfo2 class_info = {
         .is_virtual = false,
         .is_abstract = false,
@@ -736,23 +694,51 @@ static void register_colyseus_room(void) {
         GDEXTENSION_VARIANT_TYPE_BOOL
     );
 
+    // get_state - returns Dictionary (always dictionary for now to avoid variant issues)
     bind_method_0_with_ret(
         "ColyseusRoom",
         "get_state",
-        gdext_colyseus_room_get_state,
+        gdext_colyseus_room_get_state_ptrcall,
         GDEXTENSION_VARIANT_TYPE_DICTIONARY
     );
 
-    bind_method_1_no_ret(
-        "ColyseusRoom",
-        "set_state_type",
-        gdext_colyseus_room_set_state_type,
-        "type_name",
-        GDEXTENSION_VARIANT_TYPE_STRING
-    );
+    // set_state_type - vararg to accept either String or GDScript class
+    {
+        StringName method_name_string;
+        constructors.string_name_new_with_latin1_chars(&method_name_string, "set_state_type", false);
 
-    printf("[ColyseusRoom] Registration complete\n");
-    fflush(stdout);
+        GDExtensionPropertyInfo args_info[] = {
+            make_property(GDEXTENSION_VARIANT_TYPE_NIL, "state_type"),  // NIL means any type
+        };
+        GDExtensionClassMethodArgumentMetadata args_metadata[] = {
+            GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+        };
+
+        GDExtensionClassMethodInfo method_info = {
+            .name = &method_name_string,
+            .method_userdata = (void*)gdext_colyseus_room_set_state_type,
+            .call_func = call_vararg,
+            .ptrcall_func = NULL,  // Vararg methods don't support ptrcall
+            .method_flags = GDEXTENSION_METHOD_FLAGS_DEFAULT,
+            .has_return_value = false,
+            .return_value_info = NULL,
+            .return_value_metadata = GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+            .argument_count = 1,
+            .arguments_info = args_info,
+            .arguments_metadata = args_metadata,
+            .default_argument_count = 0,
+            .default_arguments = NULL
+        };
+
+        StringName class_name_string;
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusRoom", false);
+
+        api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
+
+        destructors.string_name_destructor(&method_name_string);
+        destructors.string_name_destructor(&class_name_string);
+        destruct_property(&args_info[0]);
+    }
 }
 
 // Vararg call wrapper for methods that take variable arguments
@@ -763,9 +749,6 @@ static void call_vararg(void *method_userdata, GDExtensionClassInstancePtr p_ins
 }
 
 static void register_colyseus_callbacks(void) {
-    printf("[ColyseusCallbacks] Starting registration\n");
-    fflush(stdout);
-    
     GDExtensionClassCreationInfo2 class_info = {
         .is_virtual = false,
         .is_abstract = false,
@@ -991,9 +974,6 @@ static void register_colyseus_callbacks(void) {
 
     destructors.string_name_destructor(&class_name);
     destructors.string_name_destructor(&parent_class_name);
-
-    printf("[ColyseusCallbacks] Registration complete\n");
-    fflush(stdout);
 }
 
 static void colyseus_initialize(void *userdata, GDExtensionInitializationLevel p_level) {
@@ -1005,10 +985,6 @@ static void colyseus_initialize(void *userdata, GDExtensionInitializationLevel p
     register_colyseus_client();
     register_colyseus_room();
     register_colyseus_callbacks();
-    
-    // Register test schema (for development/testing)
-    // Only register root state vtable - child vtables are linked via field definitions
-    colyseus_schema_register("TestRoomState", &test_room_state_vtable);
 }
 
 static void colyseus_deinitialize(void *userdata, GDExtensionInitializationLevel p_level) {

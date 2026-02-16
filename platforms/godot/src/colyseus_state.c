@@ -1,8 +1,17 @@
 #include "colyseus_state.h"
 #include <colyseus/schema/collections.h>
+#include <colyseus/schema/dynamic_schema.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+
+/* Magic marker used to identify dynamic vtables (from dynamic_schema.c) */
+#define DYNAMIC_VTABLE_MAGIC_SIZE ((size_t)0xDEADBEEF)
+
+/* Check if a vtable is a dynamic vtable */
+static inline bool is_dynamic_vtable(const colyseus_schema_vtable_t* vtable) {
+    return vtable && vtable->size == DYNAMIC_VTABLE_MAGIC_SIZE;
+}
 
 // Helper to create a Variant from an int64
 static void variant_from_int(Variant* result, int64_t value) {
@@ -174,7 +183,12 @@ void colyseus_field_to_variant(
             if (child && child_vtable) {
                 Dictionary child_dict;
                 constructors.dictionary_constructor(&child_dict, NULL);
-                colyseus_schema_to_dictionary(child, child_vtable, &child_dict);
+                // Check if it's a dynamic vtable (from reflection auto-detection)
+                if (is_dynamic_vtable(child_vtable)) {
+                    colyseus_dynamic_schema_to_dictionary((colyseus_dynamic_schema_t*)child, &child_dict);
+                } else {
+                    colyseus_schema_to_dictionary(child, child_vtable, &child_dict);
+                }
                 variant_from_dictionary(result, &child_dict);
                 // Note: Don't destruct child_dict - it's now owned by the variant
             } else {
@@ -215,6 +229,52 @@ void colyseus_field_to_variant(
     }
 }
 
+/* Forward declaration */
+static void colyseus_dynamic_value_to_variant(
+    const colyseus_dynamic_value_t* value,
+    Variant* result
+);
+
+/* Internal function to convert dynamic schema with explicit vtable */
+static void colyseus_dynamic_schema_to_dictionary_with_vtable(
+    const colyseus_dynamic_schema_t* schema,
+    const colyseus_dynamic_vtable_t* dyn_vtable,
+    Dictionary* result
+) {
+    if (!schema || !result) return;
+    
+    // Add __ref_id field for nested callback support
+    Variant ref_id_variant;
+    variant_from_int(&ref_id_variant, (int64_t)schema->__refId);
+    dictionary_set(result, "__ref_id", &ref_id_variant);
+    
+    // Use provided vtable or fall back to schema's vtable
+    if (!dyn_vtable) {
+        dyn_vtable = schema->__dyn_vtable;
+    }
+    
+    if (!dyn_vtable) {
+        // No vtable available - can't iterate fields
+        return;
+    }
+    
+    // Iterate over all fields defined in the vtable
+    for (int i = 0; i < dyn_vtable->dyn_field_count; i++) {
+        const colyseus_dynamic_field_t* field = dyn_vtable->dyn_fields[i];
+        if (!field || !field->name) continue;
+        
+        // Look up the value by field index
+        colyseus_dynamic_value_t* value = colyseus_dynamic_schema_get(
+            (colyseus_dynamic_schema_t*)schema, field->index);
+        
+        if (!value) continue;  // Field not set yet
+        
+        Variant field_variant;
+        colyseus_dynamic_value_to_variant(value, &field_variant);
+        dictionary_set(result, field->name, &field_variant);
+    }
+}
+
 void colyseus_schema_to_dictionary(
     const colyseus_schema_t* schema,
     const colyseus_schema_vtable_t* vtable,
@@ -222,12 +282,20 @@ void colyseus_schema_to_dictionary(
 ) {
     if (!schema || !vtable || !result) return;
     
+    // Check if this is a dynamic vtable - if so, forward to dynamic handler
+    if (is_dynamic_vtable(vtable)) {
+        const colyseus_dynamic_vtable_t* dyn_vtable = (const colyseus_dynamic_vtable_t*)vtable;
+        colyseus_dynamic_schema_to_dictionary_with_vtable(
+            (const colyseus_dynamic_schema_t*)schema, dyn_vtable, result);
+        return;
+    }
+    
     // Add __ref_id field for nested callback support
     Variant ref_id_variant;
     variant_from_int(&ref_id_variant, (int64_t)schema->__refId);
     dictionary_set(result, "__ref_id", &ref_id_variant);
     
-    // Convert each field
+    // Convert each field (static vtable)
     for (int i = 0; i < vtable->field_count; i++) {
         const colyseus_field_t* field = &vtable->fields[i];
         const void* field_ptr = (const char*)schema + field->offset;
@@ -236,6 +304,112 @@ void colyseus_schema_to_dictionary(
         colyseus_field_to_variant(field_ptr, field->type, field->child_vtable, &field_variant);
         dictionary_set(result, field->name, &field_variant);
     }
+}
+
+/* Convert a dynamic value to a Godot Variant */
+static void colyseus_dynamic_value_to_variant(
+    const colyseus_dynamic_value_t* value,
+    Variant* result
+) {
+    if (!value || !result) {
+        memset(result, 0, sizeof(Variant));
+        return;
+    }
+    
+    switch (value->type) {
+        case COLYSEUS_FIELD_STRING:
+            variant_from_string(result, value->data.str);
+            break;
+            
+        case COLYSEUS_FIELD_NUMBER:
+        case COLYSEUS_FIELD_FLOAT64:
+            variant_from_float(result, value->data.num);
+            break;
+            
+        case COLYSEUS_FIELD_FLOAT32:
+            variant_from_float(result, (double)value->data.f32);
+            break;
+            
+        case COLYSEUS_FIELD_BOOLEAN:
+            variant_from_bool(result, value->data.boolean);
+            break;
+            
+        case COLYSEUS_FIELD_INT8:
+            variant_from_int(result, (int64_t)value->data.i8);
+            break;
+            
+        case COLYSEUS_FIELD_UINT8:
+            variant_from_int(result, (int64_t)value->data.u8);
+            break;
+            
+        case COLYSEUS_FIELD_INT16:
+            variant_from_int(result, (int64_t)value->data.i16);
+            break;
+            
+        case COLYSEUS_FIELD_UINT16:
+            variant_from_int(result, (int64_t)value->data.u16);
+            break;
+            
+        case COLYSEUS_FIELD_INT32:
+            variant_from_int(result, (int64_t)value->data.i32);
+            break;
+            
+        case COLYSEUS_FIELD_UINT32:
+            variant_from_int(result, (int64_t)value->data.u32);
+            break;
+            
+        case COLYSEUS_FIELD_INT64:
+            variant_from_int(result, value->data.i64);
+            break;
+            
+        case COLYSEUS_FIELD_UINT64:
+            variant_from_int(result, (int64_t)value->data.u64);
+            break;
+            
+        case COLYSEUS_FIELD_REF:
+            if (value->data.ref) {
+                Dictionary child_dict;
+                constructors.dictionary_constructor(&child_dict, NULL);
+                colyseus_dynamic_schema_to_dictionary(value->data.ref, &child_dict);
+                variant_from_dictionary(result, &child_dict);
+            } else {
+                memset(result, 0, sizeof(Variant));
+            }
+            break;
+            
+        case COLYSEUS_FIELD_ARRAY:
+            if (value->data.array) {
+                Array gd_array;
+                constructors.array_constructor(&gd_array, NULL);
+                colyseus_array_to_godot_array(value->data.array, &gd_array);
+                variant_from_array(result, &gd_array);
+            } else {
+                memset(result, 0, sizeof(Variant));
+            }
+            break;
+            
+        case COLYSEUS_FIELD_MAP:
+            if (value->data.map) {
+                Dictionary gd_dict;
+                constructors.dictionary_constructor(&gd_dict, NULL);
+                colyseus_map_to_dictionary(value->data.map, &gd_dict);
+                variant_from_dictionary(result, &gd_dict);
+            } else {
+                memset(result, 0, sizeof(Variant));
+            }
+            break;
+            
+        default:
+            memset(result, 0, sizeof(Variant));
+            break;
+    }
+}
+
+void colyseus_dynamic_schema_to_dictionary(
+    const colyseus_dynamic_schema_t* schema,
+    Dictionary* result
+) {
+    colyseus_dynamic_schema_to_dictionary_with_vtable(schema, NULL, result);
 }
 
 // Callback context for array iteration
@@ -255,7 +429,13 @@ static void array_item_to_godot(int index, void* value, void* userdata) {
         // Convert schema child to dictionary
         Dictionary child_dict;
         constructors.dictionary_constructor(&child_dict, NULL);
-        colyseus_schema_to_dictionary((colyseus_schema_t*)value, ctx->child_vtable, &child_dict);
+        
+        // Check if it's a dynamic vtable (from reflection auto-detection)
+        if (is_dynamic_vtable(ctx->child_vtable)) {
+            colyseus_dynamic_schema_to_dictionary((colyseus_dynamic_schema_t*)value, &child_dict);
+        } else {
+            colyseus_schema_to_dictionary((colyseus_schema_t*)value, ctx->child_vtable, &child_dict);
+        }
         variant_from_dictionary(&item_variant, &child_dict);
     } else if (value) {
         // For primitive arrays, value is the actual value
@@ -301,7 +481,13 @@ static void map_item_to_godot(const char* key, void* value, void* userdata) {
         // Convert schema child to dictionary
         Dictionary child_dict;
         constructors.dictionary_constructor(&child_dict, NULL);
-        colyseus_schema_to_dictionary((colyseus_schema_t*)value, ctx->child_vtable, &child_dict);
+        
+        // Check if it's a dynamic vtable (from reflection auto-detection)
+        if (is_dynamic_vtable(ctx->child_vtable)) {
+            colyseus_dynamic_schema_to_dictionary((colyseus_dynamic_schema_t*)value, &child_dict);
+        } else {
+            colyseus_schema_to_dictionary((colyseus_schema_t*)value, ctx->child_vtable, &child_dict);
+        }
         variant_from_dictionary(&item_variant, &child_dict);
     } else if (value) {
         // For primitive maps, value is the actual value

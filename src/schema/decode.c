@@ -1,7 +1,9 @@
 #include "colyseus/schema/decode.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <math.h>
+#include <limits.h>
 
 /* Helper: read little-endian values */
 static inline uint16_t read_le16(const uint8_t* bytes) {
@@ -20,68 +22,68 @@ static inline uint64_t read_le64(const uint8_t* bytes) {
            ((uint64_t)bytes[6] << 48) | ((uint64_t)bytes[7] << 56);
 }
 
-/* Decode variable-length number (msgpack format) */
-float colyseus_decode_number(const uint8_t* bytes, colyseus_iterator_t* it) {
+/* Decode variable-length number (msgpack format) - returns double for full precision */
+double colyseus_decode_number(const uint8_t* bytes, colyseus_iterator_t* it) {
     uint8_t prefix = bytes[it->offset++];
 
     /* positive fixint (0x00 - 0x7f) */
     if (prefix < 0x80) {
-        return (float)prefix;
+        return (double)prefix;
     }
 
     /* float 32 */
     if (prefix == 0xca) {
-        return colyseus_decode_float32(bytes, it);
+        return (double)colyseus_decode_float32(bytes, it);
     }
 
     /* float 64 */
     if (prefix == 0xcb) {
-        return (float)colyseus_decode_float64(bytes, it);
+        return colyseus_decode_float64(bytes, it);
     }
 
     /* uint 8 */
     if (prefix == 0xcc) {
-        return (float)colyseus_decode_uint8(bytes, it);
+        return (double)colyseus_decode_uint8(bytes, it);
     }
 
     /* uint 16 */
     if (prefix == 0xcd) {
-        return (float)colyseus_decode_uint16(bytes, it);
+        return (double)colyseus_decode_uint16(bytes, it);
     }
 
     /* uint 32 */
     if (prefix == 0xce) {
-        return (float)colyseus_decode_uint32(bytes, it);
+        return (double)colyseus_decode_uint32(bytes, it);
     }
 
     /* uint 64 */
     if (prefix == 0xcf) {
-        return (float)colyseus_decode_uint64(bytes, it);
+        return (double)colyseus_decode_uint64(bytes, it);
     }
 
     /* int 8 */
     if (prefix == 0xd0) {
-        return (float)colyseus_decode_int8(bytes, it);
+        return (double)colyseus_decode_int8(bytes, it);
     }
 
     /* int 16 */
     if (prefix == 0xd1) {
-        return (float)colyseus_decode_int16(bytes, it);
+        return (double)colyseus_decode_int16(bytes, it);
     }
 
     /* int 32 */
     if (prefix == 0xd2) {
-        return (float)colyseus_decode_int32(bytes, it);
+        return (double)colyseus_decode_int32(bytes, it);
     }
 
     /* int 64 */
     if (prefix == 0xd3) {
-        return (float)colyseus_decode_int64(bytes, it);
+        return (double)colyseus_decode_int64(bytes, it);
     }
 
     /* negative fixint (0xe0 - 0xff) */
     if (prefix > 0xdf) {
-        return (float)((int)(0xff - prefix + 1) * -1);
+        return (double)((int)(0xff - prefix + 1) * -1);
     }
 
     return NAN;
@@ -150,12 +152,13 @@ bool colyseus_decode_boolean(const uint8_t* bytes, colyseus_iterator_t* it) {
     return colyseus_decode_uint8(bytes, it) > 0;
 }
 
+// TODO: check against original JavaScript implementation.
 char* colyseus_decode_string(const uint8_t* bytes, colyseus_iterator_t* it) {
     uint8_t prefix = bytes[it->offset++];
     size_t length;
 
-    if (prefix < 0xc0) {
-        /* fixstr (0xa0 - 0xbf) */
+    if (prefix >= 0xa0 && prefix <= 0xbf) {
+        /* fixstr (0xa0 - 0xbf): length is bottom 5 bits */
         length = prefix & 0x1f;
     } else if (prefix == 0xd9) {
         /* str 8 */
@@ -166,7 +169,17 @@ char* colyseus_decode_string(const uint8_t* bytes, colyseus_iterator_t* it) {
     } else if (prefix == 0xdb) {
         /* str 32 */
         length = colyseus_decode_uint32(bytes, it);
+    } else if (prefix < 0x80) {
+        /* Positive fixint used as length (common in Colyseus) */
+        length = prefix;
+    } else if (prefix == 0xcc) {
+        /* uint8 length */
+        length = colyseus_decode_uint8(bytes, it);
+    } else if (prefix == 0xcd) {
+        /* uint16 length */
+        length = colyseus_decode_uint16(bytes, it);
     } else {
+        /* Unknown prefix - return empty string */
         length = 0;
     }
 
@@ -191,7 +204,7 @@ void* colyseus_decode_primitive(const char* type, const uint8_t* bytes, colyseus
     void* value = NULL;
 
     if (strcmp(type, "number") == 0) {
-        float* v = malloc(sizeof(float));
+        double* v = malloc(sizeof(double));
         *v = colyseus_decode_number(bytes, it);
         value = v;
     } else if (strcmp(type, "int8") == 0) {
@@ -250,4 +263,21 @@ bool colyseus_decode_switch_check(const uint8_t* bytes, colyseus_iterator_t* it)
 bool colyseus_decode_number_check(const uint8_t* bytes, colyseus_iterator_t* it) {
     uint8_t prefix = bytes[it->offset];
     return prefix < 0x80 || (prefix >= 0xca && prefix <= 0xd3);
+}
+
+/* Safe float to int conversion (avoids undefined behavior for out-of-range values) */
+static inline int float_to_int_safe(float f) {
+    if (isnan(f) || isinf(f)) return 0;
+    if (f > (float)INT_MAX) return INT_MAX;
+    if (f < (float)INT_MIN) return INT_MIN;
+    return (int)f;
+}
+
+int colyseus_decode_varint(const uint8_t* bytes, colyseus_iterator_t* it) {
+    double d = colyseus_decode_number(bytes, it);
+    /* Safe conversion from double to int */
+    if (d != d) return 0;  /* NaN check */
+    if (d > (double)INT_MAX) return INT_MAX;
+    if (d < (double)INT_MIN) return INT_MIN;
+    return (int)d;
 }

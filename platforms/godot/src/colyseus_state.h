@@ -5,13 +5,14 @@
 #include <colyseus/schema/types.h>
 #include <colyseus/schema/collections.h>
 #include <colyseus/schema/ref_tracker.h>
+#include <colyseus/schema/dynamic_schema.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * Convert a schema instance to a Godot Dictionary
+ * Convert a static schema instance to a Godot Dictionary
  * 
  * @param schema The schema instance to convert
  * @param vtable The vtable describing the schema structure
@@ -20,6 +21,17 @@ extern "C" {
 void colyseus_schema_to_dictionary(
     const colyseus_schema_t* schema,
     const colyseus_schema_vtable_t* vtable,
+    Dictionary* result
+);
+
+/**
+ * Convert a dynamic schema instance to a Godot Dictionary
+ * 
+ * @param schema The dynamic schema instance to convert
+ * @param result Pointer to Dictionary to populate
+ */
+void colyseus_dynamic_schema_to_dictionary(
+    const colyseus_dynamic_schema_t* schema,
     Dictionary* result
 );
 

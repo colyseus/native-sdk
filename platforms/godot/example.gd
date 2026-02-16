@@ -16,10 +16,10 @@ func _ready():
 	room = client.join_or_create("test_room")
 	# room = client.join_or_create("my_room")
 
-	# Set state type BEFORE room finishes joining (required for state decoding)
-	# The type name must match a registered vtable in the schema registry
-	if room:
-		room.set_state_type("TestRoomState")
+	# # Set state type BEFORE room finishes joining (required for state decoding)
+	# # The type name must match a registered vtable in the schema registry
+	# if room:
+	# 	room.set_state_type("TestRoomState")
 
 	# Connect signals
 	if room:
@@ -46,7 +46,7 @@ func _on_room_joined():
 
 	# Send a message
 	var message = "Hello from Godot!".to_utf8_buffer()
-	room.send_message("add_item", {"item": "sword"})
+	room.send_message("add_item", {"name": "MY NEW ITEM"})
 
 func _on_turn_change(current_value, previous_value):
 	print("↻ Turn changed: ", previous_value, " -> ", current_value)
@@ -66,6 +66,9 @@ func _on_player_hp_change(current_hp, previous_hp):
 
 func _on_item_add(item: Dictionary, index: int):
 	print("  Item added at index: ", index, " -> ", item)
+
+	callbacks.listen(item, "name", func(name, _prev): 
+		print("  Item name: ", name))
 
 func _on_state_changed():
 	print("↻ Room state changed")

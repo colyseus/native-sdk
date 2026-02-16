@@ -62,6 +62,7 @@ typedef enum
     PROPERTY_USAGE_STORAGE = 2,
     PROPERTY_USAGE_EDITOR = 4,
     PROPERTY_USAGE_DEFAULT = PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR,
+    PROPERTY_USAGE_NIL_IS_VARIANT = 1 << 17,  // 131072 - indicates NIL type means "any Variant"
 } PropertyUsageFlags;
 
 // Forward declarations
@@ -147,11 +148,16 @@ typedef struct ColyseusClientWrapper {
     colyseus_client_t* native_client;
 } ColyseusClientWrapper;
 
+// Forward declaration for GDScript schema context
+typedef struct gdscript_schema_context gdscript_schema_context_t;
+
 // ColyseusRoomWrapper type (forward declaration)
 typedef struct {
     colyseus_room_t* native_room;
     GDExtensionObjectPtr godot_object;
     const colyseus_schema_vtable_t* pending_vtable;  // Vtable to set when native room is assigned
+    gdscript_schema_context_t* gdscript_schema_ctx;  // GDScript schema context (if using GDScript classes)
+    Variant* gdscript_state_instance;                 // GDScript state instance (for get_state())
 } ColyseusRoomWrapper;
 
 // ColyseusClient methods
@@ -186,10 +192,13 @@ void gdext_colyseus_room_get_name(void* p_method_userdata, GDExtensionClassInsta
 void gdext_colyseus_room_has_joined(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 
 // get_state() - returns current state as Dictionary
-void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_room_get_state_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 
-// set_state_type(name: String) - sets the schema vtable for state decoding
-void gdext_colyseus_room_set_state_type(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+// set_state_type(type) - sets the schema vtable for state decoding
+// Accepts either:
+//   - String: Legacy mode, looks up vtable by name in registry
+//   - Object (GDScript class): New mode, parses class definition() method
+void gdext_colyseus_room_set_state_type(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 
 #endif // gdext_colyseus_H
 
