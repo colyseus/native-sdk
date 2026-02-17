@@ -16,7 +16,7 @@
 typedef struct {
     colyseus_schema_t __base;
     char* name;
-    float value;
+    double value;
 } item_t;
 
 static const colyseus_field_t item_fields[] = {
@@ -46,8 +46,8 @@ static const colyseus_schema_vtable_t item_vtable = {
 
 typedef struct {
     colyseus_schema_t __base;
-    float x;
-    float y;
+    double x;
+    double y;
     bool isBot;
     bool disconnected;
     colyseus_array_schema_t* items;
