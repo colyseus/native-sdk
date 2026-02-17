@@ -103,9 +103,13 @@ void colyseus_decoder_free(colyseus_decoder_t* decoder) {
     colyseus_type_context_free(decoder->context);
     colyseus_changes_free(decoder->changes);
 
-    /* Free state if vtable has destroy function */
+    /* Free state if vtable has destroy function.
+     * For dynamic schemas, ref_tracker_clear already destroyed everything.
+     * For static schemas, we need to call destroy here. */
     if (decoder->state && decoder->state_vtable && decoder->state_vtable->destroy) {
-        decoder->state_vtable->destroy(decoder->state);
+        if (!colyseus_vtable_is_dynamic(decoder->state_vtable)) {
+            decoder->state_vtable->destroy(decoder->state);
+        }
     }
 
     free(decoder);

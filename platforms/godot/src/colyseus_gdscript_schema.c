@@ -316,27 +316,40 @@ gdscript_schema_context_t* gdscript_schema_context_create(GDExtensionConstVarian
     return ctx;
 }
 
-void gdscript_schema_context_free(gdscript_schema_context_t* ctx) {
+/* Internal helper to clean up context contents without freeing the struct itself */
+static void gdscript_schema_context_cleanup(gdscript_schema_context_t* ctx) {
     if (!ctx) return;
     
-    /* Free child contexts */
+    /* Clean up child contexts (recursively) */
     if (ctx->children) {
         for (int i = 0; i < ctx->child_count; i++) {
-            gdscript_schema_context_free(&ctx->children[i]);
+            gdscript_schema_context_cleanup(&ctx->children[i]);
         }
         free(ctx->children);
+        ctx->children = NULL;
+        ctx->child_count = 0;
     }
     
     /* Free vtable */
     if (ctx->vtable) {
         colyseus_dynamic_vtable_free(ctx->vtable);
+        ctx->vtable = NULL;
     }
     
     /* Free name */
     free(ctx->name);
+    ctx->name = NULL;
     
     /* Note: script_class is owned by Godot, don't free it */
+}
+
+void gdscript_schema_context_free(gdscript_schema_context_t* ctx) {
+    if (!ctx) return;
     
+    /* Clean up all contents */
+    gdscript_schema_context_cleanup(ctx);
+    
+    /* Free the struct itself (only for top-level contexts) */
     free(ctx);
 }
 

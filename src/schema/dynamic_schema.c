@@ -21,7 +21,11 @@ void colyseus_dynamic_value_free(colyseus_dynamic_value_t* value) {
         case COLYSEUS_FIELD_STRING:
             free(value->data.str);
             break;
-        /* Note: ref/array/map are not freed here - they're managed by ref tracker */
+        /*
+         * Note: ref/array/map are NOT freed here.
+         * They may be shared (e.g., same Player in both 'players' map and 'host' ref).
+         * They are managed by ref_tracker which handles reference counting.
+         */
         default:
             break;
     }

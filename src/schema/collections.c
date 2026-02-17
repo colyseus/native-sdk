@@ -82,12 +82,13 @@ void colyseus_array_schema_free(colyseus_array_schema_t* arr, colyseus_ref_track
     while (item) {
         colyseus_array_item_t* next = item->next;
 
-        /* Free value if it's a schema child */
+        /* Notify ref tracker if provided (for managed cleanup during decode) */
         if (arr->has_schema_child && item->value && refs) {
             colyseus_schema_t* schema = (colyseus_schema_t*)item->value;
             colyseus_ref_tracker_remove(refs, schema->__refId);
         }
-        /* Note: primitive values would need separate handling */
+        /* Note: child schemas are NOT destroyed here - they may be shared references.
+         * Final cleanup is handled by ref_tracker_clear. */
 
         free(item);
         item = next;
@@ -350,10 +351,13 @@ void colyseus_map_schema_free(colyseus_map_schema_t* map, colyseus_ref_tracker_t
     HASH_ITER(hh, map->items, item, tmp) {
         HASH_DEL(map->items, item);
 
+        /* Notify ref tracker if provided (for managed cleanup during decode) */
         if (map->has_schema_child && item->value && refs) {
             colyseus_schema_t* schema = (colyseus_schema_t*)item->value;
             colyseus_ref_tracker_remove(refs, schema->__refId);
         }
+        /* Note: child schemas are NOT destroyed here - they may be shared references.
+         * Final cleanup is handled by ref_tracker_clear. */
 
         free(item->key);
         free(item);

@@ -480,7 +480,7 @@ void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExt
         
         destructors.string_name_destructor(&ref_method);
         destructors.variant_destroy(&return_val);
-        // NOTE: Intentionally not destroying room_variant to keep the reference
+        destructors.variant_destroy(&room_variant);
     }
     
     // Return the room object (ptrcall - write object pointer directly)

@@ -450,6 +450,9 @@ static void register_colyseus_client(void) {
 
     api.classdb_register_extension_class2(class_library, &class_name, &parent_class_name, &class_info);
 
+    destructors.string_name_destructor(&class_name);
+    destructors.string_name_destructor(&parent_class_name);
+
     // Register methods using generic helpers
     bind_method_1_no_ret(
         "ColyseusClient",
@@ -571,6 +574,9 @@ static void register_colyseus_room(void) {
     constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
 
     api.classdb_register_extension_class2(class_library, &class_name, &parent_class_name, &class_info);
+
+    destructors.string_name_destructor(&class_name);
+    destructors.string_name_destructor(&parent_class_name);
 
     // Register signals using helper functions
     bind_signal_0("ColyseusRoom", "joined");
@@ -782,6 +788,9 @@ static void register_colyseus_callbacks(void) {
     constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
 
     api.classdb_register_extension_class2(class_library, &class_name, &parent_class_name, &class_info);
+
+    destructors.string_name_destructor(&class_name);
+    destructors.string_name_destructor(&parent_class_name);
 
     // Register static method: get(room) -> ColyseusCallbacks
     {

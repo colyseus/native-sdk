@@ -1,5 +1,6 @@
 #include "colyseus/schema/ref_tracker.h"
 #include "colyseus/schema/collections.h"
+#include "colyseus/schema/dynamic_schema.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -252,12 +253,64 @@ void colyseus_ref_tracker_gc(colyseus_ref_tracker_t* tracker) {
 void colyseus_ref_tracker_clear(colyseus_ref_tracker_t* tracker) {
     if (!tracker) return;
 
-    /* Clear refs hash table */
+    /*
+     * For DYNAMIC schemas only: destroy all refs to prevent memory leaks.
+     * Dynamic schemas don't recursively free children in their destroy functions,
+     * so we handle it here.
+     * 
+     * For STATIC schemas: just clear the entries. Their destroy functions
+     * already handle recursive cleanup of children.
+     * 
+     * Two-pass cleanup for dynamic schemas:
+     * Pass 1: Destroy all SCHEMA refs (they may have userdata like GDScript instances)
+     * Pass 2: Destroy all ARRAY and MAP refs (structure only - children already freed)
+     */
+    
+    /* First, check if this tracker contains any dynamic schemas */
+    bool has_dynamic_schemas = false;
     colyseus_ref_entry_t* entry;
     colyseus_ref_entry_t* tmp;
     HASH_ITER(hh, tracker->refs, entry, tmp) {
-        HASH_DEL(tracker->refs, entry);
-        free(entry);
+        if (entry->ref_type == COLYSEUS_REF_TYPE_SCHEMA && entry->vtable) {
+            if (colyseus_vtable_is_dynamic(entry->vtable)) {
+                has_dynamic_schemas = true;
+                break;
+            }
+        }
+    }
+    
+    if (has_dynamic_schemas) {
+        /* Pass 1: Destroy all dynamic schemas */
+        HASH_ITER(hh, tracker->refs, entry, tmp) {
+            if (entry->ref && entry->ref_type == COLYSEUS_REF_TYPE_SCHEMA) {
+                if (entry->vtable && colyseus_vtable_is_dynamic(entry->vtable)) {
+                    if (entry->vtable->destroy) {
+                        entry->vtable->destroy((colyseus_schema_t*)entry->ref);
+                    }
+                    entry->ref = NULL;  /* Mark as freed */
+                }
+            }
+        }
+        
+        /* Pass 2: Destroy all arrays and maps (children already freed above) */
+        HASH_ITER(hh, tracker->refs, entry, tmp) {
+            if (entry->ref) {
+                if (entry->ref_type == COLYSEUS_REF_TYPE_ARRAY) {
+                    colyseus_array_schema_free((colyseus_array_schema_t*)entry->ref, NULL);
+                } else if (entry->ref_type == COLYSEUS_REF_TYPE_MAP) {
+                    colyseus_map_schema_free((colyseus_map_schema_t*)entry->ref, NULL);
+                }
+                entry->ref = NULL;
+            }
+            HASH_DEL(tracker->refs, entry);
+            free(entry);
+        }
+    } else {
+        /* Static schemas: just clear entries, destroy happens via state->destroy() */
+        HASH_ITER(hh, tracker->refs, entry, tmp) {
+            HASH_DEL(tracker->refs, entry);
+            free(entry);
+        }
     }
 
     /* Clear deleted list */
