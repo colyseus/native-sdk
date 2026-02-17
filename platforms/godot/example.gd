@@ -8,7 +8,7 @@ var callbacks: ColyseusCallbacks
 func _ready():
 	# Create and connect client
 	client = ColyseusClient.new()
-	client.connect_to("ws://localhost:2567")
+	client.set_endpoint("ws://localhost:2567")
 
 	print("Connecting to: ", client.get_endpoint())
 
@@ -77,7 +77,7 @@ func _on_state_changed():
 	if state:
 		print("  State: ", state)
 
-func _on_message_received(type: Variant, data: Variant):
+func _on_message_received(type, data):
 	# type is the message type (String or int for numeric types)
 	# data is automatically decoded from msgpack to native Godot types:
 	#   - Dictionary for msgpack maps

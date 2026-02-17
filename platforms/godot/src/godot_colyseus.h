@@ -165,7 +165,7 @@ GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata);
 void gdext_colyseus_client_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
 void gdext_colyseus_client_reference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
 void gdext_colyseus_client_unreference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
-void gdext_colyseus_client_connect_to(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_client_set_endpoint(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 void gdext_colyseus_client_join_or_create(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 

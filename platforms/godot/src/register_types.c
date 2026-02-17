@@ -453,11 +453,11 @@ static void register_colyseus_client(void) {
     destructors.string_name_destructor(&class_name);
     destructors.string_name_destructor(&parent_class_name);
 
-    // Register methods using generic helpers
+    // Register set_endpoint method
     bind_method_1_no_ret(
         "ColyseusClient",
-        "connect_to",
-        gdext_colyseus_client_connect_to,
+        "set_endpoint",
+        gdext_colyseus_client_set_endpoint,
         "endpoint",
         GDEXTENSION_VARIANT_TYPE_STRING
     );

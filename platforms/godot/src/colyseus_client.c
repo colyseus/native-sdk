@@ -148,7 +148,7 @@ void gdext_colyseus_client_unreference(void* p_class_userdata, GDExtensionClassI
     // We don't need to do anything here
 }
 
-void gdext_colyseus_client_connect_to(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+void gdext_colyseus_client_set_endpoint(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata;
     (void)r_ret;
     
