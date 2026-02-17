@@ -83,6 +83,15 @@ void gdscript_free_instance(void* userdata);
 void gdscript_set_field(void* userdata, const char* name, colyseus_dynamic_value_t* value);
 
 /*
+ * Callback: Set the __ref_id on a GDScript instance.
+ * Called when the decoder assigns a ref_id to a schema instance.
+ * 
+ * @param userdata The GDScript object
+ * @param ref_id The reference ID assigned by the decoder
+ */
+void gdscript_set_ref_id(void* userdata, int ref_id);
+
+/*
  * Convert a colyseus_dynamic_value_t to a Godot Variant.
  * 
  * @param value The dynamic value

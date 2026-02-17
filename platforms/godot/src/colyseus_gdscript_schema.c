@@ -306,6 +306,7 @@ gdscript_schema_context_t* gdscript_schema_context_create(GDExtensionConstVarian
         gdscript_create_instance,
         gdscript_free_instance,
         gdscript_set_field,
+        gdscript_set_ref_id,
         ctx->script_class);
     
     destructors.variant_destroy(&definition_result);
@@ -441,6 +442,33 @@ void gdscript_set_field(void* userdata, const char* name, colyseus_dynamic_value
     destructors.variant_destroy(&name_variant);
     destructors.string_destructor(&name_str);
     destructors.variant_destroy(&value_variant);
+}
+
+void gdscript_set_ref_id(void* userdata, int ref_id) {
+    if (!userdata) return;
+    
+    Variant* instance_variant = (Variant*)userdata;
+    
+    /* Set __ref_id property on the GDScript instance */
+    String prop_str;
+    constructors.string_new_with_utf8_chars(&prop_str, "__ref_id");
+    Variant prop_name_variant;
+    constructors.variant_from_string_constructor(&prop_name_variant, &prop_str);
+    
+    int64_t ref_id_val = ref_id;
+    Variant ref_id_variant;
+    constructors.variant_from_int_constructor(&ref_id_variant, &ref_id_val);
+    
+    /* Call set("__ref_id", ref_id) on the GDScript instance */
+    GDExtensionConstVariantPtr args[2] = { &prop_name_variant, &ref_id_variant };
+    Variant result;
+    
+    variant_call_method(instance_variant, "set", args, 2, &result);
+    
+    destructors.variant_destroy(&result);
+    destructors.variant_destroy(&prop_name_variant);
+    destructors.string_destructor(&prop_str);
+    destructors.variant_destroy(&ref_id_variant);
 }
 
 /* ============================================================================

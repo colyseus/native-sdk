@@ -207,6 +207,17 @@ void colyseus_dynamic_schema_free(colyseus_dynamic_schema_t* schema) {
     free(schema);
 }
 
+void colyseus_dynamic_schema_set_ref_id(colyseus_dynamic_schema_t* schema, int ref_id) {
+    if (!schema) return;
+    
+    schema->__refId = ref_id;
+    
+    /* Notify platform userdata if callback is set */
+    if (schema->__dyn_vtable && schema->__dyn_vtable->set_ref_id_userdata && schema->userdata) {
+        schema->__dyn_vtable->set_ref_id_userdata(schema->userdata, ref_id);
+    }
+}
+
 colyseus_dynamic_value_t* colyseus_dynamic_schema_get(colyseus_dynamic_schema_t* schema, int field_index) {
     if (!schema) return NULL;
     
@@ -349,6 +360,7 @@ colyseus_dynamic_vtable_t* colyseus_dynamic_vtable_create(const char* name) {
     vtable->create_userdata = NULL;
     vtable->free_userdata = NULL;
     vtable->set_field_userdata = NULL;
+    vtable->set_ref_id_userdata = NULL;
     vtable->callback_context = NULL;
     
     vtable->is_reflection_generated = false;
@@ -407,12 +419,14 @@ void colyseus_dynamic_vtable_set_callbacks(colyseus_dynamic_vtable_t* vtable,
     colyseus_create_userdata_fn create_fn,
     colyseus_free_userdata_fn free_fn,
     colyseus_set_field_fn set_field_fn,
+    colyseus_set_ref_id_fn set_ref_id_fn,
     void* context) {
     if (!vtable) return;
     
     vtable->create_userdata = create_fn;
     vtable->free_userdata = free_fn;
     vtable->set_field_userdata = set_field_fn;
+    vtable->set_ref_id_userdata = set_ref_id_fn;
     vtable->callback_context = context;
 }
 

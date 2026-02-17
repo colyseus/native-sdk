@@ -115,6 +115,9 @@ struct colyseus_dynamic_schema {
 colyseus_dynamic_schema_t* colyseus_dynamic_schema_create(const colyseus_dynamic_vtable_t* vtable);
 void colyseus_dynamic_schema_free(colyseus_dynamic_schema_t* schema);
 
+/* Set __refId and notify userdata (if callback is set) */
+void colyseus_dynamic_schema_set_ref_id(colyseus_dynamic_schema_t* schema, int ref_id);
+
 /* Field access by index */
 colyseus_dynamic_value_t* colyseus_dynamic_schema_get(colyseus_dynamic_schema_t* schema, int field_index);
 void colyseus_dynamic_schema_set(colyseus_dynamic_schema_t* schema, int field_index, 
@@ -159,6 +162,7 @@ void colyseus_dynamic_field_free(colyseus_dynamic_field_t* field);
 typedef void* (*colyseus_create_userdata_fn)(const colyseus_dynamic_vtable_t* vtable, void* context);
 typedef void (*colyseus_free_userdata_fn)(void* userdata);
 typedef void (*colyseus_set_field_fn)(void* userdata, const char* name, colyseus_dynamic_value_t* value);
+typedef void (*colyseus_set_ref_id_fn)(void* userdata, int ref_id);
 
 /*
  * Dynamic vtable - extends colyseus_schema_vtable_t with dynamic capabilities.
@@ -178,6 +182,7 @@ struct colyseus_dynamic_vtable {
     colyseus_create_userdata_fn create_userdata;
     colyseus_free_userdata_fn free_userdata;
     colyseus_set_field_fn set_field_userdata;
+    colyseus_set_ref_id_fn set_ref_id_userdata;  /* Called when __refId is assigned */
     void* callback_context;  /* Context passed to callbacks (e.g., GDScript class ref) */
     
     /* Whether this is an auto-generated vtable from reflection */
@@ -203,6 +208,7 @@ void colyseus_dynamic_vtable_set_callbacks(colyseus_dynamic_vtable_t* vtable,
     colyseus_create_userdata_fn create_fn,
     colyseus_free_userdata_fn free_fn,
     colyseus_set_field_fn set_field_fn,
+    colyseus_set_ref_id_fn set_ref_id_fn,
     void* context);
 
 /* Find field by index */

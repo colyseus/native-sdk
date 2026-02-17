@@ -86,7 +86,12 @@ colyseus_decoder_t* colyseus_decoder_create(const colyseus_schema_vtable_t* stat
     /* Create initial state (handles both static and dynamic vtables) */
     decoder->state = create_schema_from_vtable(state_vtable);
     if (decoder->state) {
-        decoder->state->__refId = 0;
+        /* Use helper for dynamic schemas to propagate ref_id to userdata */
+        if (colyseus_vtable_is_dynamic(state_vtable)) {
+            colyseus_dynamic_schema_set_ref_id((colyseus_dynamic_schema_t*)decoder->state, 0);
+        } else {
+            decoder->state->__refId = 0;
+        }
         decoder->state->__vtable = state_vtable;
         colyseus_ref_tracker_add(decoder->refs, 0, decoder->state,
             COLYSEUS_REF_TYPE_SCHEMA, state_vtable, true);
@@ -531,7 +536,12 @@ static void* decode_value(
                 /* Use helper that handles both static and dynamic vtables */
                 value = create_schema_from_vtable(concrete_type);
                 if (value) {
-                    ((colyseus_schema_t*)value)->__refId = ref_id;
+                    /* Use helper for dynamic schemas to propagate ref_id to userdata */
+                    if (colyseus_vtable_is_dynamic(concrete_type)) {
+                        colyseus_dynamic_schema_set_ref_id((colyseus_dynamic_schema_t*)value, ref_id);
+                    } else {
+                        ((colyseus_schema_t*)value)->__refId = ref_id;
+                    }
                     ((colyseus_schema_t*)value)->__vtable = concrete_type;
                 }
             }
