@@ -40,8 +40,12 @@ extern "C" {
         int url_port;
         int socket_fd;
 
-        /* 1-byte field */
+        /* 1-byte fields */
         bool running;
+        bool in_tick_thread;         /* True when executing inside tick thread */
+        bool pending_close;          /* Close requested from within tick thread */
+        int pending_close_code;      /* Close code for deferred close */
+        char* pending_close_reason;  /* Close reason for deferred close (must free) */
     } colyseus_ws_transport_data_t;
 
     /* Create WebSocket transport (implements transport interface) */

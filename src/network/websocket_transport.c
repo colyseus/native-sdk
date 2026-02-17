@@ -12,6 +12,7 @@
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include <mstcpip.h>  /* For SIO_KEEPALIVE_VALS */
     #include <windows.h>
     typedef HANDLE thread_t;
     typedef DWORD thread_return_t;
@@ -23,6 +24,7 @@
     #include <unistd.h>
     #include <fcntl.h>
     #include <arpa/inet.h>
+    #include <netinet/tcp.h>  /* For TCP keepalive options */
     typedef pthread_t thread_t;
     typedef void* thread_return_t;
     #define THREAD_CALL
@@ -52,7 +54,7 @@ static bool ws_connect_tick(colyseus_ws_transport_data_t* data);
 static bool ws_http_handshake_init(colyseus_ws_transport_data_t* data);
 static bool ws_http_handshake_send(colyseus_ws_transport_data_t* data);
 static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data);
-static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, size_t len, int* would_block);
+static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, size_t len, int* would_block, int* eof);
 static ssize_t ws_socket_send(colyseus_ws_transport_data_t* data, const uint8_t* buf, size_t len, int* would_block);
 static void ws_socket_close(colyseus_ws_transport_data_t* data);
 static void ws_cleanup_wslay(colyseus_ws_transport_data_t* data);
@@ -93,6 +95,10 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
     memset(data, 0, sizeof(colyseus_ws_transport_data_t));
     data->state = COLYSEUS_WS_DISCONNECTED;
     data->running = false;
+    data->in_tick_thread = false;
+    data->pending_close = false;
+    data->pending_close_code = 0;
+    data->pending_close_reason = NULL;
     data->socket_fd = -1;
     data->buffer_size = 8192;
     data->buffer = malloc(data->buffer_size);
@@ -169,6 +175,18 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
         return;
     }
 
+    /* If we're being called from within the tick thread, defer the close.
+     * We cannot pthread_join() on ourselves - that would deadlock. */
+    if (data->in_tick_thread) {
+        WS_LOG("Close called from tick thread - deferring");
+        data->pending_close = true;
+        data->pending_close_code = code;
+        free(data->pending_close_reason);
+        data->pending_close_reason = reason ? strdup(reason) : NULL;
+        data->running = false;  /* Signal thread to exit */
+        return;
+    }
+
     data->running = false;
 
     if (data->wslay_ctx && data->state == COLYSEUS_WS_CONNECTED) {
@@ -219,6 +237,7 @@ static void ws_destroy_impl(colyseus_transport_t* transport) {
         sdsfree(data->url_path);
         free(data->client_key);
         free(data->buffer);
+        free(data->pending_close_reason);
         free(data);
     }
 
@@ -230,6 +249,8 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
     colyseus_transport_t* transport = (colyseus_transport_t*)arg;
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
+    data->in_tick_thread = true;
+
     while (data->running) {
         ws_tick_once(transport);
 
@@ -238,6 +259,30 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
 #else
         usleep(10000);  /* 10ms */
 #endif
+    }
+
+    data->in_tick_thread = false;
+
+    /* Handle deferred close (was requested from within tick thread) */
+    if (data->pending_close) {
+        WS_LOG("Handling deferred close: code=%d, reason=%s",
+               data->pending_close_code,
+               data->pending_close_reason ? data->pending_close_reason : "(null)");
+
+        ws_socket_close(data);
+        ws_cleanup_wslay(data);
+
+        data->state = COLYSEUS_WS_DISCONNECTED;
+
+        if (transport->events.on_close) {
+            transport->events.on_close(data->pending_close_code,
+                                       data->pending_close_reason,
+                                       transport->events.userdata);
+        }
+
+        free(data->pending_close_reason);
+        data->pending_close_reason = NULL;
+        data->pending_close = false;
     }
 
 #ifdef _WIN32
@@ -344,6 +389,40 @@ static bool ws_connect_init(colyseus_ws_transport_data_t* data) {
     fcntl(data->socket_fd, F_SETFL, flags | O_NONBLOCK);
 #endif
 
+    /* Enable TCP keepalive to detect dead connections faster */
+#ifdef _WIN32
+    /* Windows: use SIO_KEEPALIVE_VALS for fine-grained control */
+    struct tcp_keepalive {
+        u_long onoff;
+        u_long keepalivetime;
+        u_long keepaliveinterval;
+    } keepalive_vals = {
+        .onoff = 1,
+        .keepalivetime = 10000,  /* 10 seconds before first probe */
+        .keepaliveinterval = 5000  /* 5 seconds between probes */
+    };
+    DWORD bytes_returned;
+    WSAIoctl(data->socket_fd, SIO_KEEPALIVE_VALS, &keepalive_vals, sizeof(keepalive_vals),
+             NULL, 0, &bytes_returned, NULL, NULL);
+#else
+    int keepalive = 1;
+    setsockopt(data->socket_fd, SOL_SOCKET, SO_KEEPALIVE, (const char*)&keepalive, sizeof(keepalive));
+
+#ifdef __linux__
+    /* Linux-specific: set keepalive parameters for faster detection */
+    int keepidle = 10;   /* Start probing after 10 seconds of inactivity */
+    int keepintvl = 5;   /* Probe interval: 5 seconds */
+    int keepcnt = 3;     /* Give up after 3 failed probes */
+    setsockopt(data->socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+    setsockopt(data->socket_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+    setsockopt(data->socket_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+#elif defined(__APPLE__)
+    /* macOS: set keepalive idle time */
+    int keepidle = 10;
+    setsockopt(data->socket_fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle, sizeof(keepidle));
+#endif
+#endif /* _WIN32 */
+
     /* Resolve hostname using getaddrinfo (modern, alignment-safe) */
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(hints));
@@ -448,8 +527,9 @@ static bool ws_http_handshake_send(colyseus_ws_transport_data_t* data) {
 
 static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data) {
     int would_block = 0;
+    int eof = 0;
     char buf[1024];
-    ssize_t received = ws_socket_recv(data, (uint8_t*)buf, sizeof(buf) - 1, &would_block);
+    ssize_t received = ws_socket_recv(data, (uint8_t*)buf, sizeof(buf) - 1, &would_block, &eof);
 
     if (received > 0) {
         size_t space_left = data->buffer_size - data->buffer_offset;
@@ -459,6 +539,12 @@ static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data) {
     }
 
     if (would_block) {
+        return false;
+    }
+
+    /* Connection closed during handshake */
+    if (eof) {
+        fprintf(stderr, "Connection closed during WebSocket handshake\n");
         return false;
     }
 
@@ -550,14 +636,20 @@ static ssize_t ws_recv_callback(wslay_event_context_ptr ctx, uint8_t* buf, size_
 
     // No buffered data, read from socket
     int would_block = 0;
-    ssize_t ret = ws_socket_recv(data, buf, len, &would_block);
+    int eof = 0;
+    ssize_t ret = ws_socket_recv(data, buf, len, &would_block, &eof);
 
-    WS_LOG("wslay recv_callback: requested=%zu, received=%zd, would_block=%d", len, ret, would_block);
+    WS_LOG("wslay recv_callback: requested=%zu, received=%zd, would_block=%d, eof=%d", len, ret, would_block, eof);
 
     if (would_block) {
         wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
         return -1;
     } else if (ret < 0) {
+        wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+        return -1;
+    } else if (eof) {
+        /* Connection was closed by remote (server killed, network issue, etc.) */
+        WS_LOG("EOF detected - connection closed by remote");
         wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
         return -1;
     }
@@ -595,8 +687,9 @@ static int ws_genmask_callback(wslay_event_context_ptr ctx, uint8_t* buf, size_t
 }
 
 /* Socket I/O */
-static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, size_t len, int* would_block) {
+static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, size_t len, int* would_block, int* eof) {
     *would_block = 0;
+    *eof = 0;
 
     ssize_t ret = recv(data->socket_fd, (char*)buf, len, 0);
 
@@ -610,6 +703,11 @@ static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, 
             return 0;
         }
         return -1;
+    }
+
+    /* recv() returning 0 means the connection was closed (EOF) */
+    if (ret == 0) {
+        *eof = 1;
     }
 
     return ret;
