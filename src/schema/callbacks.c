@@ -560,12 +560,16 @@ typedef struct {
     int operation;
     bool immediate;
     colyseus_callback_handle_t inner_handle;
+    colyseus_callback_handle_t property_handle;  /* Handle for the property listener to remove once collection is available */
 } deferred_collection_context_t;
 
 static void on_collection_available(void* value, void* previous_value, void* userdata) {
     (void)previous_value;
     deferred_collection_context_t* ctx = (deferred_collection_context_t*)userdata;
     if (!ctx || !value) return;
+
+    /* Remove the property listener now that collection is available */
+    colyseus_callbacks_remove(ctx->callbacks, ctx->property_handle);
 
     int collection_ref_id = COLYSEUS_REF_ID(value);
 
@@ -674,10 +678,12 @@ static colyseus_callback_handle_t add_collection_callback_or_wait(
         ctx->operation = operation;
         ctx->immediate = immediate;
         ctx->inner_handle = COLYSEUS_INVALID_CALLBACK_HANDLE;
+        ctx->property_handle = COLYSEUS_INVALID_CALLBACK_HANDLE;
 
         /* Listen for the property to become available */
-        return add_callback_internal(callbacks, COLYSEUS_REF_ID(instance),
+        ctx->property_handle = add_callback_internal(callbacks, COLYSEUS_REF_ID(instance),
             CALLBACK_KEY_FIELD, 0, property, (void*)on_collection_available, ctx);
+        return ctx->property_handle;
     }
 
     int collection_ref_id = COLYSEUS_REF_ID(collection);
