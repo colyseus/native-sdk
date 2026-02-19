@@ -2,6 +2,8 @@
 
 A lightweight GDExtension that wraps the Colyseus Native SDK for use in Godot Engine. Written in pure C for maximum performance and minimal dependencies.
 
+**Supports:** Windows, macOS, Linux, and **Web** (via JavaScript SDK bridge).
+
 ## 🏗️ Building
 
 ### Prerequisites
@@ -38,9 +40,82 @@ zig build -Dtarget=aarch64-macos
 
 ## 📦 Installation
 
-1. Copy the entire `platforms/godot` folder to your Godot project
+1. Copy the `addons/colyseus` folder to your Godot project's `addons/` directory
 2. Make sure the `bin/` folder contains the compiled library for your platform
 3. The extension will be automatically loaded by Godot
+
+### For Cross-Platform Support (including Web)
+
+To support both native and web platforms seamlessly:
+
+1. Add `ColyseusFactory` as an autoload in your project (Project → Project Settings → Autoload)
+   - Path: `res://addons/colyseus/colyseus_factory.gd`
+   - Name: `Colyseus`
+
+2. Use the factory to create clients:
+```gdscript
+# Works on all platforms (native + web)
+var client = Colyseus.create_client()
+client.set_endpoint("ws://localhost:2567")
+var room = client.join_or_create("my_room")
+
+# Get callbacks using factory
+var callbacks = Colyseus.get_callbacks(room)
+```
+
+## 🌐 Web Export
+
+The addon includes a JavaScript SDK bridge that enables web exports without requiring WASM compilation.
+
+### Setup for Web Export
+
+1. In the Godot Export dialog, create or select a "Web" export preset
+
+2. Under "HTML" → "Custom HTML Shell", select:
+   ```
+   res://addons/colyseus/web/colyseus.html
+   ```
+
+3. When exporting, copy these files to your export directory alongside the HTML:
+   - `addons/colyseus/web/colyseus.js` (the Colyseus SDK)
+   - `addons/colyseus/web/colyseus_bridge.js` (the Godot bridge)
+
+4. Export your project
+
+### How It Works
+
+On web platform, the addon uses:
+- **colyseus.js** - The official Colyseus JavaScript SDK (embedded, no CDN required)
+- **colyseus_bridge.js** - A thin wrapper exposing the SDK to Godot's `JavaScriptBridge`
+- **GDScript web classes** - Pure GDScript implementations that mirror the native API
+
+```
+┌─────────────────────────────────────────┐
+│         Godot Engine (GDScript)         │
+│   var client = Colyseus.create_client() │
+└─────────────────┬───────────────────────┘
+                  │ Platform Detection
+                  ▼
+    ┌─────────────────────────────────┐
+    │ Native (Windows/macOS/Linux)    │
+    │   → GDExtension C Library       │
+    └─────────────────────────────────┘
+    ┌─────────────────────────────────┐
+    │ Web (Browser)                   │
+    │   → JavaScriptBridge            │
+    │   → colyseus_bridge.js          │
+    │   → colyseus.js (SDK)           │
+    └─────────────────────────────────┘
+```
+
+### Web-Specific Classes
+
+When running on web, these classes are used automatically:
+- `ColyseusWebClient` - Web implementation of ColyseusClient
+- `ColyseusWebRoom` - Web implementation of ColyseusRoom  
+- `ColyseusWebCallbacks` - Web implementation of ColyseusCallbacks
+
+You don't need to use these directly if you use the `ColyseusFactory` autoload.
 
 ## 🚀 Usage
 
@@ -136,6 +211,8 @@ This is a barebones implementation providing the foundation for Colyseus integra
 - ✅ Godot signals for events  
 - ✅ Pure C implementation
 - ✅ Zig build system
+- ✅ Web export support (JavaScript SDK bridge)
+- ✅ Platform-aware factory for cross-platform code
 
 **Not Yet Implemented:**
 - ⏳ Async operations with proper callbacks  

@@ -193,6 +193,9 @@ class Schema extends RefCounted:
 			})
 		return properties
 
+	func _to_string() -> String:
+		return JSON.stringify(to_dictionary())
+
 # =============================================================================
 # Map Class
 # =============================================================================
@@ -272,6 +275,9 @@ class Map extends RefCounted:
 	
 	func _iter_get(_arg):
 		return keys()
+
+	func _to_string() -> String:
+		return JSON.stringify(to_dictionary())
 
 # =============================================================================
 # ArraySchema Class
@@ -370,6 +376,9 @@ class ArraySchema extends RefCounted:
 	
 	func _iter_get(_arg):
 		return __items[__iter_index]
+
+	func _to_string() -> String:
+		return JSON.stringify(to_array())
 
 # =============================================================================
 # Utility Functions
