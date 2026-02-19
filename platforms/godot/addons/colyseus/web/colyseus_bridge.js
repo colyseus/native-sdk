@@ -18,7 +18,14 @@
     const VALUE_REF = 2;
     const VALUE_UNKNOWN = 3;
 
+    // Reference type constants (for untyped state support)
+    const REF_TYPE_SCHEMA = 0;
+    const REF_TYPE_MAP = 1;
+    const REF_TYPE_ARRAY = 2;
+
     const isSchema = (val) => typeof val?.assign === "function";
+    const isMapSchema = (val) => val && typeof val.set === 'function';
+    const isArraySchema = (val) => val && typeof val.push === 'function';
 
     window.ColyseusGodot = {
         _nextId: 1,
@@ -689,48 +696,51 @@
             }
 
             // Helper to serialize a value safely
-            // Returns [type, value_or_refId]
+            // Returns [type, value_or_refId, refType]
+            // refType is only meaningful when type is VALUE_REF
             function serializeValue(val) {
                 if (val === undefined) {
-                    return [VALUE_UNDEFINED, null];
+                    return [VALUE_UNDEFINED, null, 0];
                 }
                 if (val === null) {
-                    return [VALUE_PRIMITIVE, null];
+                    return [VALUE_PRIMITIVE, null, 0];
                 }
                 
                 // Check for Schema instance
                 if (isSchema(val)) {
-                    return [VALUE_REF, val['~refId']];
+                    return [VALUE_REF, val['~refId'], REF_TYPE_SCHEMA];
                 }
                 
                 // Check for Collection (Map/Array/Set) - has ~refId
                 if (val && typeof val === 'object' && val['~refId'] !== undefined) {
-                    return [VALUE_REF, val['~refId']];
+                    let refType = REF_TYPE_SCHEMA;
+                    if (isMapSchema(val)) {
+                        refType = REF_TYPE_MAP;
+                    } else if (isArraySchema(val)) {
+                        refType = REF_TYPE_ARRAY;
+                    }
+                    return [VALUE_REF, val['~refId'], refType];
                 }
                 
                 // True primitives only
                 const valType = typeof val;
                 if (valType === 'number' || valType === 'string' || valType === 'boolean') {
-                    return [VALUE_PRIMITIVE, val];
+                    return [VALUE_PRIMITIVE, val, 0];
                 }
                 
                 // Unknown complex type - log warning, don't serialize
                 console.warn('ColyseusGodot: Unhandled value type in raw change:', val);
-                return [VALUE_UNKNOWN, null];
+                return [VALUE_UNKNOWN, null, 0];
             }
 
             Colyseus.Callbacks.getRawChanges(decoder, function(allChanges) {
-                console.log("ColyseusGodot: getRawChanges triggered with", allChanges.length, "changes");
-                
                 const serialized = [];
                 for (let i = 0; i < allChanges.length; i++) {
                     const change = allChanges[i];
                     const valInfo = serializeValue(change.value);
                     const prevInfo = serializeValue(change.previousValue);
                     
-                    console.log("ColyseusGodot: Change", i, "- refId:", change.refId, "op:", change.op, "field:", change.field, "dynamicIndex:", change.dynamicIndex, "isSchema:", isSchema(change.ref), "valType:", valInfo[0], "valData:", valInfo[1]);
-                    
-                    // Compact array format: [refId, op, field, dynamicIndex, isSchema, valType, valData, prevType, prevData]
+                    // Compact array format: [refId, op, field, dynamicIndex, isSchema, valType, valData, prevType, prevData, valRefType]
                     serialized.push([
                         change.refId,
                         change.op,
@@ -740,21 +750,17 @@
                         valInfo[0],
                         valInfo[1],
                         prevInfo[0],
-                        prevInfo[1]
+                        prevInfo[1],
+                        valInfo[2]  // Reference type (schema/map/array) for untyped state support
                     ]);
                 }
                 
                 if (callback && serialized.length > 0) {
                     const resultId = self._nextId++;
                     self._pendingResults[resultId] = JSON.stringify(serialized);
-                    console.log("ColyseusGodot: Calling GDScript callback with resultId:", resultId, "serialized:", serialized.length, "changes");
                     callback(resultId);
-                } else {
-                    console.log("ColyseusGodot: No changes to send or no callback");
                 }
             });
-            
-            console.log("ColyseusGodot: Raw changes callback registered for room", roomId);
         }
     };
 
