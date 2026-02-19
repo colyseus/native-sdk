@@ -31,14 +31,14 @@ class TestRoomState extends ColyseusSchema.Schema:
 			ColyseusSchema.Field.new("currentTurn", ColyseusSchema.STRING),
 		]
 
-# Client and room references
-var client: ColyseusClient
-var room: ColyseusRoom
-var callbacks: ColyseusCallbacks
+# Client and room references (no type hints for cross-platform compatibility)
+var client  # ColyseusClient on native, ColyseusWebClient on web
+var room    # ColyseusRoom on native, ColyseusWebRoom on web
+var callbacks  # ColyseusCallbacks on native, ColyseusWebCallbacks on web
 
 func _ready():
-	# Create and connect client
-	client = ColyseusClient.new()
+	# Create and connect client using platform-aware factory
+	client = ColyseusFactory.create_client()
 	client.connect_to("ws://localhost:2567")
 	
 	print("Connecting to: ", client.get_endpoint())
@@ -59,8 +59,8 @@ func _ready():
 func _on_room_joined():
 	print("Joined room: ", room.get_id())
 	
-	# Get callbacks container
-	callbacks = ColyseusCallbacks.get(room)
+	# Get callbacks container using platform-aware factory
+	callbacks = ColyseusFactory.get_callbacks(room)
 	
 	# Listen to state changes
 	callbacks.listen("currentTurn", _on_turn_change)

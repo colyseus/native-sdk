@@ -16,54 +16,47 @@ pub fn build(b: *std.Build) void {
     const skip_integration = b.option(bool, "skip-integration", "Skip integration tests (which require a running server)") orelse false;
     const debug_tests = b.option(bool, "debug-tests", "Install test executables for debugging") orelse false;
 
-    // ========================================================================
-    // Helper functions for Windows vcpkg setup
-    // ========================================================================
-    const getVcpkgSubPath = struct {
-        fn get(builder: *std.Build, subdir: []const u8) []const u8 {
-            const vcpkg_root_env = std.process.getEnvVarOwned(builder.allocator, "VCPKG_ROOT") catch null;
-            const vcpkg_root = vcpkg_root_env orelse "../vcpkg/installed/x64-windows";
-            defer if (vcpkg_root_env) |env| builder.allocator.free(env);
-            return builder.fmt("{s}/{s}", .{ vcpkg_root, subdir });
-        }
-    }.get;
-
-    const setupWindowsVcpkgLibPath = struct {
-        fn setup(builder: *std.Build, tgt: std.Build.ResolvedTarget, compile_step: *std.Build.Step.Compile) void {
-            if (tgt.result.os.tag == .windows) {
-                const vcpkg_lib_path = getVcpkgSubPath(builder, "lib");
-                compile_step.addLibraryPath(.{ .cwd_relative = vcpkg_lib_path });
+    // iOS/tvOS SDK path option (auto-detected on macOS if not specified)
+    const ios_sdk_path: ?[]const u8 = b.option([]const u8, "ios-sdk", "Path to iOS SDK (e.g., from 'xcrun --sdk iphoneos --show-sdk-path')") orelse blk: {
+        if (target.result.os.tag == .ios or target.result.os.tag == .tvos) {
+            const sdk_name = if (target.result.os.tag == .tvos) "appletvos" else "iphoneos";
+            const result = std.process.Child.run(.{
+                .allocator = b.allocator,
+                .argv = &.{ "xcrun", "--sdk", sdk_name, "--show-sdk-path" },
+            }) catch break :blk null;
+            defer b.allocator.free(result.stdout);
+            defer b.allocator.free(result.stderr);
+            if (result.term.Exited == 0 and result.stdout.len > 0) {
+                const trimmed = std.mem.trimRight(u8, result.stdout, "\n\r");
+                break :blk b.allocator.dupe(u8, trimmed) catch null;
             }
         }
-    }.setup;
+        break :blk null;
+    };
 
-    const setupWindowsVcpkgIncludePath = struct {
-        fn setup(builder: *std.Build, tgt: std.Build.ResolvedTarget, compile_step: *std.Build.Step.Compile) void {
-            if (tgt.result.os.tag == .windows) {
-                const vcpkg_include_path = getVcpkgSubPath(builder, "include");
-                compile_step.addIncludePath(.{ .cwd_relative = vcpkg_include_path });
+    // Helper to add iOS SDK paths to a compile step
+    const addAppleSdkPaths = struct {
+        fn add(compile_step: *std.Build.Step.Compile, sdk_path: ?[]const u8) void {
+            if (sdk_path) |sdk| {
+                const alloc = compile_step.step.owner.allocator;
+                compile_step.addSystemIncludePath(.{ .cwd_relative = std.fmt.allocPrint(
+                    alloc,
+                    "{s}/usr/include",
+                    .{sdk},
+                ) catch return });
+                compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
+                    alloc,
+                    "{s}/usr/lib",
+                    .{sdk},
+                ) catch return });
+                compile_step.addFrameworkPath(.{ .cwd_relative = std.fmt.allocPrint(
+                    alloc,
+                    "{s}/System/Library/Frameworks",
+                    .{sdk},
+                ) catch return });
             }
         }
-    }.setup;
-
-    const setupWindowsPath = struct {
-        fn setup(builder: *std.Build, tgt: std.Build.ResolvedTarget, run_step: *std.Build.Step.Run) void {
-            if (tgt.result.os.tag == .windows) {
-                const vcpkg_bin_path = getVcpkgSubPath(builder, "bin");
-
-                // Get current PATH and prepend vcpkg/bin
-                const current_path = std.process.getEnvVarOwned(builder.allocator, "PATH") catch "";
-                defer if (current_path.len > 0) builder.allocator.free(current_path);
-
-                const new_path = if (current_path.len > 0)
-                    builder.fmt("{s};{s}", .{ vcpkg_bin_path, current_path })
-                else
-                    vcpkg_bin_path;
-
-                run_step.setEnvironmentVariable("PATH", new_path);
-            }
-        }
-    }.setup;
+    }.add;
 
     // ========================================================================
     // Build wslay library
@@ -110,6 +103,7 @@ pub fn build(b: *std.Build) void {
     });
 
     wslay.linkLibC();
+    addAppleSdkPaths(wslay, ios_sdk_path);
     wslay.addIncludePath(b.path("third_party/wslay/lib/includes"));
     wslay.addIncludePath(b.path("third_party/wslay/lib"));
     wslay.addConfigHeader(wslay_config_h);
@@ -139,6 +133,39 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&wslay_install.step);
 
     // ========================================================================
+    // Build Zig modules for HTTP and URL parsing (replaces libcurl)
+    // ========================================================================
+    const http_zig_module = b.createModule(.{
+        .root_source_file = b.path("src/network/http.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    http_zig_module.addIncludePath(b.path("include"));
+    http_zig_module.addIncludePath(b.path("third_party/uthash/src"));
+
+    const http_object = b.addLibrary(.{
+        .name = "http_zig",
+        .root_module = http_zig_module,
+        .linkage = .static,
+    });
+    http_object.linkLibC();
+    addAppleSdkPaths(http_object, ios_sdk_path);
+
+    const strutil_zig_module = b.createModule(.{
+        .root_source_file = b.path("src/utils/strUtil.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const strutil_object = b.addLibrary(.{
+        .name = "strutil_zig",
+        .root_module = strutil_zig_module,
+        .linkage = .static,
+    });
+    strutil_object.linkLibC();
+    addAppleSdkPaths(strutil_object, ios_sdk_path);
+
+    // ========================================================================
     // Build colyseus library
     // ========================================================================
     const colyseus_module = b.createModule(.{
@@ -156,6 +183,7 @@ pub fn build(b: *std.Build) void {
     });
 
     colyseus.linkLibC();
+    addAppleSdkPaths(colyseus, ios_sdk_path);
 
     // Add include paths
     colyseus.addIncludePath(b.path("include"));
@@ -170,7 +198,7 @@ pub fn build(b: *std.Build) void {
     colyseus.addIncludePath(wslay_config_h.getOutput().dirname());
     colyseus.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
 
-    // Colyseus source files
+    // Colyseus C source files
     colyseus.addCSourceFiles(.{
         .files = &.{
             // Core
@@ -178,8 +206,7 @@ pub fn build(b: *std.Build) void {
             "src/client.c",
             "src/room.c",
 
-            // Network
-            "src/network/http.c",
+            // Network (websocket only - HTTP is now in Zig)
             "src/network/websocket_transport.c",
 
             // Schema
@@ -191,7 +218,7 @@ pub fn build(b: *std.Build) void {
             "src/schema/callbacks.c",
             "src/schema/dynamic_schema.c",
 
-            // Utils
+            // Utils (base64/SHA1 only - URL parsing is now in Zig)
             "src/utils/strUtil.c",
             "src/utils/sha1_c.c",
 
@@ -211,37 +238,27 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // Link Zig HTTP and URL parsing libraries
+    colyseus.linkLibrary(http_object);
+    colyseus.linkLibrary(strutil_object);
+
     // Link wslay
     colyseus.linkLibrary(wslay);
 
-    // Link system libraries based on platform
+    // Link system libraries based on platform (no curl needed)
     if (target.result.os.tag == .linux) {
-        colyseus.linkSystemLibrary("curl");
         colyseus.linkSystemLibrary("pthread");
         colyseus.linkSystemLibrary("m");
     } else if (target.result.os.tag == .macos) {
-        colyseus.linkSystemLibrary("curl");
         colyseus.linkSystemLibrary("pthread");
         colyseus.linkFramework("CoreFoundation");
         colyseus.linkFramework("Security");
-    } else if (target.result.os.tag == .ios) {
-        colyseus.linkSystemLibrary("curl");
-        colyseus.linkFramework("CoreFoundation");
-        colyseus.linkFramework("Security");
-    } else if (target.result.os.tag == .tvos) {
-        colyseus.linkSystemLibrary("curl");
+    } else if (target.result.os.tag == .ios or target.result.os.tag == .tvos) {
         colyseus.linkFramework("CoreFoundation");
         colyseus.linkFramework("Security");
     } else if (target.result.os.tag == .windows) {
-        setupWindowsVcpkgIncludePath(b, target, colyseus);
-        setupWindowsVcpkgLibPath(b, target, colyseus);
-
-        // Link libcurl as a system library
-        colyseus.linkSystemLibrary("libcurl");
         colyseus.linkSystemLibrary("ws2_32");
         colyseus.linkSystemLibrary("crypt32");
-    } else {
-        colyseus.linkSystemLibrary("curl");
     }
 
     // Install the library
@@ -296,7 +313,6 @@ pub fn build(b: *std.Build) void {
             colyseus_lib: *std.Build.Step.Compile,
             wslay_version_header: *std.Build.Step.ConfigHeader,
             c_standard: []const u8,
-            setup_path: fn (*std.Build, std.Build.ResolvedTarget, *std.Build.Step.Run) void,
         ) void {
             const example_module = builder.createModule(.{
                 .target = tgt,
@@ -326,13 +342,10 @@ pub fn build(b: *std.Build) void {
             example.addIncludePath(wslay_version_header.getOutput().dirname().dirname());
             example.linkLibrary(colyseus_lib);
 
-            setupWindowsVcpkgLibPath(builder, tgt, example);
-
             builder.installArtifact(example);
 
             const run_example = builder.addRunArtifact(example);
             run_example.step.dependOn(builder.getInstallStep());
-            setup_path(builder, tgt, run_example);
 
             const run_step = builder.step(config.run_step_name, config.run_step_desc);
             run_step.dependOn(&run_example.step);
@@ -348,14 +361,14 @@ pub fn build(b: *std.Build) void {
             .source_file = "examples/simple_example.c",
             .run_step_name = "run-example",
             .run_step_desc = "Run the simple example",
-        }, target, optimize, colyseus, wslay_version_h, c_std, setupWindowsPath);
+        }, target, optimize, colyseus, wslay_version_h, c_std);
 
         buildExample(b, .{
             .name = "auth_example",
             .source_file = "examples/auth_example.c",
             .run_step_name = "run-auth-example",
             .run_step_desc = "Run the auth example",
-        }, target, optimize, colyseus, wslay_version_h, c_std, setupWindowsPath);
+        }, target, optimize, colyseus, wslay_version_h, c_std);
     }
 
     // ========================================================================
@@ -382,10 +395,9 @@ pub fn build(b: *std.Build) void {
     // Build each Zig test
     for (zig_test_files) |test_file| {
         // Skip integration test if requested
-        if (
-            skip_integration and
-            (std.mem.eql(u8, test_file.name, "test_integration") or std.mem.eql(u8, test_file.name, "test_schema_callbacks"))
-        ) {
+        if (skip_integration and
+            (std.mem.eql(u8, test_file.name, "test_integration") or std.mem.eql(u8, test_file.name, "test_schema_callbacks")))
+        {
             continue;
         }
 
@@ -409,8 +421,6 @@ pub fn build(b: *std.Build) void {
         test_exe.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
         test_exe.linkLibrary(colyseus);
 
-        setupWindowsVcpkgLibPath(b, target, test_exe);
-
         // If debug-tests is enabled, install the test executable
         if (debug_tests) {
             b.installArtifact(test_exe);
@@ -418,7 +428,6 @@ pub fn build(b: *std.Build) void {
 
         // Create run command for this test
         const run_test = b.addRunArtifact(test_exe);
-        setupWindowsPath(b, target, run_test);
 
         // Add to main test step
         test_step.dependOn(&run_test.step);

@@ -1,25 +1,23 @@
 extends Node
-## Example script demonstrating Colyseus GDExtension usage
+## Example script demonstrating Colyseus usage (cross-platform)
+##
+## This example works on both native (Windows/macOS/Linux) and web platforms.
+## Uses ColyseusFactory for platform-aware client/callbacks creation.
 
-var client: ColyseusClient
-var room: ColyseusRoom
-var callbacks: ColyseusCallbacks
+# Client and room references (no type hints for cross-platform compatibility)
+var client  # ColyseusClient on native, ColyseusWebClient on web
+var room    # ColyseusRoom on native, ColyseusWebRoom on web
+var callbacks  # ColyseusCallbacks on native, ColyseusWebCallbacks on web
 
 func _ready():
-	# Create and connect client
-	client = ColyseusClient.new()
+	# Create and connect client using platform-aware factory
+	client = ColyseusFactory.create_client()
 	client.set_endpoint("ws://localhost:2567")
 
 	print("Connecting to: ", client.get_endpoint())
 
 	# Join or create a room
 	room = client.join_or_create("test_room")
-	# room = client.join_or_create("my_room")
-
-	# # Set state type BEFORE room finishes joining (required for state decoding)
-	# # The type name must match a registered vtable in the schema registry
-	# if room:
-	# 	room.set_state_type("TestRoomState")
 
 	# Connect signals
 	if room:
@@ -34,8 +32,8 @@ func _on_room_joined():
 	print("  Session ID: ", room.get_session_id())
 	print("  Room name: ", room.get_name())
 
-	# Get callbacks container for the room
-	callbacks = ColyseusCallbacks.get(room)
+	# Get callbacks container using platform-aware factory
+	callbacks = ColyseusFactory.get_callbacks(room)
 	
 	# Listen to root state property changes
 	callbacks.listen("currentTurn", _on_turn_change)
