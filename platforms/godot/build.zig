@@ -4,7 +4,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-
     // Get target information
     const os_tag = target.result.os.tag;
     const arch = target.result.cpu.arch;
@@ -62,7 +61,7 @@ pub fn build(b: *std.Build) void {
             "src/colyseus_callbacks.c",
             "src/colyseus_state.c",
             "src/colyseus_schema_registry.c",
-            "src/colyseus_gdscript_schema.c",  // GDScript schema bridge
+            "src/colyseus_gdscript_schema.c", // GDScript schema bridge
             "src/msgpack_variant.c",
             "src/msgpack_encoder.c",
             // Dynamic schema support (for GDScript-defined schemas)
@@ -86,7 +85,7 @@ pub fn build(b: *std.Build) void {
     lib.addIncludePath(b.path("../../third_party/wslay/lib/includes"));
     lib.addIncludePath(b.path("../../third_party/wslay/lib"));
     lib.addIncludePath(b.path("include"));
-    lib.addIncludePath(b.path("src"));  // For colyseus_callbacks.h, colyseus_state.h
+    lib.addIncludePath(b.path("src")); // For colyseus_callbacks.h, colyseus_state.h
 
     // Link against the colyseus static library
     lib.addObjectFile(b.path("../../zig-out/lib/libcolyseus.a"));
