@@ -133,7 +133,7 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&wslay_install.step);
 
     // ========================================================================
-    // Build Zig modules for HTTP and URL parsing (replaces libcurl)
+    // Build Zig modules for HTTP and URL parsing
     // ========================================================================
     const http_zig_module = b.createModule(.{
         .root_source_file = b.path("src/network/http.zig"),
@@ -245,7 +245,7 @@ pub fn build(b: *std.Build) void {
     // Link wslay
     colyseus.linkLibrary(wslay);
 
-    // Link system libraries based on platform (no curl needed)
+    // Link system libraries based on platform
     if (target.result.os.tag == .linux) {
         colyseus.linkSystemLibrary("pthread");
         colyseus.linkSystemLibrary("m");

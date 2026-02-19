@@ -156,7 +156,7 @@ See [example.gd](example.gd)
 This extension is built with:
 - **Pure C** - No C++ dependencies, direct use of GDExtension C API
 - **Zig Build System** - Simple, fast, and supports easy cross-compilation
-- **Minimal Dependencies** - Only depends on the Colyseus Native SDK and libcurl
+- **Minimal Dependencies** - Only depends on the Colyseus Native SDK 
 
 ```
 ┌─────────────────────────────────────────┐

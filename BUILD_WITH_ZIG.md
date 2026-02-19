@@ -33,25 +33,6 @@ snap install zig --classic --beta
 zig version
 ```
 
-### System Dependencies
-
-You still need `libcurl` installed on your system:
-
-**macOS:**
-```bash
-brew install curl
-```
-
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt-get install libcurl4-openssl-dev
-```
-
-**Linux (Fedora/RHEL):**
-```bash
-sudo dnf install libcurl-devel
-```
-
 ## Building the Project
 
 ### Basic Build
@@ -196,7 +177,6 @@ cc your_program.c \
    -I zig-out/include \
    -L zig-out/lib \
    -lcolyseus \
-   -lcurl \
    -lpthread
 ```
 
@@ -247,10 +227,6 @@ Make sure Zig is installed and in your PATH:
 ```bash
 which zig
 ```
-
-### "libcurl not found"
-
-Install curl development libraries (see Prerequisites section above).
 
 ### Build Cache Issues
 

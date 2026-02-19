@@ -103,11 +103,6 @@ Now you can test the extension with the example server!
 ### "colyseus library not found"
 Build the native SDK first: `cd ../.. && zig build`
 
-### "curl not found"
-- **macOS**: `brew install curl`
-- **Linux**: `sudo apt install libcurl4-openssl-dev`
-- **Windows**: Install from https://curl.se/windows/
-
 ### Extension not loading in Godot
 1. Check that `colyseus.gdextension` is in the extension folder
 2. Ensure the `.so`/`.dll`/`.dylib` file is in the `bin/` directory

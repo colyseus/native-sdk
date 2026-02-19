@@ -72,7 +72,6 @@ native-sdk/
 
 ## 🔧 Dependencies
 
-- **libcurl** - HTTP client library
 - **cJSON** - JSON parser (included)
 - **sds** - String library (included)
 - **uthash** - Hash table library (included)

@@ -101,7 +101,7 @@ Wraps the C `colyseus_room_t` API. Handles:
 
 2. Build GDExtension (this project)
    ├─> Compiles: src/*.c
-   ├─> Links: libcolyseus.a + libcurl
+   ├─> Links: libcolyseus.a 
    └─> Produces: libcolyseus_godot.{platform}.{build_type}.{ext}
        (e.g., libcolyseus_godot.macos.debug.dylib)
 ```
