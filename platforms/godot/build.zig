@@ -220,11 +220,9 @@ pub fn build(b: *std.Build) void {
     lib.addConfigHeader(wslay_version_h);
     lib.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
 
-    // Link against system libraries
-    lib.linkLibC();
-
     // Link platform-specific libraries (no curl needed - using Zig's std.http)
     if (os_tag == .macos) {
+        lib.linkLibC();
         lib.linkSystemLibrary("pthread");
 
         // Add macOS SDK paths for cross-compilation
@@ -246,11 +244,14 @@ pub fn build(b: *std.Build) void {
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
     } else if (os_tag == .ios) {
-        // Add iOS SDK framework path for cross-compilation (sysroot is required for iOS)
-        // Note: Don't add library path manually - Zig uses sysroot automatically for libSystem
+        // For iOS: set up paths BEFORE linkLibC so it can find libSystem
         if (b.sysroot) |sysroot| {
             lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
+            // Use system include path (already added earlier in the file)
         }
+
+        // Link libc - this needs the sysroot to be set via --sysroot flag
+        lib.linkLibC();
 
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
@@ -258,6 +259,7 @@ pub fn build(b: *std.Build) void {
         // Set the install_name to match Godot's .framework bundle structure
         lib.install_name = b.fmt("@rpath/lib{s}.framework/lib{s}", .{ lib_name, lib_name });
     } else if (is_android) {
+        lib.linkLibC();
         // Add Android NDK library search paths
         if (b.sysroot) |sysroot| {
             const android_triple = switch (arch) {
@@ -274,12 +276,15 @@ pub fn build(b: *std.Build) void {
         lib.linkSystemLibrary("log");
         lib.linkSystemLibrary("android");
     } else if (os_tag == .linux) {
+        lib.linkLibC();
         lib.linkSystemLibrary("pthread");
         lib.linkSystemLibrary("m");
     } else if (os_tag == .windows) {
+        lib.linkLibC();
         lib.linkSystemLibrary("ws2_32");
         lib.linkSystemLibrary("crypt32");
     } else {
+        lib.linkLibC();
         lib.linkSystemLibrary("pthread");
     }
 
