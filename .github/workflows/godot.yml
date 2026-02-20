@@ -28,6 +28,7 @@ jobs:
         id: version-check
         with:
           file-name: platforms/godot/addons/colyseus/version.json
+          diff-search: true
 
       - name: Log version info
         run: |
