@@ -50,12 +50,16 @@ jobs:
         with:
           version: 0.15.1
 
-      - name: Get macOS SDK path
+      - name: Get macOS SDK and toolchain paths
         id: macos-sdk
-        run: echo "path=$(xcrun --show-sdk-path)" >> $GITHUB_OUTPUT
+        run: |
+          echo "path=$(xcrun --show-sdk-path)" >> $GITHUB_OUTPUT
+          echo "toolchain=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/local/include" >> $GITHUB_OUTPUT
 
       - name: Build macOS x86_64 (debug)
         working-directory: platforms/godot
+        env:
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
         run: zig build -Dtarget=x86_64-macos -Doptimize=Debug --sysroot "${{ steps.macos-sdk.outputs.path }}"
 
       - name: Rename macOS x86_64 debug binary
@@ -64,6 +68,8 @@ jobs:
 
       - name: Build macOS x86_64 (release)
         working-directory: platforms/godot
+        env:
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
         run: zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSafe --sysroot "${{ steps.macos-sdk.outputs.path }}"
 
       - name: Rename macOS x86_64 release binary
@@ -72,6 +78,8 @@ jobs:
 
       - name: Build macOS arm64 (debug)
         working-directory: platforms/godot
+        env:
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
         run: zig build -Dtarget=aarch64-macos -Doptimize=Debug --sysroot "${{ steps.macos-sdk.outputs.path }}"
 
       - name: Rename macOS arm64 debug binary
@@ -80,6 +88,8 @@ jobs:
 
       - name: Build macOS arm64 (release)
         working-directory: platforms/godot
+        env:
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
         run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe --sysroot "${{ steps.macos-sdk.outputs.path }}"
 
       - name: Rename macOS arm64 release binary
@@ -103,10 +113,14 @@ jobs:
 
       - name: Build iOS arm64 (debug)
         working-directory: platforms/godot
+        env:
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
         run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
       - name: Build iOS arm64 (release)
         working-directory: platforms/godot
+        env:
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
         run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
       - name: Upload macOS and iOS binaries

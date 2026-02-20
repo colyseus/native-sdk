@@ -248,6 +248,10 @@ pub fn build(b: *std.Build) void {
             // Add usr/local/include for libDER headers required by Security framework
             lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/local/include", .{sysroot}) });
         }
+        // Add Xcode toolchain include path for libDER headers (from XCODE_TOOLCHAIN_INCLUDE env var)
+        if (std.process.getEnvVarOwned(b.allocator, "XCODE_TOOLCHAIN_INCLUDE")) |toolchain_include| {
+            lib.addSystemIncludePath(.{ .cwd_relative = toolchain_include });
+        } else |_| {}
         lib.linkSystemLibrary("pthread");
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
@@ -259,6 +263,10 @@ pub fn build(b: *std.Build) void {
             // Add usr/local/include for libDER headers required by Security framework
             lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/local/include", .{sysroot}) });
         }
+        // Add Xcode toolchain include path for libDER headers (from XCODE_TOOLCHAIN_INCLUDE env var)
+        if (std.process.getEnvVarOwned(b.allocator, "XCODE_TOOLCHAIN_INCLUDE")) |toolchain_include| {
+            lib.addSystemIncludePath(.{ .cwd_relative = toolchain_include });
+        } else |_| {}
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
 
