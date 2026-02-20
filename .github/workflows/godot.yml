@@ -50,9 +50,13 @@ jobs:
         with:
           version: 0.15.1
 
+      - name: Get macOS SDK path
+        id: macos-sdk
+        run: echo "path=$(xcrun --show-sdk-path)" >> $GITHUB_OUTPUT
+
       - name: Build macOS x86_64 (debug)
         working-directory: platforms/godot
-        run: zig build -Dtarget=x86_64-macos -Doptimize=Debug
+        run: zig build -Dtarget=x86_64-macos -Doptimize=Debug --sysroot "${{ steps.macos-sdk.outputs.path }}"
 
       - name: Rename macOS x86_64 debug binary
         working-directory: platforms/godot/addons/colyseus/bin
@@ -60,7 +64,7 @@ jobs:
 
       - name: Build macOS x86_64 (release)
         working-directory: platforms/godot
-        run: zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSafe
+        run: zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSafe --sysroot "${{ steps.macos-sdk.outputs.path }}"
 
       - name: Rename macOS x86_64 release binary
         working-directory: platforms/godot/addons/colyseus/bin
@@ -68,7 +72,7 @@ jobs:
 
       - name: Build macOS arm64 (debug)
         working-directory: platforms/godot
-        run: zig build -Dtarget=aarch64-macos -Doptimize=Debug
+        run: zig build -Dtarget=aarch64-macos -Doptimize=Debug --sysroot "${{ steps.macos-sdk.outputs.path }}"
 
       - name: Rename macOS arm64 debug binary
         working-directory: platforms/godot/addons/colyseus/bin
@@ -76,7 +80,7 @@ jobs:
 
       - name: Build macOS arm64 (release)
         working-directory: platforms/godot
-        run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
+        run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe --sysroot "${{ steps.macos-sdk.outputs.path }}"
 
       - name: Rename macOS arm64 release binary
         working-directory: platforms/godot/addons/colyseus/bin
@@ -93,13 +97,17 @@ jobs:
             libcolyseus_godot.macos.release.arm64.dylib
           rm -f libcolyseus_godot.macos.*.x86_64.dylib libcolyseus_godot.macos.*.arm64.dylib
 
+      - name: Get iOS SDK path
+        id: ios-sdk
+        run: echo "path=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_OUTPUT
+
       - name: Build iOS arm64 (debug)
         working-directory: platforms/godot
-        run: zig build -Dtarget=aarch64-ios -Doptimize=Debug
+        run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
       - name: Build iOS arm64 (release)
         working-directory: platforms/godot
-        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe
+        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
       - name: Upload macOS and iOS binaries
         uses: actions/upload-artifact@v4
@@ -130,14 +138,6 @@ jobs:
         working-directory: platforms/godot
         run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe
 
-      - name: Build Linux x86 (debug)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86-linux-gnu -Doptimize=Debug
-
-      - name: Build Linux x86 (release)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86-linux-gnu -Doptimize=ReleaseSafe
-
       - name: Upload Linux binaries
         uses: actions/upload-artifact@v4
         with:
@@ -166,14 +166,6 @@ jobs:
       - name: Build Windows x86_64 (release)
         working-directory: platforms/godot
         run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
-
-      - name: Build Windows x86 (debug)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86-windows-gnu -Doptimize=Debug
-
-      - name: Build Windows x86 (release)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSafe
 
       - name: Upload Windows binaries
         uses: actions/upload-artifact@v4
@@ -237,18 +229,6 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: zig build -Dtarget=x86_64-linux-android -Doptimize=ReleaseSafe
-
-      - name: Build Android x86 (debug)
-        working-directory: platforms/godot
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=x86-linux-android -Doptimize=Debug
-
-      - name: Build Android x86 (release)
-        working-directory: platforms/godot
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=x86-linux-android -Doptimize=ReleaseSafe
 
       - name: Upload Android binaries
         uses: actions/upload-artifact@v4
@@ -316,9 +296,9 @@ jobs:
             ### Supported Platforms
             - macOS (universal: x86_64 + arm64)
             - iOS (arm64)
-            - Windows (x86, x86_64)
-            - Linux (x86, x86_64)
-            - Android (x86, x86_64, arm32, arm64)
+            - Windows (x86_64)
+            - Linux (x86_64)
+            - Android (arm32, arm64, x86_64)
           files: platforms/godot/colyseus-godot-${{ needs.check-version.outputs.version }}.zip
           draft: false
           prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}

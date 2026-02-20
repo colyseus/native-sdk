@@ -28,17 +28,15 @@ pub fn build(b: *std.Build) void {
     // Auto-detect Android NDK sysroot if targeting Android and no sysroot was provided
     if (os_tag == .linux and target.result.abi == .android and b.sysroot == null) {
         if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME")) |ndk_home| {
-            const api_level = "21";
-            const ndk_arch = switch (arch) {
-                .x86 => "i686-linux-android",
-                .x86_64 => "x86_64-linux-android",
-                .arm => "arm-linux-androideabi",
-                .aarch64 => "aarch64-linux-android",
-                else => @panic("Unsupported Android architecture"),
+            const builtin = @import("builtin");
+            const host_os = builtin.os.tag;
+            const ndk_host = switch (host_os) {
+                .macos => "darwin-x86_64",
+                .linux => "linux-x86_64",
+                .windows => "windows-x86_64",
+                else => @panic("Unsupported host OS for Android NDK"),
             };
-            b.sysroot = b.fmt("{s}/toolchains/llvm/prebuilt/darwin-x86_64/sysroot", .{ndk_home});
-            _ = ndk_arch;
-            _ = api_level;
+            b.sysroot = b.fmt("{s}/toolchains/llvm/prebuilt/{s}/sysroot", .{ ndk_home, ndk_host });
         } else |_| {
             std.debug.print("Warning: ANDROID_NDK_HOME not set. You may need to pass --sysroot manually\n", .{});
         }
