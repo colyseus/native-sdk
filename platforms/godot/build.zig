@@ -74,7 +74,10 @@ pub fn build(b: *std.Build) void {
         .root_module = http_zig_module,
         .linkage = .static,
     });
-    http_object.linkLibC();
+    // Link libc for non-iOS targets; iOS handles it via libSystem.tbd
+    if (os_tag != .ios) {
+        http_object.linkLibC();
+    }
 
     const strutil_zig_module = b.createModule(.{
         .root_source_file = b.path("../../src/utils/strUtil.zig"),
@@ -87,7 +90,10 @@ pub fn build(b: *std.Build) void {
         .root_module = strutil_zig_module,
         .linkage = .static,
     });
-    strutil_object.linkLibC();
+    // Link libc for non-iOS targets; iOS handles it via libSystem.tbd
+    if (os_tag != .ios) {
+        strutil_object.linkLibC();
+    }
 
     // Create module for the shared library with Zig source file
     const lib_module = b.createModule(.{
