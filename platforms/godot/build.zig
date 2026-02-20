@@ -244,14 +244,12 @@ pub fn build(b: *std.Build) void {
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
     } else if (os_tag == .ios) {
-        // For iOS: set up paths BEFORE linkLibC so it can find libSystem
+        // For iOS: set up SDK paths for cross-compilation
         if (b.sysroot) |sysroot| {
             lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
-            // Use system include path (already added earlier in the file)
+            // Directly link libSystem.tbd to bypass Zig's library search issue
+            lib.addObjectFile(.{ .cwd_relative = b.fmt("{s}/usr/lib/libSystem.tbd", .{sysroot}) });
         }
-
-        // Link libc - this needs the sysroot to be set via --sysroot flag
-        lib.linkLibC();
 
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
