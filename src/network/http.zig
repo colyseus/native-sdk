@@ -33,8 +33,9 @@ const colyseus_settings_t = extern struct {
 // External C function declaration
 extern fn colyseus_settings_get_webrequest_endpoint(settings: *const colyseus_settings_t) [*c]u8;
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
+// Use c_allocator (wraps malloc/free) for iOS compatibility
+// GeneralPurposeAllocator uses mmap which has issues on iOS when used globally
+const allocator = std.heap.c_allocator;
 
 pub const colyseus_http_response_t = extern struct {
     status_code: c_int,

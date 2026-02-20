@@ -1,8 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
+// Use c_allocator (wraps malloc/free) for iOS compatibility
+// GeneralPurposeAllocator uses mmap which has issues on iOS when used globally
+const allocator = std.heap.c_allocator;
 
 pub const colyseus_url_parts_t = extern struct {
     scheme: [*c]u8,
