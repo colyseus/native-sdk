@@ -31,6 +31,12 @@ func _export_end() -> void:
 		return
 	
 	var export_dir := _export_path.get_base_dir()
+
+	# TODO: consider fetching latest Colyseus SDK from CDN instead of bundling with the plugin
+	# https://unpkg.com/@colyseus/sdk@^0.17.0/dist/colyseus.js
+	# 
+	# Consider also adding the debug.js file for development purposes
+	# https://unpkg.com/@colyseus/sdk@^0.17.0/dist/debug.js
 	
 	for js_file in _js_files:
 		var source_path: String = WEB_PATH + js_file
