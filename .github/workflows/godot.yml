@@ -1,0 +1,323 @@
+name: Godot Extension Build
+
+on:
+  push:
+    paths:
+      - 'platforms/godot/**'
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'platforms/godot/**'
+  workflow_dispatch:
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version-check.outputs.changed }}
+      version: ${{ steps.version-check.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check version changes
+        uses: EndBug/version-check@v2
+        id: version-check
+        with:
+          file-name: platforms/godot/addons/colyseus/version.json
+
+      - name: Log version info
+        run: |
+          echo "Version changed: ${{ steps.version-check.outputs.changed }}"
+          echo "Version: ${{ steps.version-check.outputs.version }}"
+
+  build-macos-ios:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
+      - name: Build macOS x86_64 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-macos -Doptimize=Debug
+
+      - name: Rename macOS x86_64 debug binary
+        working-directory: platforms/godot/addons/colyseus/bin
+        run: mv libcolyseus_godot.macos.debug.dylib libcolyseus_godot.macos.debug.x86_64.dylib
+
+      - name: Build macOS x86_64 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSafe
+
+      - name: Rename macOS x86_64 release binary
+        working-directory: platforms/godot/addons/colyseus/bin
+        run: mv libcolyseus_godot.macos.release.dylib libcolyseus_godot.macos.release.x86_64.dylib
+
+      - name: Build macOS arm64 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=aarch64-macos -Doptimize=Debug
+
+      - name: Rename macOS arm64 debug binary
+        working-directory: platforms/godot/addons/colyseus/bin
+        run: mv libcolyseus_godot.macos.debug.dylib libcolyseus_godot.macos.debug.arm64.dylib
+
+      - name: Build macOS arm64 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
+
+      - name: Rename macOS arm64 release binary
+        working-directory: platforms/godot/addons/colyseus/bin
+        run: mv libcolyseus_godot.macos.release.dylib libcolyseus_godot.macos.release.arm64.dylib
+
+      - name: Create macOS universal binaries
+        working-directory: platforms/godot/addons/colyseus/bin
+        run: |
+          lipo -create -output libcolyseus_godot.macos.debug.dylib \
+            libcolyseus_godot.macos.debug.x86_64.dylib \
+            libcolyseus_godot.macos.debug.arm64.dylib
+          lipo -create -output libcolyseus_godot.macos.release.dylib \
+            libcolyseus_godot.macos.release.x86_64.dylib \
+            libcolyseus_godot.macos.release.arm64.dylib
+          rm -f libcolyseus_godot.macos.*.x86_64.dylib libcolyseus_godot.macos.*.arm64.dylib
+
+      - name: Build iOS arm64 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=aarch64-ios -Doptimize=Debug
+
+      - name: Build iOS arm64 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe
+
+      - name: Upload macOS and iOS binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-macos-ios
+          path: platforms/godot/addons/colyseus/bin/*.dylib
+
+  build-linux:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
+      - name: Build Linux x86_64 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=Debug
+
+      - name: Build Linux x86_64 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe
+
+      - name: Build Linux x86 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86-linux-gnu -Doptimize=Debug
+
+      - name: Build Linux x86 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86-linux-gnu -Doptimize=ReleaseSafe
+
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux
+          path: platforms/godot/addons/colyseus/bin/*.so
+
+  build-windows:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
+      - name: Build Windows x86_64 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=Debug
+
+      - name: Build Windows x86_64 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
+
+      - name: Build Windows x86 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86-windows-gnu -Doptimize=Debug
+
+      - name: Build Windows x86 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSafe
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-windows
+          path: platforms/godot/addons/colyseus/bin/*.dll
+
+  build-android:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+
+      - name: Build Android arm64 (debug)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=aarch64-linux-android -Doptimize=Debug
+
+      - name: Build Android arm64 (release)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=aarch64-linux-android -Doptimize=ReleaseSafe
+
+      - name: Build Android arm32 (debug)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=arm-linux-android -Doptimize=Debug
+
+      - name: Build Android arm32 (release)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=arm-linux-android -Doptimize=ReleaseSafe
+
+      - name: Build Android x86_64 (debug)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=x86_64-linux-android -Doptimize=Debug
+
+      - name: Build Android x86_64 (release)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=x86_64-linux-android -Doptimize=ReleaseSafe
+
+      - name: Build Android x86 (debug)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=x86-linux-android -Doptimize=Debug
+
+      - name: Build Android x86 (release)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=x86-linux-android -Doptimize=ReleaseSafe
+
+      - name: Upload Android binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-android
+          path: platforms/godot/addons/colyseus/bin/*android*.so
+
+  release:
+    needs: [check-version, build-macos-ios, build-linux, build-windows, build-android]
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create bin directory
+        run: mkdir -p platforms/godot/addons/colyseus/bin
+
+      - name: Download macOS and iOS binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-macos-ios
+          path: platforms/godot/addons/colyseus/bin
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-linux
+          path: platforms/godot/addons/colyseus/bin
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-windows
+          path: platforms/godot/addons/colyseus/bin
+
+      - name: Download Android binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-android
+          path: platforms/godot/addons/colyseus/bin
+
+      - name: List all binaries
+        run: ls -la platforms/godot/addons/colyseus/bin/
+
+      - name: Create release zip
+        working-directory: platforms/godot
+        run: zip -r colyseus-godot-${{ needs.check-version.outputs.version }}.zip addons
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: godot-v${{ needs.check-version.outputs.version }}
+          name: Godot SDK v${{ needs.check-version.outputs.version }}
+          body: |
+            ## Colyseus Godot SDK v${{ needs.check-version.outputs.version }}
+            
+            ### Installation
+            1. Download the `colyseus-godot-${{ needs.check-version.outputs.version }}.zip` file
+            2. Extract the `addons` folder into your Godot project root
+            3. Enable the plugin in Project Settings > Plugins
+            
+            ### Supported Platforms
+            - macOS (universal: x86_64 + arm64)
+            - iOS (arm64)
+            - Windows (x86, x86_64)
+            - Linux (x86, x86_64)
+            - Android (x86, x86_64, arm32, arm64)
+          files: platforms/godot/colyseus-godot-${{ needs.check-version.outputs.version }}.zip
+          draft: false
+          prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}

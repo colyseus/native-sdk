@@ -6,6 +6,7 @@ pub fn build(b: *std.Build) void {
 
     // Get target information
     const os_tag = target.result.os.tag;
+    const arch = target.result.cpu.arch;
 
     // Auto-detect iOS SDK sysroot if targeting iOS and no sysroot was provided
     if (os_tag == .ios and b.sysroot == null) {
@@ -19,15 +20,34 @@ pub fn build(b: *std.Build) void {
         };
 
         if (result.term.Exited == 0 and result.stdout.len > 0) {
-            // Trim the trailing newline
             const sdk_path = std.mem.trimRight(u8, result.stdout, "\n\r");
             b.sysroot = sdk_path;
         }
     }
-    const arch = target.result.cpu.arch;
+
+    // Auto-detect Android NDK sysroot if targeting Android and no sysroot was provided
+    if (os_tag == .linux and target.result.abi == .android and b.sysroot == null) {
+        if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME")) |ndk_home| {
+            const api_level = "21";
+            const ndk_arch = switch (arch) {
+                .x86 => "i686-linux-android",
+                .x86_64 => "x86_64-linux-android",
+                .arm => "arm-linux-androideabi",
+                .aarch64 => "aarch64-linux-android",
+                else => @panic("Unsupported Android architecture"),
+            };
+            b.sysroot = b.fmt("{s}/toolchains/llvm/prebuilt/darwin-x86_64/sysroot", .{ndk_home});
+            _ = ndk_arch;
+            _ = api_level;
+        } else |_| {
+            std.debug.print("Warning: ANDROID_NDK_HOME not set. You may need to pass --sysroot manually\n", .{});
+        }
+    }
+
+    const is_android = target.result.abi == .android;
 
     const os_str = switch (os_tag) {
-        .linux => "linux",
+        .linux => if (is_android) "android" else "linux",
         .macos => "macos",
         .windows => "windows",
         .ios => "ios",
@@ -35,7 +55,9 @@ pub fn build(b: *std.Build) void {
     };
 
     const arch_str = switch (arch) {
+        .x86 => "x86",
         .x86_64 => "x86_64",
+        .arm => "arm32",
         .aarch64 => "arm64",
         else => "unknown",
     };
@@ -192,6 +214,7 @@ pub fn build(b: *std.Build) void {
             .HAVE_WINSOCK2_H = 1,
         })
     else
+        // Linux, macOS, iOS, and Android all have POSIX network headers
         b.addConfigHeader(.{
             .style = .blank,
             .include_path = "config.h",
@@ -228,16 +251,16 @@ pub fn build(b: *std.Build) void {
         // Add iOS SDK framework and library search paths (relative to sysroot)
         if (b.sysroot) |sysroot| {
             lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
-            // Use absolute path for library since Zig prepends sysroot automatically for -L
             lib.root_module.addLibraryPath(.{ .cwd_relative = "/usr/lib" });
         }
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
 
         // Set the install_name to match Godot's .framework bundle structure
-        // Godot wraps iOS dylibs into .framework bundles, so the install_name must
-        // include the framework path, otherwise the app will fail to load at runtime
         lib.install_name = b.fmt("@rpath/lib{s}.framework/lib{s}", .{ lib_name, lib_name });
+    } else if (is_android) {
+        lib.linkSystemLibrary("log");
+        lib.linkSystemLibrary("android");
     } else if (os_tag == .linux) {
         lib.linkSystemLibrary("pthread");
         lib.linkSystemLibrary("m");

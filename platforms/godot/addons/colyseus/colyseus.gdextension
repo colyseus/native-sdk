@@ -3,11 +3,32 @@ entry_symbol = "colyseus_sdk_init"
 compatibility_minimum = "4.1"
 
 [libraries]
+; macOS (universal binary)
 macos.debug = "bin/libcolyseus_godot.macos.debug.dylib"
 macos.release = "bin/libcolyseus_godot.macos.release.dylib"
+
+; iOS
 ios.debug.arm64 = "bin/libcolyseus_godot.ios.arm64.debug.dylib"
 ios.release.arm64 = "bin/libcolyseus_godot.ios.arm64.release.dylib"
-windows.debug.x86_64 = "bin/libcolyseus_godot.windows.x86_64.debug.dll"
-windows.release.x86_64 = "bin/libcolyseus_godot.windows.x86_64.release.dll"
+
+; Windows
+windows.debug.x86_32 = "bin/colyseus_godot.windows.x86.debug.dll"
+windows.release.x86_32 = "bin/colyseus_godot.windows.x86.release.dll"
+windows.debug.x86_64 = "bin/colyseus_godot.windows.x86_64.debug.dll"
+windows.release.x86_64 = "bin/colyseus_godot.windows.x86_64.release.dll"
+
+; Linux
+linux.debug.x86_32 = "bin/libcolyseus_godot.linux.x86.debug.so"
+linux.release.x86_32 = "bin/libcolyseus_godot.linux.x86.release.so"
 linux.debug.x86_64 = "bin/libcolyseus_godot.linux.x86_64.debug.so"
 linux.release.x86_64 = "bin/libcolyseus_godot.linux.x86_64.release.so"
+
+; Android
+android.debug.x86_32 = "bin/libcolyseus_godot.android.x86.debug.so"
+android.release.x86_32 = "bin/libcolyseus_godot.android.x86.release.so"
+android.debug.x86_64 = "bin/libcolyseus_godot.android.x86_64.debug.so"
+android.release.x86_64 = "bin/libcolyseus_godot.android.x86_64.release.so"
+android.debug.arm32 = "bin/libcolyseus_godot.android.arm32.debug.so"
+android.release.arm32 = "bin/libcolyseus_godot.android.arm32.release.so"
+android.debug.arm64 = "bin/libcolyseus_godot.android.arm64.debug.so"
+android.release.arm64 = "bin/libcolyseus_godot.android.arm64.release.so"
