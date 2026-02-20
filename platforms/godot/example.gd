@@ -1,127 +1,116 @@
 extends Node
-## Example script demonstrating Colyseus usage (cross-platform)
-##
-## This example works on both native (Windows/macOS/Linux) and web platforms.
-## Uses ColyseusFactory for platform-aware client/callbacks creation.
+
+# Optional: define your state schema directly in GDScript
+class Item extends Colyseus.Schema:
+	static func definition():
+		return [
+			Colyseus.Schema.Field.new("name", Colyseus.Schema.STRING),
+			Colyseus.Schema.Field.new("value", Colyseus.Schema.NUMBER),
+		]
+
+class Player extends Colyseus.Schema:
+	static func definition():
+		return [
+			Colyseus.Schema.Field.new("x", Colyseus.Schema.NUMBER),
+			Colyseus.Schema.Field.new("y", Colyseus.Schema.NUMBER),
+			Colyseus.Schema.Field.new("isBot", Colyseus.Schema.BOOLEAN),
+			Colyseus.Schema.Field.new("disconnected", Colyseus.Schema.BOOLEAN),
+			Colyseus.Schema.Field.new("items", Colyseus.Schema.ARRAY, Item),
+		]
+	func method_name() -> String:
+		return "Player(x: %s, y: %s, isBot: %s, disconnected: %s, items: %s)" % [self.x, self.y, self.isBot, self.disconnected, self.items]
+
+class TestRoomState extends Colyseus.Schema:
+	static func definition():
+		return [
+			Colyseus.Schema.Field.new("players", Colyseus.Schema.MAP, Player),
+			Colyseus.Schema.Field.new("host", Colyseus.Schema.REF, Player),
+			Colyseus.Schema.Field.new("currentTurn", Colyseus.Schema.STRING),
+		]
 
 # Client and room references (no type hints for cross-platform compatibility)
-var client  # ColyseusClient on native, ColyseusWebClient on web
-var room    # ColyseusRoom on native, ColyseusWebRoom on web
-var callbacks  # ColyseusCallbacks on native, ColyseusWebCallbacks on web
+var client: ColyseusClient;
+var room: ColyseusRoom;    
+var callbacks: ColyseusCallbacks;
+
+# # For web, remove the native references 
+# var client  
+# var room    
+# var callbacks 
 
 func _ready():
 	# Create and connect client using platform-aware factory
-	client = ColyseusFactory.create_client()
-	client.set_endpoint("ws://localhost:2567")
-
+	client = Colyseus.create_client()
+	client.connect_to("ws://localhost:2567")
+	
 	print("Connecting to: ", client.get_endpoint())
-
+	
 	# Join or create a room
 	room = client.join_or_create("test_room")
-
-	# Connect signals
+	
+	# Set state type using our GDScript schema class
 	if room:
+		# Optional: specify the state type
+		room.set_state_type(TestRoomState)
+		
+		# Connect signals
 		room.joined.connect(_on_room_joined)
 		room.state_changed.connect(_on_state_changed)
-		room.message_received.connect(_on_message_received)
 		room.error.connect(_on_room_error)
 		room.left.connect(_on_room_left)
 
 func _on_room_joined():
-	print("✓ Joined room: ", room.get_id())
-	print("  Session ID: ", room.get_session_id())
-	print("  Room name: ", room.get_name())
-
+	print("Joined room: ", room.get_id())
+	
 	# Get callbacks container using platform-aware factory
-	callbacks = ColyseusFactory.get_callbacks(room)
+	callbacks = Colyseus.callbacks(room)
 	
-	# Listen to root state property changes
+	# Listen to state changes
 	callbacks.listen("currentTurn", _on_turn_change)
-	
-	# Listen to collection additions/removals
 	callbacks.on_add("players", _on_player_add)
 	callbacks.on_remove("players", _on_player_remove)
 
-	# Send a message
-	var message = "Hello from Godot!".to_utf8_buffer()
-	room.send_message("add_item", {"name": "MY NEW ITEM"})
-
 func _on_turn_change(current_value, previous_value):
-	print("↻ Turn changed: ", previous_value, " -> ", current_value)
+	print("Turn changed: ", previous_value, " -> ", current_value)
 
-func _on_player_add(player: Dictionary, key: String):
-	print("+ Player joined: ", key)
-	# Listen to nested schema properties
-	callbacks.listen(player, "hp", _on_player_hp_change)
-	# Listen to nested collections
+# func _on_player_add(player: Player, key: String):
+func _on_player_add(player, key: String):
+	# Player is now a typed instance!
+	print("Player joined: ", player.method_name())  # Uses our custom _to_string()
+	# Set up listeners for player properties
 	callbacks.on_add(player, "items", _on_item_add)
+	callbacks.listen(player, "x", _on_player_position_change)
+	callbacks.listen(player, "y", _on_player_position_change)
 
-func _on_player_remove(player: Dictionary, key: String):
-	print("- Player left: ", key)
+func _on_item_add(item, key):
+	print("Item added: ", item)
+
+func _on_player_remove(player, key):
+# func _on_player_remove(player: Player, key: String):
+	print("Player left: ", key, " => ", player)
 
 func _on_player_hp_change(current_hp, previous_hp):
-	print("  HP changed: ", previous_hp, " -> ", current_hp)
+	print("HP changed: ", previous_hp, " -> ", current_hp)
 
-func _on_item_add(item: Dictionary, index: int):
-	print("  Item added at index: ", index, " -> ", item)
-
-	callbacks.listen(item, "name", func(name, _prev): 
-		print("  Item name: ", name))
+func _on_player_position_change(current_pos, previous_pos):
+	print("Position changed")
 
 func _on_state_changed():
-	print("↻ Room state changed")
-	# Access state as Dictionary
+	# Access the typed state
 	var state = room.get_state()
-	if state:
-		print("  State: ", state)
+	print("State changed -> ", state)
 
-func _on_message_received(type, data):
-	# type is the message type (String or int for numeric types)
-	# data is automatically decoded from msgpack to native Godot types:
-	#   - Dictionary for msgpack maps
-	#   - Array for msgpack arrays
-	#   - String, int, float, bool for primitives
-	#   - null for nil
-	#   - PackedByteArray for binary data
-	print("✉ Message received - type: ", type)
+	print("Room session id: ", room.get_session_id())
 
-	# Work directly with native Godot types - no manual decoding needed!
-	if data is Dictionary:
-		print("  Data (Dictionary): ", data)
-		# Access fields directly
-		if data.has("player_name"):
-			print("    Player: ", data["player_name"])
-		if data.has("score"):
-			print("    Score: ", data["score"])
-	elif data is Array:
-		print("  Data (Array): ", data)
-		for item in data:
-			print("    Item: ", item)
-	elif data is String:
-		print("  Data (String): ", data)
-	elif data is int or data is float:
-		print("  Data (Number): ", data)
-	elif data == null:
-		print("  Data: null")
-	else:
-		print("  Data (other): ", typeof(data), " = ", data)
-
-	# Example: Handle specific message types
-	if type == "greeting":
-		print("  → Got a greeting message!")
-	elif type == "game_update":
-		print("  → Got a game update!")
-		if data is Dictionary and data.has("players"):
-			for player in data["players"]:
-				print("    Player update: ", player)
+	var is_host = state.host == state.players[room.get_session_id()]
+	print("Is host: ", is_host)
 
 func _on_room_error(code: int, message: String):
-	printerr("✗ Room error [", code, "]: ", message)
+	printerr("Room error [", code, "]: ", message)
 
 func _on_room_left(code: int, reason: String):
-	print("← Left room [", code, "]: ", reason)
+	print("Left room [", code, "]: ", reason)
 
 func _exit_tree():
-	# Clean up when node is removed
 	if room and room.has_joined():
 		room.leave()
