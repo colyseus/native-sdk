@@ -246,6 +246,13 @@ pub fn build(b: *std.Build) void {
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
     } else if (os_tag == .ios) {
+        // Add iOS SDK paths for cross-compilation (sysroot is required for iOS)
+        if (b.sysroot) |sysroot| {
+            lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
+            lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
+            lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sysroot}) });
+        }
+
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
 
