@@ -4,31 +4,31 @@ extends Node
 ## This example shows how to define your state schema directly in GDScript,
 ## allowing you to access state properties with type safety and custom methods.
 
-class Item extends ColyseusSchema.Schema:
+class Item extends Colyseus.Schema:
 	static func definition():
 		return [
-			ColyseusSchema.Field.new("name", ColyseusSchema.STRING),
-			ColyseusSchema.Field.new("value", ColyseusSchema.NUMBER),
+			Colyseus.Schema.Field.new("name", Colyseus.Schema.STRING),
+			Colyseus.Schema.Field.new("value", Colyseus.Schema.NUMBER),
 		]
 
-class Player extends ColyseusSchema.Schema:
+class Player extends Colyseus.Schema:
 	static func definition():
 		return [
-			ColyseusSchema.Field.new("x", ColyseusSchema.NUMBER),
-			ColyseusSchema.Field.new("y", ColyseusSchema.NUMBER),
-			ColyseusSchema.Field.new("isBot", ColyseusSchema.BOOLEAN),
-			ColyseusSchema.Field.new("disconnected", ColyseusSchema.BOOLEAN),
-			ColyseusSchema.Field.new("items", ColyseusSchema.ARRAY, Item),
+			Colyseus.Schema.Field.new("x", Colyseus.Schema.NUMBER),
+			Colyseus.Schema.Field.new("y", Colyseus.Schema.NUMBER),
+			Colyseus.Schema.Field.new("isBot", Colyseus.Schema.BOOLEAN),
+			Colyseus.Schema.Field.new("disconnected", Colyseus.Schema.BOOLEAN),
+			Colyseus.Schema.Field.new("items", Colyseus.Schema.ARRAY, Item),
 		]
 	func method_name() -> String:
 		return "Player(x: %s, y: %s, isBot: %s, disconnected: %s, items: %s)" % [self.x, self.y, self.isBot, self.disconnected, self.items]
 
-class TestRoomState extends ColyseusSchema.Schema:
+class TestRoomState extends Colyseus.Schema:
 	static func definition():
 		return [
-			ColyseusSchema.Field.new("players", ColyseusSchema.MAP, Player),
-			ColyseusSchema.Field.new("host", ColyseusSchema.REF, Player),
-			ColyseusSchema.Field.new("currentTurn", ColyseusSchema.STRING),
+			Colyseus.Schema.Field.new("players", Colyseus.Schema.MAP, Player),
+			Colyseus.Schema.Field.new("host", Colyseus.Schema.REF, Player),
+			Colyseus.Schema.Field.new("currentTurn", Colyseus.Schema.STRING),
 		]
 
 # Client and room references (no type hints for cross-platform compatibility)

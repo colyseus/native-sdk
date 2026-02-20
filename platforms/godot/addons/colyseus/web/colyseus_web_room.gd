@@ -298,13 +298,13 @@ func _wrap_state_in_schema(data: Dictionary, schema_class) -> Variant:
 	
 	# Populate fields
 	for field in field_defs:
-		if field is ColyseusSchema.Field:
+		if field is Colyseus.Schema.Field:
 			var field_name = field.name
 			if data.has(field_name):
 				var value = data[field_name]
-				if field.type == ColyseusSchema.MAP and field.child_type != null:
+				if field.type == Colyseus.Schema.MAP and field.child_type != null:
 					# Wrap map values
-					var map = ColyseusSchema.Map.new(field.child_type)
+					var map = Colyseus.Map.new(field.child_type)
 					if value is Dictionary:
 						for key in value:
 							var child_value = value[key]
@@ -313,9 +313,9 @@ func _wrap_state_in_schema(data: Dictionary, schema_class) -> Variant:
 							else:
 								map._set_item(key, child_value)
 					instance._set_field(field_name, map)
-				elif field.type == ColyseusSchema.ARRAY and field.child_type != null:
+				elif field.type == Colyseus.Schema.ARRAY and field.child_type != null:
 					# Wrap array values
-					var arr = ColyseusSchema.ArraySchema.new(field.child_type)
+					var arr = Colyseus.ArraySchema.new(field.child_type)
 					if value is Array:
 						for i in range(value.size()):
 							var child_value = value[i]
@@ -324,7 +324,7 @@ func _wrap_state_in_schema(data: Dictionary, schema_class) -> Variant:
 							else:
 								arr._push(child_value)
 					instance._set_field(field_name, arr)
-				elif field.type == ColyseusSchema.REF and field.child_type != null:
+				elif field.type == Colyseus.Schema.REF and field.child_type != null:
 					# Wrap ref value
 					if value is Dictionary:
 						instance._set_field(field_name, _wrap_state_in_schema(value, field.child_type))

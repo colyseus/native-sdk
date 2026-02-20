@@ -48,8 +48,8 @@ zig build -Dtarget=aarch64-macos
 
 To support both native and web platforms seamlessly:
 
-1. Add `ColyseusFactory` as an autoload in your project (Project → Project Settings → Autoload)
-   - Path: `res://addons/colyseus/colyseus_factory.gd`
+1. Add `Colyseus` as an autoload in your project (Project → Project Settings → Autoload)
+   - Path: `res://addons/colyseus/colyseus.gd`
    - Name: `Colyseus`
 
 2. Use the factory to create clients:

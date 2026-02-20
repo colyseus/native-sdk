@@ -89,10 +89,10 @@ func _setup_raw_changes() -> void:
 		_type_registry[0] = _state_type
 	else:
 		# Initialize empty Schema instance for untyped state
-		var root_state = ColyseusSchema.Schema.new()
+		var root_state = Colyseus.Schema.new()
 		root_state.__ref_id = 0
 		_schema_registry[0] = root_state
-		_type_registry[0] = ColyseusSchema.Schema
+		_type_registry[0] = Colyseus.Schema
 
 	# Create JavaScript callback for raw changes
 	_raw_changes_callback = JavaScriptBridge.create_callback(func(args: Array):
@@ -153,16 +153,19 @@ func on_add(target, property_or_callback, callback = null) -> int:
 	var ref_id: int
 	var field_name: String
 	var cb: Callable
+	var parent_instance = null
 	
 	if callback == null:
 		# on_add("collection", callback) form - root state collection
 		ref_id = 0
 		field_name = str(target)
 		cb = property_or_callback
+		parent_instance = _schema_registry.get(0)
 	else:
 		# on_add(entity, "collection", callback) form - entity collection
 		field_name = str(property_or_callback)
 		cb = callback
+		parent_instance = target
 		
 		# Get refId from entity
 		ref_id = _get_ref_id(target)
@@ -173,7 +176,35 @@ func on_add(target, property_or_callback, callback = null) -> int:
 	# Register on the parent; will be transferred to collection when discovered
 	_register_collection_callback(ref_id, field_name, OP_ADD, cb, handle)
 	
+	# Fire retroactive callbacks for existing items if the collection already exists
+	_fire_retroactive_on_add(parent_instance, field_name, cb)
+	
 	return handle
+
+## Fire callbacks for existing items in a collection (for late-registered listeners)
+func _fire_retroactive_on_add(parent, field_name: String, cb: Callable) -> void:
+	if parent == null:
+		return
+	
+	# Get the collection from the parent
+	var collection = null
+	if parent is Colyseus.Schema:
+		collection = parent._get_field(field_name)
+	elif parent is Colyseus.Map:
+		collection = parent.get_item(field_name)
+	
+	if collection == null:
+		return
+	
+	# Fire callbacks for existing items
+	if collection is Colyseus.Map:
+		for key in collection.keys():
+			var value = collection.get_item(key)
+			cb.call(value, key)
+	elif collection is Colyseus.ArraySchema:
+		for i in range(collection.size()):
+			var value = collection.at(i)
+			cb.call(value, i)
 
 ## Listen to removals on a collection (Map or Array)
 ## Usage: callbacks.on_remove("collectionName", callback) - for root state collections
@@ -226,11 +257,11 @@ func remove(handle: int) -> void:
 func _get_ref_id(entity) -> int:
 	if entity is Dictionary and entity.has("__ref_id"):
 		return int(entity["__ref_id"])
-	elif entity is ColyseusSchema.Schema:
+	elif entity is Colyseus.Schema:
 		return entity.__ref_id
-	elif entity is ColyseusSchema.Map:
+	elif entity is Colyseus.Map:
 		return entity.__ref_id
-	elif entity is ColyseusSchema.ArraySchema:
+	elif entity is Colyseus.ArraySchema:
 		return entity.__ref_id
 	return -1
 
@@ -369,29 +400,29 @@ func _create_child_instance(parent, field_name: String, child_ref_id: int, paren
 	
 	if field_def != null:
 		# Typed state: use field definition
-		if field_def.type == ColyseusSchema.MAP:
-			child_instance = ColyseusSchema.Map.new(field_def.child_type)
+		if field_def.type == Colyseus.Schema.MAP:
+			child_instance = Colyseus.Map.new(field_def.child_type)
 			child_type = field_def.child_type
 			is_collection = true
-		elif field_def.type == ColyseusSchema.ARRAY:
-			child_instance = ColyseusSchema.ArraySchema.new(field_def.child_type)
+		elif field_def.type == Colyseus.Schema.ARRAY:
+			child_instance = Colyseus.ArraySchema.new(field_def.child_type)
 			child_type = field_def.child_type
 			is_collection = true
-		elif field_def.type == ColyseusSchema.REF or field_def.has_schema_child():
+		elif field_def.type == Colyseus.Schema.REF or field_def.has_schema_child():
 			if field_def.child_type != null:
 				child_instance = field_def.child_type.new()
 				child_type = field_def.child_type
 	else:
 		# Untyped state: use ref_type from JavaScript
 		if ref_type == REF_TYPE_MAP:
-			child_instance = ColyseusSchema.Map.new(null)
+			child_instance = Colyseus.Map.new(null)
 			is_collection = true
 		elif ref_type == REF_TYPE_ARRAY:
-			child_instance = ColyseusSchema.ArraySchema.new(null)
+			child_instance = Colyseus.ArraySchema.new(null)
 			is_collection = true
 		else:
 			# Default to generic Schema
-			child_instance = ColyseusSchema.Schema.new()
+			child_instance = Colyseus.Schema.new()
 	
 	if child_instance:
 		child_instance.__ref_id = child_ref_id
@@ -444,11 +475,11 @@ func _transfer_collection_callbacks(parent, field_name: String, collection_ref_i
 ## Get field definition from parent's schema
 func _get_field_def(parent, field_name: String):
 	var parent_ref_id = -1
-	if parent is ColyseusSchema.Schema:
+	if parent is Colyseus.Schema:
 		parent_ref_id = parent.__ref_id
-	elif parent is ColyseusSchema.Map:
+	elif parent is Colyseus.Map:
 		parent_ref_id = parent.__ref_id
-	elif parent is ColyseusSchema.ArraySchema:
+	elif parent is Colyseus.ArraySchema:
 		parent_ref_id = parent.__ref_id
 	
 	if parent_ref_id < 0:
@@ -459,21 +490,21 @@ func _get_field_def(parent, field_name: String):
 		return null
 	
 	# For collections, the type registry stores the child type
-	if parent is ColyseusSchema.Map or parent is ColyseusSchema.ArraySchema:
+	if parent is Colyseus.Map or parent is Colyseus.ArraySchema:
 		# The child type is stored directly
-		return ColyseusSchema.Field.new(field_name, ColyseusSchema.REF, parent_type)
+		return Colyseus.Schema.Field.new(field_name, Colyseus.Schema.REF, parent_type)
 	
 	# For schemas, look up the field definition
 	if parent_type.has_method("definition"):
 		for field_def in parent_type.definition():
-			if field_def is ColyseusSchema.Field and field_def.name == field_name:
+			if field_def is Colyseus.Schema.Field and field_def.name == field_name:
 				return field_def
 	
 	return null
 
 ## Apply a change to a schema instance
 func _apply_schema_change(target, field_name: String, op: int, val_type: int, val_data, prev_type: int, prev_data) -> void:
-	if not target is ColyseusSchema.Schema:
+	if not target is Colyseus.Schema:
 		return
 	
 	var value = _resolve_value(val_type, val_data)
@@ -483,7 +514,7 @@ func _apply_schema_change(target, field_name: String, op: int, val_type: int, va
 func _apply_collection_change(target, field_name: String, dynamic_index, op: int, val_type: int, val_data, prev_type: int, prev_data) -> void:
 	var key = dynamic_index if dynamic_index != null else field_name
 	
-	if target is ColyseusSchema.Map:
+	if target is Colyseus.Map:
 		var key_str = str(key)
 		if (op & OP_DELETE) == OP_DELETE:
 			target._remove_item(key_str)
@@ -491,8 +522,14 @@ func _apply_collection_change(target, field_name: String, dynamic_index, op: int
 			var value = _resolve_value(val_type, val_data)
 			target._set_item(key_str, value)
 	
-	elif target is ColyseusSchema.ArraySchema:
-		var index = int(key) if str(key).is_valid_int() else -1
+	elif target is Colyseus.ArraySchema:
+		var index = -1
+		if key is int:
+			index = key
+		elif key is float:
+			index = int(key)
+		elif key != null and str(key).is_valid_int():
+			index = int(key)
 		if index < 0:
 			return
 		
