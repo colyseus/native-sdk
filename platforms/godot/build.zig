@@ -258,8 +258,8 @@ pub fn build(b: *std.Build) void {
         }
 
         // Use weak framework linking to avoid dependency resolution issues
-        lib.root_module.linkFramework(.{ .name = "CoreFoundation", .weak = true });
-        lib.root_module.linkFramework(.{ .name = "Security", .weak = true });
+        lib.root_module.linkFramework("CoreFoundation", .{ .weak = true });
+        lib.root_module.linkFramework("Security", .{ .weak = true });
 
         // Set the install_name to match Godot's .framework bundle structure
         lib.install_name = b.fmt("@rpath/lib{s}.framework/lib{s}", .{ lib_name, lib_name });
