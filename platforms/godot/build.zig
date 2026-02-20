@@ -253,12 +253,14 @@ pub fn build(b: *std.Build) void {
         // For iOS: set up SDK paths for cross-compilation
         if (b.sysroot) |sysroot| {
             lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
-            // Directly link libSystem.tbd to bypass Zig's library search issue
-            lib.addObjectFile(.{ .cwd_relative = b.fmt("{s}/usr/lib/libSystem.tbd", .{sysroot}) });
         }
 
+        // Link frameworks - these depend on libSystem which should be resolved via sysroot
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
+
+        // Explicitly link libSystem - Zig should find it in sysroot/usr/lib
+        lib.linkSystemLibrary("System");
 
         // Set the install_name to match Godot's .framework bundle structure
         lib.install_name = b.fmt("@rpath/lib{s}.framework/lib{s}", .{ lib_name, lib_name });
