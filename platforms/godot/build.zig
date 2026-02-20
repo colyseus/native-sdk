@@ -57,7 +57,6 @@ pub fn build(b: *std.Build) void {
 
     // ========================================================================
     // Build Zig modules for HTTP and URL parsing (replaces libcurl)
-    // These are built separately since libcolyseus.a doesn't include them
     // ========================================================================
     const http_zig_module = b.createModule(.{
         .root_source_file = b.path("../../src/network/http.zig"),
@@ -104,7 +103,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .dynamic,
     });
 
-    // Add C source files
+    // Add C source files - Godot extension sources
     lib.addCSourceFiles(.{
         .files = &.{
             "src/register_types.c",
@@ -116,9 +115,42 @@ pub fn build(b: *std.Build) void {
             "src/colyseus_gdscript_schema.c", // GDScript schema bridge
             "src/msgpack_variant.c",
             "src/msgpack_encoder.c",
-            // Dynamic schema support (for GDScript-defined schemas)
+        },
+        .flags = &.{
+            "-Wall",
+            "-Wextra",
+            "-Wno-unused-parameter",
+        },
+    });
+
+    // Add colyseus core C sources directly (instead of linking pre-built libcolyseus.a)
+    // This ensures the code is compiled for the correct target platform (iOS, macOS, etc.)
+    lib.addCSourceFiles(.{
+        .files = &.{
+            // Core
+            "../../src/common/settings.c",
+            "../../src/client.c",
+            "../../src/room.c",
+            // Network (websocket only - HTTP is now in Zig)
+            "../../src/network/websocket_transport.c",
+            // Schema
+            "../../src/schema/decode.c",
+            "../../src/schema/ref_tracker.c",
+            "../../src/schema/collections.c",
+            "../../src/schema/decoder.c",
+            "../../src/schema/serializer.c",
+            "../../src/schema/callbacks.c",
             "../../src/schema/dynamic_schema.c",
-            // wslay sources (needed because libcolyseus.a doesn't include them)
+            // Utils
+            "../../src/utils/strUtil.c",
+            "../../src/utils/sha1_c.c",
+            // Auth
+            "../../src/auth/auth.c",
+            "../../src/auth/secure_storage.c",
+            // Third-party sources
+            "../../third_party/sds/sds.c",
+            "../../third_party/cJSON/cJSON.c",
+            // wslay sources
             "../../third_party/wslay/lib/wslay_event.c",
             "../../third_party/wslay/lib/wslay_frame.c",
             "../../third_party/wslay/lib/wslay_net.c",
@@ -128,12 +160,16 @@ pub fn build(b: *std.Build) void {
             "-Wall",
             "-Wextra",
             "-Wno-unused-parameter",
+            "-DHAVE_CONFIG_H",
         },
     });
 
     // Add include paths
     lib.addIncludePath(b.path("../../include"));
+    lib.addIncludePath(b.path("../../src")); // For internal headers
     lib.addIncludePath(b.path("../../third_party/uthash/src"));
+    lib.addIncludePath(b.path("../../third_party/sds"));
+    lib.addIncludePath(b.path("../../third_party/cJSON"));
     lib.addIncludePath(b.path("../../third_party/wslay/lib/includes"));
     lib.addIncludePath(b.path("../../third_party/wslay/lib"));
     lib.addIncludePath(b.path("include"));
@@ -146,10 +182,27 @@ pub fn build(b: *std.Build) void {
         }
     }
 
-    // Link against the colyseus static library
-    lib.addObjectFile(b.path("../../zig-out/lib/libcolyseus.a"));
+    // Generate wslay config header based on target platform
+    const is_windows = os_tag == .windows;
+    const wslay_config_h: *std.Build.Step.ConfigHeader = if (is_windows)
+        b.addConfigHeader(.{
+            .style = .blank,
+            .include_path = "config.h",
+        }, .{
+            .HAVE_WINSOCK2_H = 1,
+        })
+    else
+        b.addConfigHeader(.{
+            .style = .blank,
+            .include_path = "config.h",
+        }, .{
+            .HAVE_ARPA_INET_H = 1,
+            .HAVE_NETINET_IN_H = 1,
+        });
+    lib.addConfigHeader(wslay_config_h);
+    lib.addIncludePath(wslay_config_h.getOutput().dirname());
 
-    // Link Zig HTTP and URL parsing libraries (replaces libcurl)
+    // Link Zig HTTP and URL parsing libraries
     lib.linkLibrary(http_object);
     lib.linkLibrary(strutil_object);
 
@@ -161,6 +214,7 @@ pub fn build(b: *std.Build) void {
         .PACKAGE_VERSION = "1.1.1",
     });
     lib.addConfigHeader(wslay_version_h);
+    lib.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
 
     // Link against system libraries
     lib.linkLibC();
@@ -179,6 +233,11 @@ pub fn build(b: *std.Build) void {
         }
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
+
+        // Set the install_name to match Godot's .framework bundle structure
+        // Godot wraps iOS dylibs into .framework bundles, so the install_name must
+        // include the framework path, otherwise the app will fail to load at runtime
+        lib.install_name = b.fmt("@rpath/lib{s}.framework/lib{s}", .{ lib_name, lib_name });
     } else if (os_tag == .linux) {
         lib.linkSystemLibrary("pthread");
         lib.linkSystemLibrary("m");
