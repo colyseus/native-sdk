@@ -242,9 +242,11 @@ pub fn build(b: *std.Build) void {
 
     // Link platform-specific libraries (no curl needed - using Zig's std.http)
     if (os_tag == .macos) {
-        // Add macOS SDK framework search paths when sysroot is provided (cross-compilation)
+        // Add macOS SDK framework and include paths when sysroot is provided (cross-compilation)
         if (b.sysroot) |sysroot| {
             lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
+            // Add usr/local/include for libDER headers required by Security framework
+            lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/local/include", .{sysroot}) });
         }
         lib.linkSystemLibrary("pthread");
         lib.linkFramework("CoreFoundation");
@@ -254,6 +256,8 @@ pub fn build(b: *std.Build) void {
         if (b.sysroot) |sysroot| {
             lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
             lib.root_module.addLibraryPath(.{ .cwd_relative = "/usr/lib" });
+            // Add usr/local/include for libDER headers required by Security framework
+            lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/local/include", .{sysroot}) });
         }
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
