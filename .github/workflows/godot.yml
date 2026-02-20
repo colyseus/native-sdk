@@ -50,36 +50,25 @@ jobs:
         with:
           version: 0.15.1
 
-      - name: Get macOS/iOS SDK and toolchain paths
-        id: apple-sdk
-        run: |
-          echo "macos=$(xcrun --show-sdk-path)" >> $GITHUB_OUTPUT
-          echo "ios=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_OUTPUT
-          echo "toolchain=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/local/include" >> $GITHUB_OUTPUT
+      - name: Get iOS SDK path
+        id: ios-sdk
+        run: echo "path=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_OUTPUT
 
       - name: Build macOS arm64 (debug)
         working-directory: platforms/godot
-        env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.apple-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=aarch64-macos -Doptimize=Debug --sysroot "${{ steps.apple-sdk.outputs.macos }}"
+        run: zig build -Dtarget=aarch64-macos -Doptimize=Debug
 
       - name: Build macOS arm64 (release)
         working-directory: platforms/godot
-        env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.apple-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe --sysroot "${{ steps.apple-sdk.outputs.macos }}"
+        run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
 
       - name: Build iOS arm64 (debug)
         working-directory: platforms/godot
-        env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.apple-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.apple-sdk.outputs.ios }}"
+        run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
       - name: Build iOS arm64 (release)
         working-directory: platforms/godot
-        env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.apple-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.apple-sdk.outputs.ios }}"
+        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
       - name: Upload macOS and iOS binaries
         uses: actions/upload-artifact@v4

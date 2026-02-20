@@ -8,23 +8,6 @@ pub fn build(b: *std.Build) void {
     const os_tag = target.result.os.tag;
     const arch = target.result.cpu.arch;
 
-    // Auto-detect iOS SDK sysroot if targeting iOS and no sysroot was provided
-    if (os_tag == .ios and b.sysroot == null) {
-        const result = std.process.Child.run(.{
-            .allocator = b.allocator,
-            .argv = &.{ "xcrun", "--sdk", "iphoneos", "--show-sdk-path" },
-        }) catch |err| {
-            std.debug.print("Warning: Failed to detect iOS SDK path: {}\n", .{err});
-            std.debug.print("You may need to pass --sysroot manually\n", .{});
-            @panic("iOS SDK detection failed");
-        };
-
-        if (result.term.Exited == 0 and result.stdout.len > 0) {
-            const sdk_path = std.mem.trimRight(u8, result.stdout, "\n\r");
-            b.sysroot = sdk_path;
-        }
-    }
-
     // Auto-detect Android NDK sysroot if targeting Android and no sysroot was provided
     if (os_tag == .linux and target.result.abi == .android and b.sysroot == null) {
         if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME")) |ndk_home| {
@@ -242,31 +225,27 @@ pub fn build(b: *std.Build) void {
 
     // Link platform-specific libraries (no curl needed - using Zig's std.http)
     if (os_tag == .macos) {
-        // Add macOS SDK framework and include paths when sysroot is provided (cross-compilation)
+        lib.linkSystemLibrary("pthread");
+
+        // Add macOS SDK paths for cross-compilation
         if (b.sysroot) |sysroot| {
             lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
-            // Add usr/local/include for libDER headers required by Security framework
-            lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/local/include", .{sysroot}) });
+            lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
+            lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sysroot}) });
+        } else {
+            // Try to auto-detect Xcode SDK path on macOS host
+            const builtin = @import("builtin");
+            if (builtin.os.tag == .macos) {
+                const sdk_path = "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";
+                lib.root_module.addFrameworkPath(.{ .cwd_relative = sdk_path ++ "/System/Library/Frameworks" });
+                lib.addSystemIncludePath(.{ .cwd_relative = sdk_path ++ "/usr/include" });
+                lib.root_module.addLibraryPath(.{ .cwd_relative = sdk_path ++ "/usr/lib" });
+            }
         }
-        // Add Xcode toolchain include path for libDER headers (from XCODE_TOOLCHAIN_INCLUDE env var)
-        if (std.process.getEnvVarOwned(b.allocator, "XCODE_TOOLCHAIN_INCLUDE")) |toolchain_include| {
-            lib.addSystemIncludePath(.{ .cwd_relative = toolchain_include });
-        } else |_| {}
-        lib.linkSystemLibrary("pthread");
+
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
     } else if (os_tag == .ios) {
-        // Add iOS SDK framework and library search paths (relative to sysroot)
-        if (b.sysroot) |sysroot| {
-            lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
-            lib.root_module.addLibraryPath(.{ .cwd_relative = "/usr/lib" });
-            // Add usr/local/include for libDER headers required by Security framework
-            lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/local/include", .{sysroot}) });
-        }
-        // Add Xcode toolchain include path for libDER headers (from XCODE_TOOLCHAIN_INCLUDE env var)
-        if (std.process.getEnvVarOwned(b.allocator, "XCODE_TOOLCHAIN_INCLUDE")) |toolchain_include| {
-            lib.addSystemIncludePath(.{ .cwd_relative = toolchain_include });
-        } else |_| {}
         lib.linkFramework("CoreFoundation");
         lib.linkFramework("Security");
 
