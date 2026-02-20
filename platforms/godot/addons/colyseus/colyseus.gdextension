@@ -3,7 +3,7 @@ entry_symbol = "colyseus_sdk_init"
 compatibility_minimum = "4.1"
 
 [libraries]
-; macOS (universal binary)
+; macOS (arm64 only)
 macos.debug = "bin/libcolyseus_godot.macos.debug.dylib"
 macos.release = "bin/libcolyseus_godot.macos.release.dylib"
 

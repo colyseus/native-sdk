@@ -50,78 +50,36 @@ jobs:
         with:
           version: 0.15.1
 
-      - name: Get macOS SDK and toolchain paths
-        id: macos-sdk
+      - name: Get macOS/iOS SDK and toolchain paths
+        id: apple-sdk
         run: |
-          echo "path=$(xcrun --show-sdk-path)" >> $GITHUB_OUTPUT
+          echo "macos=$(xcrun --show-sdk-path)" >> $GITHUB_OUTPUT
+          echo "ios=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_OUTPUT
           echo "toolchain=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/local/include" >> $GITHUB_OUTPUT
-
-      - name: Build macOS x86_64 (debug)
-        working-directory: platforms/godot
-        env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=x86_64-macos -Doptimize=Debug --sysroot "${{ steps.macos-sdk.outputs.path }}"
-
-      - name: Rename macOS x86_64 debug binary
-        working-directory: platforms/godot/addons/colyseus/bin
-        run: mv libcolyseus_godot.macos.debug.dylib libcolyseus_godot.macos.debug.x86_64.dylib
-
-      - name: Build macOS x86_64 (release)
-        working-directory: platforms/godot
-        env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSafe --sysroot "${{ steps.macos-sdk.outputs.path }}"
-
-      - name: Rename macOS x86_64 release binary
-        working-directory: platforms/godot/addons/colyseus/bin
-        run: mv libcolyseus_godot.macos.release.dylib libcolyseus_godot.macos.release.x86_64.dylib
 
       - name: Build macOS arm64 (debug)
         working-directory: platforms/godot
         env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=aarch64-macos -Doptimize=Debug --sysroot "${{ steps.macos-sdk.outputs.path }}"
-
-      - name: Rename macOS arm64 debug binary
-        working-directory: platforms/godot/addons/colyseus/bin
-        run: mv libcolyseus_godot.macos.debug.dylib libcolyseus_godot.macos.debug.arm64.dylib
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.apple-sdk.outputs.toolchain }}
+        run: zig build -Dtarget=aarch64-macos -Doptimize=Debug --sysroot "${{ steps.apple-sdk.outputs.macos }}"
 
       - name: Build macOS arm64 (release)
         working-directory: platforms/godot
         env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe --sysroot "${{ steps.macos-sdk.outputs.path }}"
-
-      - name: Rename macOS arm64 release binary
-        working-directory: platforms/godot/addons/colyseus/bin
-        run: mv libcolyseus_godot.macos.release.dylib libcolyseus_godot.macos.release.arm64.dylib
-
-      - name: Create macOS universal binaries
-        working-directory: platforms/godot/addons/colyseus/bin
-        run: |
-          lipo -create -output libcolyseus_godot.macos.debug.dylib \
-            libcolyseus_godot.macos.debug.x86_64.dylib \
-            libcolyseus_godot.macos.debug.arm64.dylib
-          lipo -create -output libcolyseus_godot.macos.release.dylib \
-            libcolyseus_godot.macos.release.x86_64.dylib \
-            libcolyseus_godot.macos.release.arm64.dylib
-          rm -f libcolyseus_godot.macos.*.x86_64.dylib libcolyseus_godot.macos.*.arm64.dylib
-
-      - name: Get iOS SDK path
-        id: ios-sdk
-        run: echo "path=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_OUTPUT
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.apple-sdk.outputs.toolchain }}
+        run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe --sysroot "${{ steps.apple-sdk.outputs.macos }}"
 
       - name: Build iOS arm64 (debug)
         working-directory: platforms/godot
         env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.ios-sdk.outputs.path }}"
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.apple-sdk.outputs.toolchain }}
+        run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.apple-sdk.outputs.ios }}"
 
       - name: Build iOS arm64 (release)
         working-directory: platforms/godot
         env:
-          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.macos-sdk.outputs.toolchain }}
-        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.ios-sdk.outputs.path }}"
+          XCODE_TOOLCHAIN_INCLUDE: ${{ steps.apple-sdk.outputs.toolchain }}
+        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.apple-sdk.outputs.ios }}"
 
       - name: Upload macOS and iOS binaries
         uses: actions/upload-artifact@v4
@@ -308,7 +266,7 @@ jobs:
             3. Enable the plugin in Project Settings > Plugins
             
             ### Supported Platforms
-            - macOS (universal: x86_64 + arm64)
+            - macOS (arm64)
             - iOS (arm64)
             - Windows (x86_64)
             - Linux (x86_64)
