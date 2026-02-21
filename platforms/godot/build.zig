@@ -253,9 +253,12 @@ pub fn build(b: *std.Build) void {
         // For iOS: set up SDK paths for cross-compilation
         if (b.sysroot) |sysroot| {
             lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
-            // Directly link libSystem.tbd to work around Zig's library search issue
-            lib.addObjectFile(.{ .cwd_relative = b.fmt("{s}/usr/lib/libSystem.tbd", .{sysroot}) });
+            // Add library search path for libSystem
+            lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sysroot}) });
         }
+
+        // For iOS dynamic library: don't link libc at build time, symbols resolve at runtime
+        lib.root_module.link_libc = false;
 
         // Use weak framework linking to avoid dependency resolution issues
         lib.root_module.linkFramework("CoreFoundation", .{ .weak = true });
