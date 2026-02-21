@@ -62,18 +62,20 @@ jobs:
         working-directory: platforms/godot
         run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
 
-      - name: Build iOS arm64 (debug)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.ios-sdk.outputs.path }}"
+      # TODO: iOS builds disabled due to Zig 0.15 bug - unable to find libSystem in iOS sysroot
+      # See: https://github.com/ziglang/zig/issues (file bug report)
+      # - name: Build iOS arm64 (debug)
+      #   working-directory: platforms/godot
+      #   run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
-      - name: Build iOS arm64 (release)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.ios-sdk.outputs.path }}"
+      # - name: Build iOS arm64 (release)
+      #   working-directory: platforms/godot
+      #   run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
-      - name: Upload macOS and iOS binaries
+      - name: Upload macOS binaries
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-macos-ios
+          name: binaries-macos
           path: platforms/godot/addons/colyseus/bin/*.dylib
 
   build-linux:
@@ -210,10 +212,10 @@ jobs:
       - name: Create bin directory
         run: mkdir -p platforms/godot/addons/colyseus/bin
 
-      - name: Download macOS and iOS binaries
+      - name: Download macOS binaries
         uses: actions/download-artifact@v4
         with:
-          name: binaries-macos-ios
+          name: binaries-macos
           path: platforms/godot/addons/colyseus/bin
 
       - name: Download Linux binaries
@@ -256,10 +258,11 @@ jobs:
             
             ### Supported Platforms
             - macOS (arm64)
-            - iOS (arm64)
             - Windows (x86_64)
             - Linux (x86_64)
             - Android (arm32, arm64, x86_64)
+            
+            Note: iOS builds are currently failing to build via CI.
           files: platforms/godot/colyseus-godot-${{ needs.check-version.outputs.version }}.zip
           draft: false
           prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}
