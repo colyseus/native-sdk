@@ -130,6 +130,14 @@ jobs:
         working-directory: platforms/godot
         run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
 
+      - name: Build Windows x86_32 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86-windows-gnu -Doptimize=Debug
+
+      - name: Build Windows x86_32 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSafe
+
       - name: Upload Windows binaries
         uses: actions/upload-artifact@v4
         with:
@@ -259,7 +267,7 @@ jobs:
             ### Supported Platforms
             - Web
             - macOS (arm64)
-            - Windows (x86_64)
+            - Windows (x86_32, x86_64)
             - Linux (x86_64)
             - Android (arm32, arm64, x86_64)
             

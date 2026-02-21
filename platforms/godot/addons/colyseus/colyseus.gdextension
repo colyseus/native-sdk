@@ -11,7 +11,9 @@ macos.release = "bin/libcolyseus_godot.macos.release.dylib"
 ios.debug.arm64 = "bin/libcolyseus_godot.ios.arm64.debug.dylib"
 ios.release.arm64 = "bin/libcolyseus_godot.ios.arm64.release.dylib"
 
-; Windows (x86_64 only)
+; Windows (x86_32 and x86_64)
+windows.debug.x86_32 = "bin/colyseus_godot.windows.x86.debug.dll"
+windows.release.x86_32 = "bin/colyseus_godot.windows.x86.release.dll"
 windows.debug.x86_64 = "bin/colyseus_godot.windows.x86_64.debug.dll"
 windows.release.x86_64 = "bin/colyseus_godot.windows.x86_64.release.dll"
 
