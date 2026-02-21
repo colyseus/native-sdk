@@ -145,10 +145,6 @@ static colyseus_dynamic_field_t* parse_field_from_variant(Variant* field_variant
     /* Determine the field type enum */
     colyseus_field_type_t field_type = colyseus_field_type_from_string(field_type_str);
     
-    printf("[GDScriptSchema] Parsed field: name='%s', type='%s' (enum=%d)\n", 
-           field_name, field_type_str, field_type);
-    fflush(stdout);
-    
     /* Create the dynamic field */
     colyseus_dynamic_field_t* field = colyseus_dynamic_field_create(
         field_index, field_name, field_type, field_type_str);
@@ -216,8 +212,6 @@ gdscript_schema_context_t* gdscript_schema_context_create(GDExtensionConstVarian
     GDExtensionVariantType var_type = api.variant_get_type((GDExtensionVariantPtr)script_variant);
     
     if (var_type != GDEXTENSION_VARIANT_TYPE_OBJECT) {
-        printf("[GDScriptSchema] Error: Expected Object type, got %d\n", var_type);
-        fflush(stdout);
         free(ctx);
         return NULL;
     }
@@ -243,9 +237,6 @@ gdscript_schema_context_t* gdscript_schema_context_create(GDExtensionConstVarian
     destructors.string_name_destructor(&definition_method);
     
     if (error.error != GDEXTENSION_CALL_OK) {
-        printf("[GDScriptSchema] Failed to call definition() on class (error=%d)\n", error.error);
-        fflush(stdout);
-        
         /* Try calling new() first and then definition() on instance */
         Variant instance_result;
         if (variant_call_method(&script_as_variant, "new", NULL, 0, &instance_result)) {
@@ -259,17 +250,12 @@ gdscript_schema_context_t* gdscript_schema_context_create(GDExtensionConstVarian
     destructors.variant_destroy(&script_as_variant);
     
     if (error.error != GDEXTENSION_CALL_OK) {
-        printf("[GDScriptSchema] Could not get definition from class\n");
-        fflush(stdout);
         free(ctx);
         return NULL;
     }
     
     /* Parse the definition array */
     int64_t field_count = get_array_size_from_variant(&definition_result);
-    
-    printf("[GDScriptSchema] Found %lld fields in definition\n", (long long)field_count);
-    fflush(stdout);
     
     /* Create dynamic vtable */
     ctx->vtable = colyseus_dynamic_vtable_create("GDScriptSchema");
@@ -310,9 +296,6 @@ gdscript_schema_context_t* gdscript_schema_context_create(GDExtensionConstVarian
         ctx->script_class);
     
     destructors.variant_destroy(&definition_result);
-    
-    printf("[GDScriptSchema] Created context with %d fields\n", ctx->vtable->dyn_field_count);
-    fflush(stdout);
     
     return ctx;
 }
@@ -383,8 +366,6 @@ void* gdscript_create_instance(const colyseus_dynamic_vtable_t* vtable, void* co
     /* Call new() to create an instance */
     Variant instance_variant;
     if (!variant_call_method(&script_variant, "new", NULL, 0, &instance_variant)) {
-        printf("[GDScriptSchema] Failed to call new() on script class\n");
-        fflush(stdout);
         destructors.variant_destroy(&script_variant);
         return NULL;
     }
@@ -403,9 +384,6 @@ void* gdscript_create_instance(const colyseus_dynamic_vtable_t* vtable, void* co
     }
     
     destructors.variant_destroy(&instance_variant);
-    
-    printf("[GDScriptSchema] Created GDScript instance: %p\n", (void*)result);
-    fflush(stdout);
     
     return result;
 }
