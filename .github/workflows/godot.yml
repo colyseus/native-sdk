@@ -257,6 +257,7 @@ jobs:
             3. Enable the plugin in Project Settings > Plugins
             
             ### Supported Platforms
+            - Web
             - macOS (arm64)
             - Windows (x86_64)
             - Linux (x86_64)
