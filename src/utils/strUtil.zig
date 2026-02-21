@@ -1,9 +1,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-// Use c_allocator (wraps malloc/free) for iOS compatibility
-// GeneralPurposeAllocator uses mmap which has issues on iOS when used globally
-const allocator = std.heap.c_allocator;
+// Select allocator based on target platform
+// - Android/iOS: use page_allocator (no libc dependency, Zig can't provide libc for these)
+// - Other platforms: use c_allocator (more efficient for small allocations)
+const builtin = @import("builtin");
+const is_android = builtin.os.tag == .linux and builtin.abi == .android;
+const is_ios = builtin.os.tag == .ios;
+const allocator = if (is_android or is_ios) std.heap.page_allocator else std.heap.c_allocator;
 
 pub const colyseus_url_parts_t = extern struct {
     scheme: [*c]u8,

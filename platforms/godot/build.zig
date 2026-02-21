@@ -8,21 +8,10 @@ pub fn build(b: *std.Build) void {
     const os_tag = target.result.os.tag;
     const arch = target.result.cpu.arch;
 
-    // Auto-detect Android NDK sysroot if targeting Android and no sysroot was provided
-    if (os_tag == .linux and target.result.abi == .android and b.sysroot == null) {
-        if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME")) |ndk_home| {
-            const builtin = @import("builtin");
-            const host_os = builtin.os.tag;
-            const ndk_host = switch (host_os) {
-                .macos => "darwin-x86_64",
-                .linux => "linux-x86_64",
-                .windows => "windows-x86_64",
-                else => @panic("Unsupported host OS for Android NDK"),
-            };
-            b.sysroot = b.fmt("{s}/toolchains/llvm/prebuilt/{s}/sysroot", .{ ndk_home, ndk_host });
-        } else |_| {
-            std.debug.print("Warning: ANDROID_NDK_HOME not set. You may need to pass --sysroot manually\n", .{});
-        }
+    // For non-Android targets, auto-detect sysroot if needed
+    // Note: Android is handled differently - we don't set sysroot to avoid Zig trying to provide libc
+    if (os_tag == .linux and target.result.abi != .android and b.sysroot == null) {
+        // Only set sysroot for non-Android Linux targets if needed
     }
 
     const is_android = target.result.abi == .android;
@@ -59,8 +48,10 @@ pub fn build(b: *std.Build) void {
     });
     const msgpack_module = msgpack_dep.module("msgpack");
 
-    // For iOS: disable libc linking on msgpack module to work around Zig's libSystem search issue
-    if (os_tag == .ios) {
+    // For iOS and Android: disable libc linking on msgpack module
+    // iOS: works around Zig's libSystem search issue
+    // Android: Zig cannot provide Bionic libc
+    if (os_tag == .ios or is_android) {
         msgpack_module.link_libc = false;
     }
 
@@ -278,14 +269,12 @@ pub fn build(b: *std.Build) void {
         // Set the install_name to match Godot's .framework bundle structure
         lib.install_name = b.fmt("@rpath/lib{s}.framework/lib{s}", .{ lib_name, lib_name });
     } else if (is_android) {
-        // For Android: don't use Zig's libc, rely on NDK sysroot instead
-        // Zig cannot provide Bionic libc, symbols resolve at runtime on device
+        // For Android: Zig cannot provide Bionic libc, so we configure NDK paths manually
+        // This avoids setting b.sysroot which would trigger Zig's libc provision
         lib.root_module.link_libc = false;
         http_zig_module.link_libc = false;
         strutil_zig_module.link_libc = false;
 
-        // Add Android NDK library search paths relative to sysroot
-        // Note: Paths must NOT include sysroot prefix - Zig prepends it automatically
         const android_triple = switch (arch) {
             .x86 => "i686-linux-android",
             .x86_64 => "x86_64-linux-android",
@@ -294,10 +283,32 @@ pub fn build(b: *std.Build) void {
             else => @panic("Unsupported Android architecture"),
         };
         const api_level = "21";
-        lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("/usr/lib/{s}/{s}", .{ android_triple, api_level }) });
-        lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("/usr/lib/{s}", .{ android_triple }) });
-        lib.linkSystemLibrary("log");
-        lib.linkSystemLibrary("android");
+
+        // Get NDK paths from environment or sysroot
+        if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME")) |ndk_home| {
+            const builtin = @import("builtin");
+            const ndk_host = switch (builtin.os.tag) {
+                .macos => "darwin-x86_64",
+                .linux => "linux-x86_64",
+                .windows => "windows-x86_64",
+                else => @panic("Unsupported host OS for Android NDK"),
+            };
+            const ndk_sysroot = b.fmt("{s}/toolchains/llvm/prebuilt/{s}/sysroot", .{ ndk_home, ndk_host });
+
+            // Add NDK include paths for C headers
+            lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{ndk_sysroot}) });
+            lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/{s}", .{ ndk_sysroot, android_triple }) });
+
+            // Add NDK library paths
+            lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib/{s}/{s}", .{ ndk_sysroot, android_triple, api_level }) });
+            lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib/{s}", .{ ndk_sysroot, android_triple }) });
+        } else |_| {
+            std.debug.print("Warning: ANDROID_NDK_HOME not set for Android build\n", .{});
+        }
+
+        // Link Android system libraries without triggering libc provision
+        lib.root_module.linkSystemLibrary("log", .{ .use_libc = false });
+        lib.root_module.linkSystemLibrary("android", .{ .use_libc = false });
     } else if (os_tag == .linux) {
         lib.linkLibC();
         lib.linkSystemLibrary("pthread");
