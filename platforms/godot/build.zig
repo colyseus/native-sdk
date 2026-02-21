@@ -306,9 +306,10 @@ pub fn build(b: *std.Build) void {
             std.debug.print("Warning: ANDROID_NDK_HOME not set for Android build\n", .{});
         }
 
-        // Link Android system libraries without triggering libc provision
-        lib.root_module.linkSystemLibrary("log", .{ .use_libc = false });
-        lib.root_module.linkSystemLibrary("android", .{ .use_libc = false });
+        // Link Android system libraries
+        // Note: link_libc is already set to false on root_module, so these won't trigger libc provision
+        lib.root_module.linkSystemLibrary("log", .{});
+        lib.root_module.linkSystemLibrary("android", .{});
     } else if (os_tag == .linux) {
         lib.linkLibC();
         lib.linkSystemLibrary("pthread");
