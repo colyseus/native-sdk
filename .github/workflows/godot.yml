@@ -173,13 +173,13 @@ jobs:
         working-directory: platforms/godot
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=arm-linux-android -Doptimize=Debug
+        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=Debug
 
       - name: Build Android arm32 (release)
         working-directory: platforms/godot
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=arm-linux-android -Doptimize=ReleaseSafe
+        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=ReleaseSafe
 
       - name: Build Android x86_64 (debug)
         working-directory: platforms/godot

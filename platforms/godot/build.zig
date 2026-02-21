@@ -8,13 +8,14 @@ pub fn build(b: *std.Build) void {
     const os_tag = target.result.os.tag;
     const arch = target.result.cpu.arch;
 
+    // Detect Android (both 64-bit .android and 32-bit .androideabi ABIs)
+    const is_android = target.result.abi == .android or target.result.abi == .androideabi;
+
     // For non-Android targets, auto-detect sysroot if needed
     // Note: Android is handled differently - we don't set sysroot to avoid Zig trying to provide libc
-    if (os_tag == .linux and target.result.abi != .android and b.sysroot == null) {
+    if (os_tag == .linux and !is_android and b.sysroot == null) {
         // Only set sysroot for non-Android Linux targets if needed
     }
-
-    const is_android = target.result.abi == .android;
 
     const os_str = switch (os_tag) {
         .linux => if (is_android) "android" else "linux",
