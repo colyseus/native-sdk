@@ -275,19 +275,18 @@ pub fn build(b: *std.Build) void {
         lib.install_name = b.fmt("@rpath/lib{s}.framework/lib{s}", .{ lib_name, lib_name });
     } else if (is_android) {
         lib.linkLibC();
-        // Add Android NDK library search paths
-        if (b.sysroot) |sysroot| {
-            const android_triple = switch (arch) {
-                .x86 => "i686-linux-android",
-                .x86_64 => "x86_64-linux-android",
-                .arm => "arm-linux-androideabi",
-                .aarch64 => "aarch64-linux-android",
-                else => @panic("Unsupported Android architecture"),
-            };
-            const api_level = "21";
-            lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib/{s}/{s}", .{ sysroot, android_triple, api_level }) });
-            lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib/{s}", .{ sysroot, android_triple }) });
-        }
+        // Add Android NDK library search paths relative to sysroot
+        // Note: Paths must NOT include sysroot prefix - Zig prepends it automatically
+        const android_triple = switch (arch) {
+            .x86 => "i686-linux-android",
+            .x86_64 => "x86_64-linux-android",
+            .arm => "arm-linux-androideabi",
+            .aarch64 => "aarch64-linux-android",
+            else => @panic("Unsupported Android architecture"),
+        };
+        const api_level = "21";
+        lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("/usr/lib/{s}/{s}", .{ android_triple, api_level }) });
+        lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("/usr/lib/{s}", .{ android_triple }) });
         lib.linkSystemLibrary("log");
         lib.linkSystemLibrary("android");
     } else if (os_tag == .linux) {
