@@ -30,8 +30,12 @@ const colyseus_settings_t = extern struct {
     headers: ?*colyseus_header_t,
 };
 
-// External C function declaration
+// External C function declarations
 extern fn colyseus_settings_get_webrequest_endpoint(settings: *const colyseus_settings_t) [*c]u8;
+
+// Direct C free declaration - bypasses Zig's libc requirement check
+// For Android/iOS, libc is available at runtime but Zig can't provide it at build time
+extern fn free(ptr: ?*anyopaque) void;
 
 // Select allocator based on target platform
 // - Android/iOS: use page_allocator (no libc dependency, Zig can't provide libc for these)
@@ -204,7 +208,7 @@ fn httpRequestImpl(
 
     const base_url = colyseus_settings_get_webrequest_endpoint(h.settings);
     if (base_url == null) return error.NoBaseUrl;
-    defer std.c.free(base_url);
+    defer free(base_url);
 
     const base_slice = cStrToSlice(base_url) orelse return error.InvalidBaseUrl;
 
