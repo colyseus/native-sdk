@@ -80,8 +80,10 @@ pub fn build(b: *std.Build) void {
         .root_module = http_zig_module,
         .linkage = .static,
     });
-    // Link libc for non-iOS targets; iOS handles it via libSystem.tbd
-    if (os_tag != .ios) {
+    // Link libc for targets where Zig can provide it
+    // iOS: handled via libSystem.tbd at runtime
+    // Android: Zig cannot provide Bionic libc, symbols resolve at runtime
+    if (os_tag != .ios and !is_android) {
         http_object.linkLibC();
     }
 
@@ -96,8 +98,10 @@ pub fn build(b: *std.Build) void {
         .root_module = strutil_zig_module,
         .linkage = .static,
     });
-    // Link libc for non-iOS targets; iOS handles it via libSystem.tbd
-    if (os_tag != .ios) {
+    // Link libc for targets where Zig can provide it
+    // iOS: handled via libSystem.tbd at runtime
+    // Android: Zig cannot provide Bionic libc, symbols resolve at runtime
+    if (os_tag != .ios and !is_android) {
         strutil_object.linkLibC();
     }
 
@@ -274,7 +278,12 @@ pub fn build(b: *std.Build) void {
         // Set the install_name to match Godot's .framework bundle structure
         lib.install_name = b.fmt("@rpath/lib{s}.framework/lib{s}", .{ lib_name, lib_name });
     } else if (is_android) {
-        lib.linkLibC();
+        // For Android: don't use Zig's libc, rely on NDK sysroot instead
+        // Zig cannot provide Bionic libc, symbols resolve at runtime on device
+        lib.root_module.link_libc = false;
+        http_zig_module.link_libc = false;
+        strutil_zig_module.link_libc = false;
+
         // Add Android NDK library search paths relative to sysroot
         // Note: Paths must NOT include sysroot prefix - Zig prepends it automatically
         const android_triple = switch (arch) {
