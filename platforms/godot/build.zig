@@ -57,6 +57,12 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const msgpack_module = msgpack_dep.module("msgpack");
+
+    // For iOS: disable libc linking on msgpack module to work around Zig's libSystem search issue
+    if (os_tag == .ios) {
+        msgpack_module.link_libc = false;
+    }
 
     // ========================================================================
     // Build Zig modules for HTTP and URL parsing (replaces libcurl)
@@ -101,7 +107,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "msgpack", .module = msgpack_dep.module("msgpack") },
+            .{ .name = "msgpack", .module = msgpack_module },
         },
     });
 
