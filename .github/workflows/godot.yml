@@ -101,7 +101,7 @@ jobs:
             -I../../third_party/wslay/lib
             -Iinclude
             -Isrc
-            -isysroot "$SDK"
+            --sysroot "$SDK"
           )
 
           C_SOURCES=(
@@ -217,7 +217,7 @@ jobs:
             -I../../third_party/wslay/lib
             -Iinclude
             -Isrc
-            -isysroot "$SDK"
+            --sysroot "$SDK"
             -I.zig-cache/config
           )
 
