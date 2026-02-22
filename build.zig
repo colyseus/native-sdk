@@ -166,6 +166,29 @@ pub fn build(b: *std.Build) void {
     addAppleSdkPaths(strutil_object, ios_sdk_path);
 
     // ========================================================================
+    // Build msgpack builder module (wraps zig-msgpack for C interop)
+    // ========================================================================
+    const msgpack_dep = b.dependency("zig_msgpack", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const msgpack_builder_module = b.createModule(.{
+        .root_source_file = b.path("src/msgpack/msgpack_builder.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    msgpack_builder_module.addImport("msgpack", msgpack_dep.module("msgpack"));
+
+    const msgpack_builder_object = b.addLibrary(.{
+        .name = "msgpack_builder",
+        .root_module = msgpack_builder_module,
+        .linkage = .static,
+    });
+    msgpack_builder_object.linkLibC();
+    addAppleSdkPaths(msgpack_builder_object, ios_sdk_path);
+
+    // ========================================================================
     // Build colyseus library
     // ========================================================================
     const colyseus_module = b.createModule(.{
@@ -238,9 +261,10 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // Link Zig HTTP and URL parsing libraries
+    // Link Zig libraries
     colyseus.linkLibrary(http_object);
     colyseus.linkLibrary(strutil_object);
+    colyseus.linkLibrary(msgpack_builder_object);
 
     // Link wslay
     colyseus.linkLibrary(wslay);
@@ -284,6 +308,7 @@ pub fn build(b: *std.Build) void {
         "utils/strUtil.h",
         "auth/auth.h",
         "auth/secure_storage.h",
+        "msgpack_builder.h",
     };
 
     inline for (headers) |header| {

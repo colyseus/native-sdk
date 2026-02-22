@@ -131,13 +131,20 @@ void colyseus_room_on_message_any_with_type(colyseus_room_t* room, colyseus_room
 #define colyseus_room_on_message_index(room, type, callback, userdata) \
     colyseus_room_on_message_int(room, type, callback, userdata)
 
-/* Send messages */
-void colyseus_room_send_str(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
-void colyseus_room_send_int(colyseus_room_t* room, int type, const uint8_t* message, size_t length);
+/* Forward declaration for msgpack payload */
+typedef struct msgpack_payload msgpack_payload_t;
 
-/* Convenience macro */
-#define colyseus_room_send(room, type, message, length) \
-    colyseus_room_send_str(room, type, message, length)
+/* Send messages (msgpack payload - default, encodes automatically) */
+void colyseus_room_send(colyseus_room_t* room, const char* type, msgpack_payload_t* data);
+void colyseus_room_send_int(colyseus_room_t* room, int type, msgpack_payload_t* data);
+
+/* Send messages (pre-encoded msgpack bytes) */
+void colyseus_room_send_encoded(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
+void colyseus_room_send_int_encoded(colyseus_room_t* room, int type, const uint8_t* message, size_t length);
+
+/* Send raw bytes (ROOM_DATA_BYTES protocol) */
+void colyseus_room_send_bytes(colyseus_room_t* room, const char* type, const uint8_t* data, size_t length);
+void colyseus_room_send_int_bytes(colyseus_room_t* room, int type, const uint8_t* data, size_t length);
 
 #ifdef __cplusplus
 }

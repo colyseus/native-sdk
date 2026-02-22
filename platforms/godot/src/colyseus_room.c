@@ -203,7 +203,7 @@ void gdext_colyseus_room_send_message(void* p_method_userdata, GDExtensionClassI
     uint8_t* msgpack_data = godot_variant_to_msgpack(data_variant, &msgpack_len);
     
     // Send the message
-    colyseus_room_send_str(wrapper->native_room, type_cstr, msgpack_data, msgpack_len);
+    colyseus_room_send_encoded(wrapper->native_room, type_cstr, msgpack_data, msgpack_len);
     
     // Cleanup
     free(type_cstr);
@@ -245,7 +245,7 @@ void gdext_colyseus_room_send_message_int(void* p_method_userdata, GDExtensionCl
     uint8_t* msgpack_data = godot_variant_to_msgpack(data_variant, &msgpack_len);
     
     // Send the message
-    colyseus_room_send_int(wrapper->native_room, (int)type_int, msgpack_data, msgpack_len);
+    colyseus_room_send_int_encoded(wrapper->native_room, (int)type_int, msgpack_data, msgpack_len);
     
     // Cleanup
     if (msgpack_data) {

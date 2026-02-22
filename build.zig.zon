@@ -1,0 +1,12 @@
+.{
+    .name = .native_sdk,
+    .version = "0.15.1",
+    .dependencies = .{
+        .zig_msgpack = .{
+            .url = "git+https://github.com/zigcc/zig-msgpack?ref=main#47c15d217efebd17a585dd04125f9b6b6f659d5a",
+            .hash = "zig_msgpack-0.0.14-evvueGolBQBs_m726tBf4ISJQqC926AM96EtxZy9LUaI",
+        },
+    },
+    .paths = .{""},
+    .fingerprint = 0xc3099661f12e6a44,
+}

@@ -1,5 +1,6 @@
 #include "colyseus/room.h"
 #include "colyseus/schema.h"
+#include "colyseus/msgpack_builder.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -333,8 +334,31 @@ static bool decode_number_check(const uint8_t* bytes, size_t offset) {
     return colyseus_decode_number_check(bytes, &it);
 }
 
-/* Send messages */
-void colyseus_room_send_str(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length) {
+/* Send messages (msgpack payload - default, encodes automatically) */
+void colyseus_room_send(colyseus_room_t* room, const char* type, msgpack_payload_t* payload) {
+    if (!room || !type || !payload) return;
+
+    size_t encoded_len = 0;
+    uint8_t* encoded_data = msgpack_payload_encode(payload, &encoded_len);
+
+    if (encoded_data && encoded_len > 0) {
+        colyseus_room_send_encoded(room, type, encoded_data, encoded_len);
+    }
+}
+
+void colyseus_room_send_int(colyseus_room_t* room, int type, msgpack_payload_t* payload) {
+    if (!room || !payload) return;
+
+    size_t encoded_len = 0;
+    uint8_t* encoded_data = msgpack_payload_encode(payload, &encoded_len);
+
+    if (encoded_data && encoded_len > 0) {
+        colyseus_room_send_int_encoded(room, type, encoded_data, encoded_len);
+    }
+}
+
+/* Send messages (pre-encoded msgpack bytes) */
+void colyseus_room_send_encoded(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length) {
     if (!room || !room->transport || !colyseus_transport_is_open(room->transport)) {
         return;
     }
@@ -366,7 +390,7 @@ void colyseus_room_send_str(colyseus_room_t* room, const char* type, const uint8
     free(data);
 }
 
-void colyseus_room_send_int(colyseus_room_t* room, int type, const uint8_t* message, size_t length) {
+void colyseus_room_send_int_encoded(colyseus_room_t* room, int type, const uint8_t* message, size_t length) {
     if (!room || !room->transport || !colyseus_transport_is_open(room->transport)) {
         return;
     }
@@ -385,6 +409,66 @@ void colyseus_room_send_int(colyseus_room_t* room, int type, const uint8_t* mess
     memcpy(data + 1, type_buffer, type_encoded_size);
 
     /* Message payload */
+    if (message && length > 0) {
+        memcpy(data + 1 + type_encoded_size, message, length);
+    }
+
+    colyseus_transport_send(room->transport, data, total_len);
+    free(data);
+}
+
+/* Send raw bytes (ROOM_DATA_BYTES protocol) */
+void colyseus_room_send_bytes(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length) {
+    if (!room || !room->transport || !colyseus_transport_is_open(room->transport)) {
+        return;
+    }
+
+    /* Build message: [PROTOCOL][msgpack-encoded type string][raw bytes] */
+    size_t type_len = strlen(type);
+
+    /* Calculate msgpack encoding size */
+    size_t msgpack_size = (type_len <= 31) ? (1 + type_len) :
+                          (type_len <= 255) ? (2 + type_len) :
+                          (type_len <= 65535) ? (3 + type_len) :
+                          (5 + type_len);
+
+    size_t total_len = 1 + msgpack_size + length;
+    uint8_t* data = malloc(total_len);
+
+    /* Protocol byte */
+    data[0] = COLYSEUS_PROTOCOL_ROOM_DATA_BYTES;
+
+    /* Msgpack-encoded type string */
+    size_t encoded_len = msgpack_encode_string(data + 1, type, type_len);
+
+    /* Raw bytes payload */
+    if (message && length > 0) {
+        memcpy(data + 1 + encoded_len, message, length);
+    }
+
+    colyseus_transport_send(room->transport, data, total_len);
+    free(data);
+}
+
+void colyseus_room_send_int_bytes(colyseus_room_t* room, int type, const uint8_t* message, size_t length) {
+    if (!room || !room->transport || !colyseus_transport_is_open(room->transport)) {
+        return;
+    }
+
+    /* Build message: [PROTOCOL][msgpack-encoded type integer][raw bytes] */
+    uint8_t type_buffer[5];  /* Max size for int32 msgpack encoding */
+    size_t type_encoded_size = msgpack_encode_number(type_buffer, type);
+
+    size_t total_len = 1 + type_encoded_size + length;
+    uint8_t* data = malloc(total_len);
+
+    /* Protocol byte */
+    data[0] = COLYSEUS_PROTOCOL_ROOM_DATA_BYTES;
+
+    /* Msgpack-encoded type integer */
+    memcpy(data + 1, type_buffer, type_encoded_size);
+
+    /* Raw bytes payload */
     if (message && length > 0) {
         memcpy(data + 1 + type_encoded_size, message, length);
     }
