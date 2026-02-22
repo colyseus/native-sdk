@@ -28,7 +28,7 @@ jobs:
         id: version-check
         with:
           file-name: platforms/godot/addons/colyseus/version.json
-          diff-search: true
+          diff-search: ${{ github.event_name == 'push' }}
 
       - name: Log version info
         run: |
@@ -64,13 +64,13 @@ jobs:
 
       # TODO: iOS builds disabled due to Zig 0.15 bug - unable to find libSystem in iOS sysroot
       # See: https://github.com/ziglang/zig/issues (file bug report)
-      # - name: Build iOS arm64 (debug)
-      #   working-directory: platforms/godot
-      #   run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.ios-sdk.outputs.path }}"
+      - name: Build iOS arm64 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=aarch64-ios -Doptimize=Debug --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
-      # - name: Build iOS arm64 (release)
-      #   working-directory: platforms/godot
-      #   run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.ios-sdk.outputs.path }}"
+      - name: Build iOS arm64 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe --sysroot "${{ steps.ios-sdk.outputs.path }}"
 
       - name: Upload macOS binaries
         uses: actions/upload-artifact@v4
