@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    
+    <title>Colyseus GameMaker HTML5 Game</title>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+        }
+        
+        #canvas {
+            display: block;
+            margin: 0 auto;
+            image-rendering: optimizeSpeed;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: -o-crisp-edges;
+            image-rendering: pixelated;
+            -ms-interpolation-mode: nearest-neighbor;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            z-index: 1000;
+        }
+        
+        #loading .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        #error {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 0, 0, 0.9);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: Arial, sans-serif;
+            max-width: 80%;
+            z-index: 2000;
+        }
+        
+        #error h2 {
+            margin-bottom: 10px;
+        }
+        
+        #debug {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #0f0;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 10px;
+            border-radius: 5px;
+            max-width: 300px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+            z-index: 1500;
+        }
+        
+        #debug.visible {
+            display: block;
+        }
+    </style>
+    
+    <!-- 
+        CRITICAL: Load Colyseus.js BEFORE GameMaker scripts
+        This ensures the JavaScript extension can use the Colyseus client
+    -->
+    <script src="https://unpkg.com/colyseus.js@^0.16.0/dist/colyseus.js"></script>
+    
+    <!-- 
+        Alternative: Load from local file
+        <script src="colyseus.js"></script>
+    -->
+</head>
+
+<body>
+    <!-- Loading indicator -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading Game...</p>
+    </div>
+    
+    <!-- Error display -->
+    <div id="error">
+        <h2>Error Loading Game</h2>
+        <p id="error-message"></p>
+    </div>
+    
+    <!-- Debug console (press D to toggle) -->
+    <div id="debug">
+        <strong>Debug Console</strong><br>
+        <span id="debug-content"></span>
+    </div>
+    
+    <!-- Game canvas will be inserted here by GameMaker -->
+    <canvas id="canvas"></canvas>
+    
+    <script>
+        // Debug logging helper
+        const debugLog = (function() {
+            const debugElement = document.getElementById('debug-content');
+            const logs = [];
+            const maxLogs = 10;
+            
+            return function(message) {
+                console.log('[DEBUG]', message);
+                logs.push(`${new Date().toLocaleTimeString()}: ${message}`);
+                if (logs.length > maxLogs) logs.shift();
+                debugElement.innerHTML = logs.join('<br>');
+            };
+        })();
+        
+        // Toggle debug console with 'D' key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'd' || e.key === 'D') {
+                document.getElementById('debug').classList.toggle('visible');
+            }
+        });
+        
+        // Check if Colyseus is loaded
+        if (typeof Colyseus === 'undefined') {
+            console.error('Colyseus.js is not loaded! HTML5 build will not work.');
+            document.getElementById('error-message').textContent = 
+                'Failed to load Colyseus.js library. Please check your internet connection or ensure the CDN is accessible.';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('loading').style.display = 'none';
+        } else {
+            console.log('Colyseus.js loaded successfully:', Colyseus.Client ? 'Client available' : 'Client NOT available');
+            debugLog('Colyseus.js loaded successfully');
+        }
+        
+        // Enhanced error handling
+        window.addEventListener('error', function(e) {
+            console.error('Runtime error:', e.error);
+            if (e.error && e.error.message && e.error.message.includes('Colyseus')) {
+                document.getElementById('error-message').textContent = 
+                    'Colyseus connection error: ' + e.error.message;
+                document.getElementById('error').style.display = 'block';
+            }
+        });
+        
+        // Unhandled promise rejections (common with WebSocket errors)
+        window.addEventListener('unhandledrejection', function(e) {
+            console.error('Unhandled promise rejection:', e.reason);
+            debugLog('Connection error: ' + (e.reason ? e.reason.toString() : 'Unknown'));
+        });
+        
+        // GameMaker will insert its scripts and initialization code below
+        // via the GameMaker HTML5 export process
+    </script>
+    
+    <!-- 
+        GameMaker inserts its own scripts here during export:
+        - Game code
+        - Extension scripts (including gamemaker_export_html5.js)
+        - Asset loading
+    -->
+    
+    <script>
+        // Hide loading screen once game starts (GameMaker will call this)
+        window.hideLoading = function() {
+            document.getElementById('loading').style.display = 'none';
+        };
+        
+        // Show custom error from game
+        window.showError = function(message) {
+            document.getElementById('error-message').textContent = message;
+            document.getElementById('error').style.display = 'block';
+        };
+        
+        // Automatic loading screen management
+        window.addEventListener('load', function() {
+            // Give GameMaker a moment to initialize
+            setTimeout(function() {
+                const canvas = document.getElementById('canvas');
+                if (canvas && canvas.getContext) {
+                    document.getElementById('loading').style.display = 'none';
+                    debugLog('Game initialized');
+                }
+            }, 2000);
+        });
+    </script>
+    
+    <!-- 
+        ============================================================================
+        NOTES FOR GAMEMAKER STUDIO USERS:
+        ============================================================================
+        
+        1. To use this template:
+           - Place this file in: [Project]/datafiles/html5_template.html
+           - Or use GameMaker's HTML5 options to specify custom template
+        
+        2. The Colyseus.js CDN link MUST be loaded before GameMaker scripts
+        
+        3. For production, consider:
+           - Downloading colyseus.js and hosting locally
+           - Using a specific version instead of ^0.15.0
+           - Adding integrity/crossorigin attributes for CDN security
+        
+        4. Debug console:
+           - Press 'D' key to toggle visibility
+           - Shows last 10 Colyseus-related logs
+           - Useful for troubleshooting connection issues
+        
+        5. For GX.Games:
+           - Ensure your Colyseus server uses wss:// (secure WebSocket)
+           - Enable CORS on your server
+           - Test thoroughly in GX.Games environment
+        
+        6. Performance tips:
+           - Minimize state updates
+           - Use binary encoding for frequent messages
+           - Consider using Colyseus Schema for automatic state sync
+        
+        ============================================================================
+    -->
+</body>
+</html>
+
