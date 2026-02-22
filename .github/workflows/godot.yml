@@ -28,7 +28,7 @@ jobs:
         id: version-check
         with:
           file-name: platforms/godot/addons/colyseus/version.json
-          diff-search: ${{ github.event_name == 'push' }}
+          diff-search: false
 
       - name: Log version info
         run: |
@@ -78,134 +78,134 @@ jobs:
           name: binaries-macos
           path: platforms/godot/addons/colyseus/bin/*.dylib
 
-  build-linux:
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+#  build-linux:
+#    needs: check-version
+#    if: needs.check-version.outputs.changed == 'true'
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Checkout repository
+#        uses: actions/checkout@v4
+#        with:
+#          submodules: recursive
+#
+#      - name: Install Zig
+#        uses: mlugg/setup-zig@v2
+#        with:
+#          version: 0.15.1
+#
+#      - name: Build Linux x86_64 (debug)
+#        working-directory: platforms/godot
+#        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=Debug
+#
+#      - name: Build Linux x86_64 (release)
+#        working-directory: platforms/godot
+#        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe
+#
+#      - name: Upload Linux binaries
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: binaries-linux
+#          path: platforms/godot/addons/colyseus/bin/*.so
 
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.1
+#  build-windows:
+#    needs: check-version
+#    if: needs.check-version.outputs.changed == 'true'
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Checkout repository
+#        uses: actions/checkout@v4
+#        with:
+#          submodules: recursive
+#
+#      - name: Install Zig
+#        uses: mlugg/setup-zig@v2
+#        with:
+#          version: 0.15.1
+#
+#      - name: Build Windows x86_64 (debug)
+#        working-directory: platforms/godot
+#        run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=Debug
+#
+#      - name: Build Windows x86_64 (release)
+#        working-directory: platforms/godot
+#        run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
+#
+#      - name: Build Windows x86_32 (debug)
+#        working-directory: platforms/godot
+#        run: zig build -Dtarget=x86-windows-gnu -Doptimize=Debug
+#
+#      - name: Build Windows x86_32 (release)
+#        working-directory: platforms/godot
+#        run: zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSafe
+#
+#      - name: Upload Windows binaries
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: binaries-windows
+#          path: platforms/godot/addons/colyseus/bin/*.dll
 
-      - name: Build Linux x86_64 (debug)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=Debug
-
-      - name: Build Linux x86_64 (release)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe
-
-      - name: Upload Linux binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-linux
-          path: platforms/godot/addons/colyseus/bin/*.so
-
-  build-windows:
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.1
-
-      - name: Build Windows x86_64 (debug)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=Debug
-
-      - name: Build Windows x86_64 (release)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
-
-      - name: Build Windows x86_32 (debug)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86-windows-gnu -Doptimize=Debug
-
-      - name: Build Windows x86_32 (release)
-        working-directory: platforms/godot
-        run: zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSafe
-
-      - name: Upload Windows binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-windows
-          path: platforms/godot/addons/colyseus/bin/*.dll
-
-  build-android:
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Zig
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.1
-
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r26d
-
-      - name: Build Android arm64 (debug)
-        working-directory: platforms/godot
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=aarch64-linux-android -Doptimize=Debug
-
-      - name: Build Android arm64 (release)
-        working-directory: platforms/godot
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=aarch64-linux-android -Doptimize=ReleaseSafe
-
-      - name: Build Android arm32 (debug)
-        working-directory: platforms/godot
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=Debug
-
-      - name: Build Android arm32 (release)
-        working-directory: platforms/godot
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=ReleaseSafe
-
-      - name: Build Android x86_64 (debug)
-        working-directory: platforms/godot
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=x86_64-linux-android -Doptimize=Debug
-
-      - name: Build Android x86_64 (release)
-        working-directory: platforms/godot
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=x86_64-linux-android -Doptimize=ReleaseSafe
-
-      - name: Upload Android binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-android
-          path: platforms/godot/addons/colyseus/bin/*android*.so
+#  build-android:
+#    needs: check-version
+#    if: needs.check-version.outputs.changed == 'true'
+#    runs-on: ubuntu-latest
+#    steps:
+#      - name: Checkout repository
+#        uses: actions/checkout@v4
+#        with:
+#          submodules: recursive
+#
+#      - name: Install Zig
+#        uses: mlugg/setup-zig@v2
+#        with:
+#          version: 0.15.1
+#
+#      - name: Setup Android NDK
+#        uses: nttld/setup-ndk@v1
+#        id: setup-ndk
+#        with:
+#          ndk-version: r26d
+#
+#      - name: Build Android arm64 (debug)
+#        working-directory: platforms/godot
+#        env:
+#          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+#        run: zig build -Dtarget=aarch64-linux-android -Doptimize=Debug
+#
+#      - name: Build Android arm64 (release)
+#        working-directory: platforms/godot
+#        env:
+#          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+#        run: zig build -Dtarget=aarch64-linux-android -Doptimize=ReleaseSafe
+#
+#      - name: Build Android arm32 (debug)
+#        working-directory: platforms/godot
+#        env:
+#          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+#        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=Debug
+#
+#      - name: Build Android arm32 (release)
+#        working-directory: platforms/godot
+#        env:
+#          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+#        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=ReleaseSafe
+#
+#      - name: Build Android x86_64 (debug)
+#        working-directory: platforms/godot
+#        env:
+#          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+#        run: zig build -Dtarget=x86_64-linux-android -Doptimize=Debug
+#
+#      - name: Build Android x86_64 (release)
+#        working-directory: platforms/godot
+#        env:
+#          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+#        run: zig build -Dtarget=x86_64-linux-android -Doptimize=ReleaseSafe
+#
+#      - name: Upload Android binaries
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: binaries-android
+#          path: platforms/godot/addons/colyseus/bin/*android*.so
 
   release:
     needs: [check-version, build-macos-ios, build-linux, build-windows, build-android]
