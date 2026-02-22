@@ -88,9 +88,11 @@ jobs:
         working-directory: platforms/godot
         run: |
           zig build --fetch
-          echo "Searching for msgpack.zig:"
-          find ~/Library/Caches/zig -name "msgpack.zig" 2>/dev/null || true
-          find ~/.cache/zig -name "msgpack.zig" 2>/dev/null || true
+          echo "=== .zig-cache/p ==="
+          find .zig-cache/p -name "msgpack.zig" 2>/dev/null || echo "not found"
+          echo "=== ZIG_GLOBAL_CACHE_DIR ==="
+          echo "ZIG_GLOBAL_CACHE_DIR=$ZIG_GLOBAL_CACHE_DIR"
+          find "$ZIG_GLOBAL_CACHE_DIR/p" -name "msgpack.zig" 2>/dev/null || echo "not found"
 
       - name: Build iOS arm64 (debug)
         working-directory: platforms/godot
