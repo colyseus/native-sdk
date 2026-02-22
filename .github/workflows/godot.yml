@@ -208,7 +208,7 @@ jobs:
 #          path: platforms/godot/addons/colyseus/bin/*android*.so
 
   release:
-    needs: [check-version, build-macos-ios, build-linux, build-windows, build-android]
+    needs: [check-version, build-macos-ios] #, build-linux, build-windows, build-android]
     if: needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     permissions:
