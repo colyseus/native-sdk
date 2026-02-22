@@ -169,8 +169,8 @@ jobs:
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
-            -Mroot=src/msgpack_godot.zig \
             --dep msgpack \
+            -Mroot=src/msgpack_godot.zig \
             -Mmsgpack="$MSGPACK_ZIG" \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_godot.o
@@ -283,8 +283,8 @@ jobs:
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
-            -Mroot=src/msgpack_godot.zig \
             --dep msgpack \
+            -Mroot=src/msgpack_godot.zig \
             -Mmsgpack="$MSGPACK_ZIG" \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_godot_rel.o
