@@ -311,7 +311,7 @@ jobs:
           zig build-obj \
             -target aarch64-ios \
             -OReleaseSafe \
-            --sysroot "$SDK" \ 
+            --sysroot "$SDK" \
             --dep msgpack \
             -Mroot=../../src/msgpack/msgpack_builder.zig \
             --dep msgpack \
