@@ -84,12 +84,18 @@ jobs:
         id: ios-sdk
         run: echo "path=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_OUTPUT
 
+      - name: Populate Zig cache (fetch dependencies)
+        working-directory: platforms/godot
+        run: zig build --fetch
+
       - name: Build iOS arm64 (debug)
         working-directory: platforms/godot
         run: |
           SDK="${{ steps.ios-sdk.outputs.path }}"
           OUT="addons/colyseus/bin"
           mkdir -p "$OUT"
+
+          MSGPACK_ZIG=$(ls .zig-cache/p/zig_msgpack-*/src/msgpack.zig 2>/dev/null | head -1)
 
           INCLUDES=(
             -I../../include
@@ -101,7 +107,6 @@ jobs:
             -I../../third_party/wslay/lib
             -Iinclude
             -Isrc
-            --sysroot "$SDK"
           )
 
           C_SOURCES=(
@@ -138,12 +143,11 @@ jobs:
           )
 
           # Generate wslay config headers
-          mkdir -p .zig-cache/config
+          mkdir -p .zig-cache/config/wslay
           cat > .zig-cache/config/config.h << 'EOF'
           #define HAVE_ARPA_INET_H 1
           #define HAVE_NETINET_IN_H 1
           EOF
-          mkdir -p .zig-cache/config/wslay
           cp ../../third_party/wslay/lib/includes/wslay/wslayver.h.in .zig-cache/config/wslay/wslayver.h
           sed -i '' 's/@PACKAGE_VERSION@/1.1.1/g' .zig-cache/config/wslay/wslayver.h
 
@@ -154,7 +158,9 @@ jobs:
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
-            src/msgpack_godot.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            -Mroot=src/msgpack_godot.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_godot.o
 
@@ -162,7 +168,7 @@ jobs:
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
-            ../../src/network/http.zig \
+            -Mroot=../../src/network/http.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/http_zig.o
 
@@ -170,7 +176,7 @@ jobs:
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
-            ../../src/utils/strUtil.zig \
+            -Mroot=../../src/utils/strUtil.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/strutil_zig.o
 
@@ -178,14 +184,16 @@ jobs:
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
-            ../../src/msgpack/msgpack_builder.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            -Mroot=../../src/msgpack/msgpack_builder.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_builder.o
 
           # Link everything with clang
           xcrun clang \
             -target arm64-apple-ios13.0 \
-            --sysroot "$SDK" \
+            -isysroot "$SDK" \
             -dynamiclib \
             -install_name "@rpath/libcolyseus_godot.ios.arm64.debug.framework/libcolyseus_godot.ios.arm64.debug" \
             -o "$OUT/libcolyseus_godot.ios.arm64.debug.dylib" \
@@ -207,6 +215,8 @@ jobs:
           SDK="${{ steps.ios-sdk.outputs.path }}"
           OUT="addons/colyseus/bin"
 
+          MSGPACK_ZIG=$(ls .zig-cache/p/zig_msgpack-*/src/msgpack.zig 2>/dev/null | head -1)
+
           INCLUDES=(
             -I../../include
             -I../../src
@@ -217,7 +227,6 @@ jobs:
             -I../../third_party/wslay/lib
             -Iinclude
             -Isrc
-            --sysroot "$SDK"
             -I.zig-cache/config
           )
 
@@ -258,7 +267,9 @@ jobs:
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
-            src/msgpack_godot.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            -Mroot=src/msgpack_godot.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_godot_rel.o
 
@@ -266,7 +277,7 @@ jobs:
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
-            ../../src/network/http.zig \
+            -Mroot=../../src/network/http.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/http_zig_rel.o
 
@@ -274,7 +285,7 @@ jobs:
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
-            ../../src/utils/strUtil.zig \
+            -Mroot=../../src/utils/strUtil.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/strutil_zig_rel.o
 
@@ -282,13 +293,15 @@ jobs:
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
-            ../../src/msgpack/msgpack_builder.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            -Mroot=../../src/msgpack/msgpack_builder.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_builder_rel.o
 
           xcrun clang \
             -target arm64-apple-ios13.0 \
-            --sysroot "$SDK" \
+            -isysroot "$SDK" \
             -dynamiclib \
             -O2 \
             -install_name "@rpath/libcolyseus_godot.ios.arm64.release.framework/libcolyseus_godot.ios.arm64.release" \
