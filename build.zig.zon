@@ -1,6 +1,6 @@
 .{
     .name = .native_sdk,
-    .version = "0.15.1",
+    .version = "0.15.2",
     .dependencies = .{
         .zig_msgpack = .{
             .url = "git+https://github.com/zigcc/zig-msgpack?ref=main#47c15d217efebd17a585dd04125f9b6b6f659d5a",
