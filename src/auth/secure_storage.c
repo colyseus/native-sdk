@@ -20,7 +20,7 @@
     #define PLATFORM_WINDOWS
 #elif defined(__linux__)
     #define PLATFORM_LINUX
-#elif defined(__EMSCRIPTEN__)
+#elif defined(__EMSCRIPTEN__) && !defined(PLATFORM_WEB)
     #define PLATFORM_WEB
 #endif
 
@@ -500,6 +500,8 @@ storage_result_t secure_storage_remove(const char* key) {
 
 /* ========================================================================
  * WEB / EMSCRIPTEN - Not supported (use browser localStorage from JS)
+ * File I/O doesn't work reliably in Emscripten without virtual FS setup.
+ * For persistent storage on web, use JS interop with localStorage.
  * ======================================================================== */
 #elif defined(PLATFORM_WEB)
 
@@ -508,15 +510,19 @@ int secure_storage_available(void) {
 }
 
 storage_result_t secure_storage_set(const char* key, const char* value) {
-    return fallback_storage_set(key, value);
+    (void)key;
+    (void)value;
+    return STORAGE_ERROR;
 }
 
 char* secure_storage_get(const char* key) {
-    return fallback_storage_get(key);
+    (void)key;
+    return NULL;
 }
 
 storage_result_t secure_storage_remove(const char* key) {
-    return fallback_storage_remove(key);
+    (void)key;
+    return STORAGE_OK;
 }
 
 /* ========================================================================

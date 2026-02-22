@@ -4,8 +4,10 @@ const msgpack = @import("msgpack");
 const Payload = msgpack.Payload;
 const Allocator = std.mem.Allocator;
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
+// Select allocator based on target platform
+// - All platforms: use c_allocator (emscripten provides libc)
+const builtin = @import("builtin");
+const allocator = std.heap.c_allocator;
 
 const PayloadType = enum {
     map,

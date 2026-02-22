@@ -9,6 +9,8 @@ A simple raylib application demonstrating the Colyseus Native SDK. Players are d
 
 ## Building
 
+### Native Build
+
 ```bash
 cd platforms/raylib
 
@@ -20,6 +22,34 @@ zig build -Doptimize=ReleaseFast
 ```
 
 The executable will be located at `zig-out/bin/raylib_colyseus`.
+
+### Web Build (Emscripten)
+
+The build system automatically downloads and uses the Emscripten SDK as a dependency.
+
+```bash
+cd platforms/raylib
+
+# Build for web (use ReleaseSmall or ReleaseFast for web builds)
+zig build -Dtarget=wasm32-emscripten -Doptimize=ReleaseSmall
+```
+
+The output will be in `zig-out/web/`. Serve it with a local HTTP server:
+
+```bash
+cd zig-out/web
+python3 -m http.server 8080
+```
+
+Then open `http://localhost:8080` in your browser.
+
+**Note:** The first build may take a while as it downloads the Emscripten SDK (~300MB).
+
+**Web-specific implementation details:**
+- HTTP requests use `emscripten_fetch` (browser's Fetch API)
+- WebSocket uses `emscripten_websocket` (browser's WebSocket API)
+- Secure storage is not available on web (returns null/error)
+- Memory is fixed at 64MB (no dynamic growth to avoid ArrayBuffer detachment)
 
 ## Running
 
