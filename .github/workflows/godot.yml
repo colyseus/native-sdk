@@ -160,7 +160,7 @@ jobs:
             --sysroot "$SDK" \
             --dep msgpack \
             -Mmsgpack="$MSGPACK_ZIG" \
-            -Mroot=src/msgpack_godot.zig \
+            src/msgpack_godot.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_godot.o
 
@@ -269,7 +269,7 @@ jobs:
             --sysroot "$SDK" \
             --dep msgpack \
             -Mmsgpack="$MSGPACK_ZIG" \
-            -Mroot=src/msgpack_godot.zig \
+            src/msgpack_godot.zig \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_godot_rel.o
 
