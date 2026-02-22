@@ -1,0 +1,16 @@
+.{
+    .name = .raylib_colyseus,
+    .version = "0.1.0",
+    .dependencies = .{
+        .raylib = .{
+            .url = "git+https://github.com/CashWasabi/raylib?ref=zig-0.15#566eb34ff899e6a5010ab18443c4ed2f3a5add57",
+            .hash = "raylib-5.5.0-whq8uAhIxwRfZmWUmaBTel3p6lyO5Ki4k53dGpx91b2D",
+        },
+        .zig_msgpack = .{
+            .url = "git+https://github.com/zigcc/zig-msgpack?ref=main#47c15d217efebd17a585dd04125f9b6b6f659d5a",
+            .hash = "zig_msgpack-0.0.14-evvueGolBQBs_m726tBf4ISJQqC926AM96EtxZy9LUaI",
+        },
+    },
+    .paths = .{""},
+    .fingerprint = 0x2f3ede70e615c716,
+}
