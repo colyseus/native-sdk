@@ -101,7 +101,12 @@ jobs:
           OUT="addons/colyseus/bin"
           mkdir -p "$OUT"
 
-          MSGPACK_ZIG=$(ls .zig-cache/p/zig_msgpack-*/src/msgpack.zig 2>/dev/null | head -1)
+          MSGPACK_ZIG=$(find "$ZIG_GLOBAL_CACHE_DIR/p" -name "msgpack.zig" 2>/dev/null | grep zig_msgpack | head -1)
+          echo "Found msgpack.zig at: $MSGPACK_ZIG"
+            if [ -z "$MSGPACK_ZIG" ]; then
+          echo "ERROR: msgpack.zig not found"
+            exit 1
+            fi
 
           INCLUDES=(
             -I../../include
@@ -221,7 +226,7 @@ jobs:
           SDK="${{ steps.ios-sdk.outputs.path }}"
           OUT="addons/colyseus/bin"
 
-          MSGPACK_ZIG=$(find ~/Library/Caches/zig -name "msgpack.zig" 2>/dev/null | grep zig_msgpack | head -1)
+          MSGPACK_ZIG=$(find "$ZIG_GLOBAL_CACHE_DIR/p" -name "msgpack.zig" 2>/dev/null | grep zig_msgpack | head -1)
           echo "Found msgpack.zig at: $MSGPACK_ZIG"
             if [ -z "$MSGPACK_ZIG" ]; then
           echo "ERROR: msgpack.zig not found"
