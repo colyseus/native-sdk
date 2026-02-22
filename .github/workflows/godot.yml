@@ -86,7 +86,11 @@ jobs:
 
       - name: Populate Zig cache (fetch dependencies)
         working-directory: platforms/godot
-        run: zig build --fetch
+        run: |
+          zig build --fetch
+          echo "Searching for msgpack.zig:"
+          find . -name "msgpack.zig" 2>/dev/null
+          find ~/.cache/zig -name "msgpack.zig" 2>/dev/null || true
 
       - name: Build iOS arm64 (debug)
         working-directory: platforms/godot
