@@ -169,37 +169,37 @@ jobs:
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
-            --mod msgpack::"$MSGPACK_ZIG" \
+            -Mmsgpack="$MSGPACK_ZIG"
             --dep msgpack \
+            -Mroot=src/msgpack_godot.zig \
             "${INCLUDES[@]}" \
-            -femit-bin=.zig-cache/msgpack_godot.o \
-            src/msgpack_godot.zig
+            -femit-bin=.zig-cache/msgpack_godot.o
 
           zig build-obj \
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
+            -Mroot=../../src/network/http.zig \
             "${INCLUDES[@]}" \
-            -femit-bin=.zig-cache/http_zig.o \
-            ../../src/network/http.zig
+            -femit-bin=.zig-cache/http_zig.o
 
           zig build-obj \
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
+            -Mroot=../../src/utils/strUtil.zig \
             "${INCLUDES[@]}" \
-            -femit-bin=.zig-cache/strutil_zig.o \
-            ../../src/utils/strUtil.zig
+            -femit-bin=.zig-cache/strutil_zig.o
 
           zig build-obj \
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
-            --mod msgpack::"$MSGPACK_ZIG" \
+            -Mmsgpack="$MSGPACK_ZIG"
             --dep msgpack \
+            -Mroot=../../src/msgpack/msgpack_builder.zig \
             "${INCLUDES[@]}" \
-            -femit-bin=.zig-cache/msgpack_builder.o \
-            ../../src/msgpack/msgpack_builder.zig
+            -femit-bin=.zig-cache/msgpack_builder.o
 
           # Link everything with clang
           xcrun clang \
@@ -283,37 +283,37 @@ jobs:
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
-            --mod msgpack::"$MSGPACK_ZIG" \
+            -Mmsgpack="$MSGPACK_ZIG"
             --dep msgpack \
+            -Mroot=src/msgpack_godot.zig \
             "${INCLUDES[@]}" \
-            -femit-bin=.zig-cache/msgpack_godot_rel.o \
-            src/msgpack_godot.zig
+            -femit-bin=.zig-cache/msgpack_godot_rel.o
 
           zig build-obj \
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
+            -Mroot=../../src/network/http.zig \
             "${INCLUDES[@]}" \
-            -femit-bin=.zig-cache/http_zig_rel.o \
-            ../../src/network/http.zig
+            -femit-bin=.zig-cache/http_zig_rel.o
 
           zig build-obj \
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
+            -Mroot=../../src/utils/strUtil.zig \
             "${INCLUDES[@]}" \
-            -femit-bin=.zig-cache/strutil_zig_rel.o \
-            ../../src/utils/strUtil.zig \
+            -femit-bin=.zig-cache/strutil_zig_rel.o
 
           zig build-obj \
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
-            --mod msgpack::"$MSGPACK_ZIG" \
+            -Mmsgpack="$MSGPACK_ZIG"
             --dep msgpack \
+            -Mroot=../../src/msgpack/msgpack_builder.zig \
             "${INCLUDES[@]}" \
-            -femit-bin=.zig-cache/msgpack_builder_rel.o \
-            ../../src/msgpack/msgpack_builder.zig
+            -femit-bin=.zig-cache/msgpack_builder_rel.o
 
           xcrun clang \
             -target arm64-apple-ios13.0 \
