@@ -169,8 +169,8 @@ jobs:
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
+            --mod msgpack::"$MSGPACK_ZIG" \
             --dep msgpack \
-            -Mmsgpack="$MSGPACK_ZIG" \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_godot.o \
             src/msgpack_godot.zig
@@ -195,8 +195,8 @@ jobs:
             -target aarch64-ios \
             -ODebug \
             --sysroot "$SDK" \
+            --mod msgpack::"$MSGPACK_ZIG" \
             --dep msgpack \
-            -Mmsgpack="$MSGPACK_ZIG" \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_builder.o \
             ../../src/msgpack/msgpack_builder.zig
@@ -283,8 +283,8 @@ jobs:
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
+            --mod msgpack::"$MSGPACK_ZIG" \
             --dep msgpack \
-            -Mmsgpack="$MSGPACK_ZIG" \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_godot_rel.o \
             src/msgpack_godot.zig
@@ -309,11 +309,11 @@ jobs:
             -target aarch64-ios \
             -OReleaseSafe \
             --sysroot "$SDK" \
+            --mod msgpack::"$MSGPACK_ZIG" \
             --dep msgpack \
-            -Mmsgpack="$MSGPACK_ZIG" \
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_builder_rel.o \
-            ../../src/msgpack/msgpack_builder.zig \
+            ../../src/msgpack/msgpack_builder.zig
 
           xcrun clang \
             -target arm64-apple-ios13.0 \
