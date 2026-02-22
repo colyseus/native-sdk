@@ -222,8 +222,6 @@ static void send_move_message(double x, double y) {
     if (!room || !joined) return;
 
     msgpack_payload_t* msg = msgpack_map_create();
-    if (!msg) return;
-    
     msgpack_map_put_float(msg, "x", x);
     msgpack_map_put_float(msg, "y", y);
     colyseus_room_send(room, "move", msg);
