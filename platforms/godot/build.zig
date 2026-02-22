@@ -54,6 +54,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     msgpack_builder_module.addImport("msgpack", msgpack_module);
+    const msgpack_builder_object = b.addLibrary(.{
+        .name = "msgpack_builder",
+        .root_module = msgpack_builder_module,
+        .linkage = .static,
+    });
+    if (os_tag != .ios and !is_android) {
+        msgpack_builder_object.linkLibC();
+    }
 
     const msgpack_builder_object = b.addLibrary(.{
         .name = "msgpack_builder",
