@@ -48,6 +48,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const msgpack_module = msgpack_dep.module("msgpack");
+    const msgpack_builder_module = b.createModule(.{
+        .root_source_file = b.path("../../src/msgpack/msgpack_builder.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    msgpack_builder_module.addImport("msgpack", msgpack_module);
+
+    const msgpack_builder_object = b.addLibrary(.{
+        .name = "msgpack_builder",
+        .root_module = msgpack_builder_module,
+        .linkage = .static,
+    });
+    if (os_tag != .ios and !is_android) {
+        msgpack_builder_object.linkLibC();
+    }
 
     // For iOS and Android: disable libc linking on msgpack module
     // iOS: works around Zig's libSystem search issue
@@ -217,6 +232,7 @@ pub fn build(b: *std.Build) void {
     // Link Zig HTTP and URL parsing libraries
     lib.linkLibrary(http_object);
     lib.linkLibrary(strutil_object);
+    lib.linkLibrary(msgpack_builder_object);
 
     // Generate wslay version header
     const wslay_version_h = b.addConfigHeader(.{
