@@ -185,7 +185,7 @@ jobs:
           # Link everything with clang
           xcrun clang \
             -target arm64-apple-ios13.0 \
-            -isysroot "$SDK" \
+            --sysroot "$SDK" \
             -dynamiclib \
             -install_name "@rpath/libcolyseus_godot.ios.arm64.debug.framework/libcolyseus_godot.ios.arm64.debug" \
             -o "$OUT/libcolyseus_godot.ios.arm64.debug.dylib" \
@@ -288,7 +288,7 @@ jobs:
 
           xcrun clang \
             -target arm64-apple-ios13.0 \
-            -isysroot "$SDK" \
+            --sysroot "$SDK" \
             -dynamiclib \
             -O2 \
             -install_name "@rpath/libcolyseus_godot.ios.arm64.release.framework/libcolyseus_godot.ios.arm64.release" \
