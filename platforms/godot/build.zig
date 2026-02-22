@@ -63,15 +63,6 @@ pub fn build(b: *std.Build) void {
         msgpack_builder_object.linkLibC();
     }
 
-    const msgpack_builder_object = b.addLibrary(.{
-        .name = "msgpack_builder",
-        .root_module = msgpack_builder_module,
-        .linkage = .static,
-    });
-    if (os_tag != .ios and !is_android) {
-        msgpack_builder_object.linkLibC();
-    }
-
     // For iOS and Android: disable libc linking on msgpack module
     // iOS: works around Zig's libSystem search issue
     // Android: Zig cannot provide Bionic libc
