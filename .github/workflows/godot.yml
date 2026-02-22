@@ -15,7 +15,7 @@ jobs:
   check-version:
     runs-on: ubuntu-latest
     outputs:
-      changed: ${{ steps.version-check.outputs.changed }}
+      changed: ${{ steps.version-check.outputs.changed || 'true' }}
       version: ${{ steps.version-check.outputs.version }}
     steps:
       - name: Checkout repository
@@ -26,15 +26,10 @@ jobs:
       - name: Check version changes
         uses: EndBug/version-check@v2
         id: version-check
+        continue-on-error: true
         with:
           file-name: platforms/godot/addons/colyseus/version.json
-          diff-search: false
-
-      - name: Log version info
-        run: |
-          echo "Version changed: ${{ steps.version-check.outputs.changed }}"
-          echo "Version: ${{ steps.version-check.outputs.version }}"
-
+          diff-search: ${{ github.event_name == 'push' }}
   build-macos-ios:
     needs: check-version
     if: needs.check-version.outputs.changed == 'true'
