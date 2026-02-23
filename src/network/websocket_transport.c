@@ -123,6 +123,8 @@ static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
 
     if (!ws_connect_init(data)) {
         WS_LOG("Connect init failed");
+        free(data->url);
+        data->url = NULL;
         if (transport->events.on_error) {
             transport->events.on_error("Failed to initialize connection", transport->events.userdata);
         }
