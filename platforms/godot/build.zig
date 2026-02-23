@@ -49,9 +49,34 @@ pub fn build(b: *std.Build) void {
     });
     const msgpack_module = msgpack_dep.module("msgpack");
 
+    // Build msgpack_builder Zig module (provides msgpack_payload_encode for room.c)
+    const msgpack_builder_module = b.createModule(.{
+        .root_source_file = b.path("../../src/msgpack/msgpack_builder.zig"),
+        .target = target,
+        .optimize = zig_optimize,
+        // For WASM SIDE_MODULE: disable stack check and enable PIC
+        // Also disable frame pointer and unwind tables to avoid __builtin_return_address usage
+        .stack_check = if (is_emscripten) false else null,
+        .pic = if (is_emscripten) true else null,
+        .omit_frame_pointer = if (is_emscripten) true else null,
+        .unwind_tables = if (is_emscripten) .none else null,
+    });
+    msgpack_builder_module.addImport("msgpack", msgpack_module);
+
+    const msgpack_builder_object = b.addLibrary(.{
+        .name = "msgpack_builder",
+        .root_module = msgpack_builder_module,
+        .linkage = .static,
+    });
+    // Link libc for all targets except iOS and Android (which resolve at runtime)
+    if (os_tag != .ios and !is_android) {
+        msgpack_builder_object.linkLibC();
+    }
+
     // For iOS and Android: disable libc linking on msgpack module
     if (os_tag == .ios or is_android) {
         msgpack_module.link_libc = false;
+        msgpack_builder_module.link_libc = false;
     }
 
     // For WASM SIDE_MODULE: enable PIC and disable stack check on msgpack module
@@ -84,30 +109,6 @@ pub fn build(b: *std.Build) void {
     // Link libc for all targets except iOS and Android (which resolve at runtime)
     if (os_tag != .ios and !is_android) {
         strutil_object.linkLibC();
-    }
-
-    // Build msgpack_builder Zig module (provides msgpack_payload_encode for room.c)
-    const msgpack_builder_module = b.createModule(.{
-        .root_source_file = b.path("../../src/msgpack/msgpack_builder.zig"),
-        .target = target,
-        .optimize = zig_optimize,
-        // For WASM SIDE_MODULE: disable stack check and enable PIC
-        // Also disable frame pointer and unwind tables to avoid __builtin_return_address usage
-        .stack_check = if (is_emscripten) false else null,
-        .pic = if (is_emscripten) true else null,
-        .omit_frame_pointer = if (is_emscripten) true else null,
-        .unwind_tables = if (is_emscripten) .none else null,
-    });
-    msgpack_builder_module.addImport("msgpack", msgpack_module);
-
-    const msgpack_builder_object = b.addLibrary(.{
-        .name = "msgpack_builder",
-        .root_module = msgpack_builder_module,
-        .linkage = .static,
-    });
-    // Link libc for all targets except iOS and Android (which resolve at runtime)
-    if (os_tag != .ios and !is_android) {
-        msgpack_builder_object.linkLibC();
     }
 
     // ========================================================================
