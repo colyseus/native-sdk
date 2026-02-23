@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const msgpack = @import("msgpack");
 
 /// Result type for decoding operations
@@ -51,7 +52,17 @@ pub const DecoderContext = extern struct {
     userdata: ?*anyopaque,
 };
 
-/// Global allocator for msgpack decoding
+/// Get allocator - use c_allocator for wasm32/emscripten (SIDE_MODULE) to avoid GPA issues
+fn getAllocator() std.mem.Allocator {
+    if (builtin.cpu.arch == .wasm32) {
+        // SIDE_MODULE builds can't use GeneralPurposeAllocator due to missing Emscripten stubs
+        return std.heap.c_allocator;
+    } else {
+        return gpa.allocator();
+    }
+}
+
+/// Global allocator for msgpack decoding (only used on non-wasm platforms)
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
 /// Decode a msgpack payload and call the appropriate callbacks
@@ -61,7 +72,7 @@ export fn msgpack_decode_to_godot(
     len: usize,
     ctx: *const DecoderContext,
 ) callconv(.c) bool {
-    const allocator = gpa.allocator();
+    const allocator = getAllocator();
 
     // Handle empty data
     if (len == 0) {

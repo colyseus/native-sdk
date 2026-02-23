@@ -6,9 +6,15 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #ifndef GDE_EXPORT
 #ifdef _WIN32
 #define GDE_EXPORT __declspec(dllexport)
+#elif defined(__EMSCRIPTEN__)
+#define GDE_EXPORT EMSCRIPTEN_KEEPALIVE
 #else
 #define GDE_EXPORT __attribute__((visibility("default")))
 #endif
@@ -415,6 +421,25 @@ static void bind_signal_2(
     destruct_property(&args_info[1]);
 }
 
+extern void colyseus_http_poll(void);
+extern void colyseus_ws_poll(void);
+
+static void gdext_colyseus_client_poll_call(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, 
+    const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, 
+    GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
+    (void)p_method_userdata; (void)p_instance; (void)p_args; 
+    (void)p_argument_count; (void)r_return; (void)r_error;
+    colyseus_http_poll();
+    colyseus_ws_poll();
+}
+
+static void gdext_colyseus_client_poll_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, 
+    const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+    (void)p_method_userdata; (void)p_instance; (void)p_args; (void)r_ret;
+    colyseus_http_poll();
+    colyseus_ws_poll();
+}
+
 static void register_colyseus_client(void) {
     GDExtensionClassCreationInfo2 class_info = {
         .is_virtual = false,
@@ -429,7 +454,7 @@ static void register_colyseus_client(void) {
         .validate_property_func = NULL,
         .notification_func = NULL,
         .to_string_func = NULL,
-        .reference_func = NULL,  // Let Godot handle RefCounted reference counting
+        .reference_func = NULL,
         .unreference_func = NULL,
         .create_instance_func = gdext_colyseus_client_constructor,
         .free_instance_func = gdext_colyseus_client_destructor,
@@ -535,6 +560,37 @@ static void register_colyseus_client(void) {
         destruct_property(&args_info[0]);
         destruct_property(&return_info);
     }
+
+    // Register static poll() method
+    {
+        StringName method_name_string;
+        constructors.string_name_new_with_latin1_chars(&method_name_string, "poll", false);
+
+        GDExtensionClassMethodInfo method_info = {
+            .name = &method_name_string,
+            .method_userdata = NULL,
+            .call_func = (GDExtensionClassMethodCall)gdext_colyseus_client_poll_call,
+            .ptrcall_func = (GDExtensionClassMethodPtrCall)gdext_colyseus_client_poll_ptrcall,
+            .method_flags = GDEXTENSION_METHOD_FLAG_STATIC,
+            .has_return_value = false,
+            .return_value_info = NULL,
+            .return_value_metadata = GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+            .argument_count = 0,
+            .arguments_info = NULL,
+            .arguments_metadata = NULL,
+            .default_argument_count = 0,
+            .default_arguments = NULL
+        };
+
+        StringName class_name_string;
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusClient", false);
+
+        api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
+
+        destructors.string_name_destructor(&method_name_string);
+        destructors.string_name_destructor(&class_name_string);
+    }
+
 }
 
 // Forward declaration for vararg call wrapper (defined later)

@@ -2,9 +2,9 @@
 
 A lightweight GDExtension that wraps the Colyseus Native SDK for use in Godot Engine. Written in pure C for maximum performance and minimal dependencies.
 
-**Supports:** Windows, macOS, Linux, and **Web** (via JavaScript SDK bridge).
+**Supports:** Windows, macOS, Linux, iOS, Android, and **Web** (WASM).
 
-## 🏗️ Building
+## Building
 
 ### Prerequisites
 
@@ -21,7 +21,7 @@ cd platforms/godot
 zig build
 ```
 
-That's it! The extension will be built and placed in the `bin/` directory.
+That's it! The extension will be built and placed in the `addons/colyseus/bin/` directory.
 
 #### Build Options
 
@@ -36,92 +36,81 @@ zig build -Doptimize=ReleaseFast
 zig build -Dtarget=x86_64-linux
 zig build -Dtarget=x86_64-windows
 zig build -Dtarget=aarch64-macos
+
+# Build for Web (WASM)
+zig build -Dtarget=wasm32-emscripten
 ```
 
-## 📦 Installation
+## Installation
 
 1. Copy the `addons/colyseus` folder to your Godot project's `addons/` directory
 2. Make sure the `bin/` folder contains the compiled library for your platform
 3. The extension will be automatically loaded by Godot
 
-### For Cross-Platform Support (including Web)
+### Using the Factory (Recommended)
 
-To support both native and web platforms seamlessly:
+Add `Colyseus` as an autoload in your project (Project → Project Settings → Autoload):
+- Path: `res://addons/colyseus/colyseus.gd`
+- Name: `Colyseus`
 
-1. Add `Colyseus` as an autoload in your project (Project → Project Settings → Autoload)
-   - Path: `res://addons/colyseus/colyseus.gd`
-   - Name: `Colyseus`
+Then use the factory to create clients:
 
-2. Use the factory to create clients:
 ```gdscript
-# Works on all platforms (native + web)
 var client = Colyseus.create_client()
 client.set_endpoint("ws://localhost:2567")
 var room = client.join_or_create("my_room")
 
-# Get callbacks using factory
-var callbacks = Colyseus.get_callbacks(room)
+# Get callbacks
+var callbacks = Colyseus.callbacks(room)
 ```
 
-## 🌐 Web Export
+## Web Export
 
-The addon includes a JavaScript SDK bridge that enables web exports without requiring WASM compilation.
+The GDExtension supports web exports via WebAssembly (WASM). This requires **dlink-enabled export templates**.
 
-### Setup for Web Export
+### Requirements
 
-1. In the Godot Export dialog, create or select a "Web" export preset
+Godot's default web export templates do **not** include GDExtension support. You need custom templates compiled with dynamic linking enabled.
 
-2. Under "HTML" → "Custom HTML Shell", select:
-   ```
-   res://addons/colyseus/web/colyseus.html
-   ```
+#### Option 1: Build Custom Templates
 
-3. When exporting, copy these files to your export directory alongside the HTML:
-   - `addons/colyseus/web/colyseus.js` (the Colyseus SDK)
-   - `addons/colyseus/web/colyseus_bridge.js` (the Godot bridge)
+Compile Godot export templates with GDExtension support:
 
-4. Export your project
-
-### How It Works
-
-On web platform, the addon uses:
-- **colyseus.js** - The official Colyseus JavaScript SDK (embedded, no CDN required)
-- **colyseus_bridge.js** - A thin wrapper exposing the SDK to Godot's `JavaScriptBridge`
-- **GDScript web classes** - Pure GDScript implementations that mirror the native API
-
-```
-┌─────────────────────────────────────────┐
-│         Godot Engine (GDScript)         │
-│   var client = Colyseus.create_client() │
-└─────────────────┬───────────────────────┘
-                  │ Platform Detection
-                  ▼
-    ┌─────────────────────────────────┐
-    │ Native (Windows/macOS/Linux)    │
-    │   → GDExtension C Library       │
-    └─────────────────────────────────┘
-    ┌─────────────────────────────────┐
-    │ Web (Browser)                   │
-    │   → JavaScriptBridge            │
-    │   → colyseus_bridge.js          │
-    │   → colyseus.js (SDK)           │
-    └─────────────────────────────────┘
+```bash
+scons platform=web dlink_enabled=yes target=template_release
+scons platform=web dlink_enabled=yes target=template_debug
 ```
 
-### Web-Specific Classes
+Rename the resulting files to `web_dlink_release.zip` and `web_dlink_debug.zip`, then configure them in Godot's Export dialog under "Custom Templates".
 
-When running on web, these classes are used automatically:
-- `ColyseusWebClient` - Web implementation of ColyseusClient
-- `ColyseusWebRoom` - Web implementation of ColyseusRoom  
-- `ColyseusWebCallbacks` - Web implementation of ColyseusCallbacks
+#### Option 2: Use Community Templates
 
-You don't need to use these directly if you use the `ColyseusFactory` autoload.
+Look for community-provided dlink-enabled templates that support GDExtension on web.
 
-## 🚀 Usage
+### Building the WASM Library
+
+```bash
+cd platforms/godot
+
+# Debug build
+zig build -Dtarget=wasm32-emscripten
+
+# Release build  
+zig build -Dtarget=wasm32-emscripten -Doptimize=ReleaseFast
+```
+
+The WASM file will be placed in `addons/colyseus/bin/`.
+
+### Emscripten Compatibility
+
+- Requires Emscripten 3.1.74+ for Godot 4.3+ compatibility
+- The build system will automatically download and set up the emsdk if needed
+
+## Usage
 
 See [example.gd](example.gd)
 
-## 📋 API Reference
+## API Reference
 
 ### ColyseusClient
 
@@ -151,22 +140,22 @@ See [example.gd](example.gd)
 - `error(code: int, message: String)` - Emitted on error
 - `left(code: int, reason: String)` - Emitted when leaving the room
 
-## 🔧 Architecture
+## Architecture
 
 This extension is built with:
 - **Pure C** - No C++ dependencies, direct use of GDExtension C API
 - **Zig Build System** - Simple, fast, and supports easy cross-compilation
-- **Minimal Dependencies** - Only depends on the Colyseus Native SDK 
+- **Unified Codebase** - Same GDExtension works on all platforms including web
 
 ```
 ┌─────────────────────────────────────────┐
 │         Godot Engine (GDScript)         │
-│   var client = ColyseusClient.new()    │
+│   var client = Colyseus.create_client() │
 └─────────────────┬───────────────────────┘
                   │ GDExtension C API
                   │
 ┌─────────────────▼───────────────────────┐
-│      Pure C Wrapper (this extension)    │
+│      GDExtension (Pure C)               │
 │  - register_types.c                     │
 │  - colyseus_client.c                    │
 │  - colyseus_room.c                      │
@@ -178,10 +167,19 @@ This extension is built with:
 │  - colyseus_client_t                    │
 │  - colyseus_room_t                      │
 │  - WebSocket, HTTP, JSON handling       │
-└─────────────────────────────────────────┘
+└─────────────────┬───────────────────────┘
+                  │
+    ┌─────────────┴─────────────┐
+    │                           │
+┌───▼───┐                   ┌───▼───┐
+│Native │                   │ Web   │
+│.dylib │                   │.wasm  │
+│.so    │                   │       │
+│.dll   │                   │       │
+└───────┘                   └───────┘
 ```
 
-## 🎯 Design Choices
+## Design Choices
 
 ### Why C instead of C++?
 
@@ -194,14 +192,19 @@ This extension is built with:
 ### Why Zig for building?
 
 1. **Simple** - Just `zig build` with no external dependencies
-2. **Cross-compilation** - Easy to build for any platform
+2. **Cross-compilation** - Easy to build for any platform including WASM
 3. **Fast** - Built-in caching and parallel compilation
 4. **No build tool dependencies** - Zig includes everything
 5. **Consistent** - Same build system as the main Colyseus SDK
 
-## ⚠️ Status
+### Why WASM instead of JavaScript Bridge?
 
-This is a barebones implementation providing the foundation for Colyseus integration. 
+1. **Unified codebase** - Same C code runs on all platforms
+2. **No dual maintenance** - No separate JavaScript implementation needed
+3. **Consistent behavior** - Identical SDK behavior across platforms
+4. **Better debugging** - Same debugging experience everywhere
+
+## Status
 
 **Working:**
 - ✅ Basic class structure  
@@ -211,8 +214,8 @@ This is a barebones implementation providing the foundation for Colyseus integra
 - ✅ Godot signals for events  
 - ✅ Pure C implementation
 - ✅ Zig build system
-- ✅ Web export support (JavaScript SDK bridge)
-- ✅ Platform-aware factory for cross-platform code
+- ✅ Web export support (WASM with dlink templates)
+- ✅ Cross-platform factory
 
 **Not Yet Implemented:**
 - ⏳ Async operations with proper callbacks  
@@ -221,6 +224,6 @@ This is a barebones implementation providing the foundation for Colyseus integra
 - ⏳ Complete matchmaking API  
 - ⏳ Schema deserialization  
 
-## 📝 License
+## License
 
 See LICENSE file in the root directory.

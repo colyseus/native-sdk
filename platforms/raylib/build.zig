@@ -33,6 +33,11 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("../../src/utils/strUtil.zig"),
         .target = target,
         .optimize = optimize,
+        // For WASM: disable features that use __builtin_return_address
+        .stack_check = if (is_emscripten) false else null,
+        .pic = if (is_emscripten) true else null,
+        .omit_frame_pointer = if (is_emscripten) true else null,
+        .unwind_tables = if (is_emscripten) .none else null,
     });
 
     const strutil_object = b.addLibrary(.{
@@ -47,13 +52,27 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const msgpack_module = msgpack_dep.module("msgpack");
+
+    // For WASM: disable features that use __builtin_return_address on msgpack module
+    if (is_emscripten) {
+        msgpack_module.pic = true;
+        msgpack_module.stack_check = false;
+        msgpack_module.omit_frame_pointer = true;
+        msgpack_module.unwind_tables = .none;
+    }
 
     const msgpack_builder_module = b.createModule(.{
         .root_source_file = b.path("../../src/msgpack/msgpack_builder.zig"),
         .target = target,
         .optimize = optimize,
+        // For WASM: disable features that use __builtin_return_address
+        .stack_check = if (is_emscripten) false else null,
+        .pic = if (is_emscripten) true else null,
+        .omit_frame_pointer = if (is_emscripten) true else null,
+        .unwind_tables = if (is_emscripten) .none else null,
     });
-    msgpack_builder_module.addImport("msgpack", msgpack_dep.module("msgpack"));
+    msgpack_builder_module.addImport("msgpack", msgpack_module);
 
     const msgpack_builder_object = b.addLibrary(.{
         .name = "msgpack_builder",
@@ -320,6 +339,7 @@ pub fn build(b: *std.Build) void {
                 "-sFETCH",
                 "-sSTACK_SIZE=1048576",
                 "-lwebsocket.js",
+                "-Wl,--allow-multiple-definition",
                 "--shell-file",
             });
 

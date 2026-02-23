@@ -97,7 +97,7 @@ static void on_room_leave(int code, const char* reason, void* userdata);
 GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata) {
     (void)p_class_userdata;
     
-    // Create the Godot Object (construct parent RefCounted class)
+    // Create the Godot Object (construct parent class)
     StringName class_name;
     constructors.string_name_new_with_latin1_chars(&class_name, "RefCounted", false);
     
