@@ -2,8 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 // Select allocator based on target platform
-// - Android/iOS: use page_allocator (no libc dependency, Zig can't provide libc for these)
-// - Other platforms: use c_allocator (more efficient for small allocations)
+// - Android/iOS: use page_allocator (no libc dependency at build time)
+// - Other platforms (including emscripten): use c_allocator
 const builtin = @import("builtin");
 const is_android = builtin.os.tag == .linux and (builtin.abi == .android or builtin.abi == .androideabi);
 const is_ios = builtin.os.tag == .ios;

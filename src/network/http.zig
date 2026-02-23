@@ -1,6 +1,20 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const http = std.http;
+const builtin = @import("builtin");
+const is_emscripten = builtin.os.tag == .emscripten;
+
+// std.http is not available on emscripten - HTTP should use JavaScript fetch API
+const http = if (!is_emscripten) std.http else struct {
+    pub const Method = enum { GET, POST, PUT, DELETE };
+    pub const Header = struct { name: []const u8, value: []const u8 };
+    pub const Client = struct {
+        allocator: Allocator,
+        pub fn deinit(_: *@This()) void {}
+        pub fn fetch(_: *@This(), _: anytype) !struct { status: enum { ok } } {
+            return error.NotSupportedOnWeb;
+        }
+    };
+};
 
 // Forward declarations for C types (avoiding @cImport to support iOS cross-compilation)
 // These match the definitions in colyseus/settings.h and uthash.h
@@ -38,12 +52,11 @@ extern fn colyseus_settings_get_webrequest_endpoint(settings: *const colyseus_se
 extern fn free(ptr: ?*anyopaque) void;
 
 // Select allocator based on target platform
-// - Android/iOS: use page_allocator (no libc dependency, Zig can't provide libc for these)
+// - Android/iOS/Emscripten: use page_allocator (no libc dependency)
 // - Other platforms: use c_allocator (more efficient for small allocations)
-const builtin = @import("builtin");
 const is_android = builtin.os.tag == .linux and (builtin.abi == .android or builtin.abi == .androideabi);
 const is_ios = builtin.os.tag == .ios;
-const allocator = if (is_android or is_ios) std.heap.page_allocator else std.heap.c_allocator;
+const allocator = if (is_android or is_ios or is_emscripten) std.heap.page_allocator else std.heap.c_allocator;
 
 pub const colyseus_http_response_t = extern struct {
     status_code: c_int,

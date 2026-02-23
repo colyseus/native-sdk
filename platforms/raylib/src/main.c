@@ -4,6 +4,11 @@
 #include <stdbool.h>
 
 #include "raylib.h"
+
+#if defined(PLATFORM_WEB)
+    #include <emscripten/emscripten.h>
+#endif
+
 #include <colyseus/client.h>
 #include <colyseus/schema.h>
 #include <colyseus/schema/callbacks.h>
@@ -36,6 +41,7 @@ static double my_y = SCREEN_HEIGHT / 2.0;
 static bool connected = false;
 static bool joined = false;
 static char status_message[256] = "Connecting...";
+static bool callbacks_setup = false;
 
 static Color player_colors[] = {
     RED, BLUE, GREEN, YELLOW, PURPLE, ORANGE, PINK, SKYBLUE,
@@ -350,6 +356,41 @@ static void draw_players(void) {
     DrawText(debug_msg, 10, 40, 16, YELLOW);
 }
 
+static void update_draw_frame(void) {
+    // Setup callbacks once we have state
+    if (joined && !callbacks_setup && room && room->serializer) {
+        setup_state_callbacks();
+        callbacks_setup = true;
+    }
+
+    // Handle input
+    handle_input();
+
+    // Draw
+    BeginDrawing();
+    ClearBackground(DARKGRAY);
+
+    // Draw status
+    DrawText(status_message, 10, 10, 20, WHITE);
+
+    // Draw instructions
+    if (joined) {
+        DrawText("Use WASD or Arrow keys to move", 10, SCREEN_HEIGHT - 30, 16, LIGHTGRAY);
+    }
+
+    // Draw players
+    draw_players();
+
+    // Draw connection indicator
+    if (connected) {
+        DrawCircle(SCREEN_WIDTH - 20, 20, 10, joined ? GREEN : YELLOW);
+    } else {
+        DrawCircle(SCREEN_WIDTH - 20, 20, 10, RED);
+    }
+
+    EndDrawing();
+}
+
 int main(void) {
     printf("Colyseus Raylib Example\n");
     printf("=======================\n");
@@ -390,45 +431,17 @@ int main(void) {
         NULL
     );
 
-    bool callbacks_setup = false;
+#if defined(PLATFORM_WEB)
+    // Web main loop using emscripten
+    emscripten_set_main_loop(update_draw_frame, 0, 1);
 
-    // Main game loop
+#else
+    // Native main game loop
     while (!WindowShouldClose()) {
-        // Setup callbacks once we have state
-        if (joined && !callbacks_setup && room && room->serializer) {
-            setup_state_callbacks();
-            callbacks_setup = true;
-        }
-
-        // Handle input
-        handle_input();
-
-        // Draw
-        BeginDrawing();
-        ClearBackground(DARKGRAY);
-
-        // Draw status
-        DrawText(status_message, 10, 10, 20, WHITE);
-
-        // Draw instructions
-        if (joined) {
-            DrawText("Use WASD or Arrow keys to move", 10, SCREEN_HEIGHT - 30, 16, LIGHTGRAY);
-        }
-
-        // Draw players
-        draw_players();
-
-        // Draw connection indicator
-        if (connected) {
-            DrawCircle(SCREEN_WIDTH - 20, 20, 10, joined ? GREEN : YELLOW);
-        } else {
-            DrawCircle(SCREEN_WIDTH - 20, 20, 10, RED);
-        }
-
-        EndDrawing();
+        update_draw_frame();
     }
 
-    // Cleanup
+    // Cleanup (native only - web cleanup happens on page unload)
     printf("\nCleaning up...\n");
     fflush(stdout);
 
@@ -449,5 +462,7 @@ int main(void) {
     CloseWindow();
 
     printf("Done\n");
+#endif
+
     return 0;
 }
