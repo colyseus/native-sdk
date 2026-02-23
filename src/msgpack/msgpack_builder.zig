@@ -7,7 +7,10 @@ const Allocator = std.mem.Allocator;
 // Select allocator based on target platform
 // - All platforms: use c_allocator (emscripten provides libc)
 const builtin = @import("builtin");
-const allocator = std.heap.c_allocator;
+const is_android = builtin.os.tag == .linux and (builtin.abi == .android or builtin.abi == .androideabi);
+const is_ios = builtin.os.tag == .ios;
+const is_emscripten = builtin.os.tag == .emscripten;
+const allocator = if (is_android or is_ios or is_emscripten) std.heap.page_allocator else std.heap.c_allocator;
 
 const PayloadType = enum {
     map,
