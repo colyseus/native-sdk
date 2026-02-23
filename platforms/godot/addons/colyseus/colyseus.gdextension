@@ -28,3 +28,7 @@ android.debug.arm32 = "bin/libcolyseus_godot.android.arm32.debug.so"
 android.release.arm32 = "bin/libcolyseus_godot.android.arm32.release.so"
 android.debug.arm64 = "bin/libcolyseus_godot.android.arm64.debug.so"
 android.release.arm64 = "bin/libcolyseus_godot.android.arm64.release.so"
+
+; Web (WASM) - requires dlink-enabled export templates
+web.debug.wasm32 = "bin/libcolyseus_godot.web.wasm32.debug.wasm"
+web.release.wasm32 = "bin/libcolyseus_godot.web.wasm32.release.wasm"

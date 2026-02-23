@@ -6,9 +6,15 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #ifndef GDE_EXPORT
 #ifdef _WIN32
 #define GDE_EXPORT __declspec(dllexport)
+#elif defined(__EMSCRIPTEN__)
+#define GDE_EXPORT EMSCRIPTEN_KEEPALIVE
 #else
 #define GDE_EXPORT __attribute__((visibility("default")))
 #endif
@@ -415,6 +421,22 @@ static void bind_signal_2(
     destruct_property(&args_info[1]);
 }
 
+#ifdef GDEXTENSION_SIDE_MODULE
+extern void colyseus_http_poll(void);
+extern void colyseus_ws_poll(void);
+
+static void colyseus_client_notification(GDExtensionClassInstancePtr p_instance, int32_t p_what, GDExtensionBool p_reversed) {
+    (void)p_instance;
+    (void)p_reversed;
+    
+    // NOTIFICATION_PROCESS = 17 (from Godot's Node class)
+    if (p_what == 17) {
+        colyseus_http_poll();
+        colyseus_ws_poll();
+    }
+}
+#endif
+
 static void register_colyseus_client(void) {
     GDExtensionClassCreationInfo2 class_info = {
         .is_virtual = false,
@@ -427,9 +449,13 @@ static void register_colyseus_client(void) {
         .property_can_revert_func = NULL,
         .property_get_revert_func = NULL,
         .validate_property_func = NULL,
+#ifdef GDEXTENSION_SIDE_MODULE
+        .notification_func = colyseus_client_notification,
+#else
         .notification_func = NULL,
+#endif
         .to_string_func = NULL,
-        .reference_func = NULL,  // Let Godot handle RefCounted reference counting
+        .reference_func = NULL,
         .unreference_func = NULL,
         .create_instance_func = gdext_colyseus_client_constructor,
         .free_instance_func = gdext_colyseus_client_destructor,
@@ -446,7 +472,12 @@ static void register_colyseus_client(void) {
     StringName parent_class_name;
 
     constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusClient", false);
+    // Extend Node instead of RefCounted for web builds so we get _process notifications
+#ifdef GDEXTENSION_SIDE_MODULE
+    constructors.string_name_new_with_latin1_chars(&parent_class_name, "Node", false);
+#else
     constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
+#endif
 
     api.classdb_register_extension_class2(class_library, &class_name, &parent_class_name, &class_info);
 
@@ -535,6 +566,7 @@ static void register_colyseus_client(void) {
         destruct_property(&args_info[0]);
         destruct_property(&return_info);
     }
+
 }
 
 // Forward declaration for vararg call wrapper (defined later)
