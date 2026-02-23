@@ -11,8 +11,8 @@
             .hash = "zig_msgpack-0.0.14-evvueGolBQBs_m726tBf4ISJQqC926AM96EtxZy9LUaI",
         },
         .emsdk = .{
-            .url = "git+https://github.com/emscripten-core/emsdk#4.0.9",
-            .hash = "N-V-__8AAJl1DwBezhYo_VE6f53mPVm00R-Fk28NPW7P14EQ",
+            .url = "git+https://github.com/emscripten-core/emsdk#4.0.23",
+            .hash = "N-V-__8AAHQFEABC8QdfXNl_LRxXIKI8ELtz4eZ9Yht7K6m2",
             .lazy = true,
         },
     },

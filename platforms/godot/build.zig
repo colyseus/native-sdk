@@ -238,8 +238,6 @@ pub fn build(b: *std.Build) void {
                 wasm_output,
                 "-sSIDE_MODULE=2",
                 "-sEXPORT_ALL=1",
-                // Required for Zig 0.15.2+ which uses __builtin_return_address in allocator
-                "-sUSE_OFFSET_CONVERTER",
                 // Allow multiple definitions to handle duplicate stack check symbols from Zig libs
                 "-Wl,--allow-multiple-definition",
             });

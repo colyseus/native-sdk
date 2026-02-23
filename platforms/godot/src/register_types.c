@@ -421,21 +421,24 @@ static void bind_signal_2(
     destruct_property(&args_info[1]);
 }
 
-#ifdef GDEXTENSION_SIDE_MODULE
 extern void colyseus_http_poll(void);
 extern void colyseus_ws_poll(void);
 
-static void colyseus_client_notification(GDExtensionClassInstancePtr p_instance, int32_t p_what, GDExtensionBool p_reversed) {
-    (void)p_instance;
-    (void)p_reversed;
-    
-    // NOTIFICATION_PROCESS = 17 (from Godot's Node class)
-    if (p_what == 17) {
-        colyseus_http_poll();
-        colyseus_ws_poll();
-    }
+static void gdext_colyseus_client_poll_call(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, 
+    const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, 
+    GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
+    (void)p_method_userdata; (void)p_instance; (void)p_args; 
+    (void)p_argument_count; (void)r_return; (void)r_error;
+    colyseus_http_poll();
+    colyseus_ws_poll();
 }
-#endif
+
+static void gdext_colyseus_client_poll_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, 
+    const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+    (void)p_method_userdata; (void)p_instance; (void)p_args; (void)r_ret;
+    colyseus_http_poll();
+    colyseus_ws_poll();
+}
 
 static void register_colyseus_client(void) {
     GDExtensionClassCreationInfo2 class_info = {
@@ -449,11 +452,7 @@ static void register_colyseus_client(void) {
         .property_can_revert_func = NULL,
         .property_get_revert_func = NULL,
         .validate_property_func = NULL,
-#ifdef GDEXTENSION_SIDE_MODULE
-        .notification_func = colyseus_client_notification,
-#else
         .notification_func = NULL,
-#endif
         .to_string_func = NULL,
         .reference_func = NULL,
         .unreference_func = NULL,
@@ -472,12 +471,7 @@ static void register_colyseus_client(void) {
     StringName parent_class_name;
 
     constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusClient", false);
-    // Extend Node instead of RefCounted for web builds so we get _process notifications
-#ifdef GDEXTENSION_SIDE_MODULE
-    constructors.string_name_new_with_latin1_chars(&parent_class_name, "Node", false);
-#else
     constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
-#endif
 
     api.classdb_register_extension_class2(class_library, &class_name, &parent_class_name, &class_info);
 
@@ -565,6 +559,36 @@ static void register_colyseus_client(void) {
         destructors.string_name_destructor(&class_name_string);
         destruct_property(&args_info[0]);
         destruct_property(&return_info);
+    }
+
+    // Register static poll() method
+    {
+        StringName method_name_string;
+        constructors.string_name_new_with_latin1_chars(&method_name_string, "poll", false);
+
+        GDExtensionClassMethodInfo method_info = {
+            .name = &method_name_string,
+            .method_userdata = NULL,
+            .call_func = (GDExtensionClassMethodCall)gdext_colyseus_client_poll_call,
+            .ptrcall_func = (GDExtensionClassMethodPtrCall)gdext_colyseus_client_poll_ptrcall,
+            .method_flags = GDEXTENSION_METHOD_FLAG_STATIC,
+            .has_return_value = false,
+            .return_value_info = NULL,
+            .return_value_metadata = GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+            .argument_count = 0,
+            .arguments_info = NULL,
+            .arguments_metadata = NULL,
+            .default_argument_count = 0,
+            .default_arguments = NULL
+        };
+
+        StringName class_name_string;
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusClient", false);
+
+        api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
+
+        destructors.string_name_destructor(&method_name_string);
+        destructors.string_name_destructor(&class_name_string);
     }
 
 }

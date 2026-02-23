@@ -338,8 +338,6 @@ pub fn build(b: *std.Build) void {
                 "-sEXIT_RUNTIME=0",
                 "-sFETCH",
                 "-sSTACK_SIZE=1048576",
-                // Required for Zig 0.15.2+ which uses __builtin_return_address in allocator
-                "-sUSE_OFFSET_CONVERTER",
                 "-lwebsocket.js",
                 "-Wl,--allow-multiple-definition",
                 "--shell-file",

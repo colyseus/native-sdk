@@ -99,12 +99,7 @@ GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata) {
     
     // Create the Godot Object (construct parent class)
     StringName class_name;
-#ifdef GDEXTENSION_SIDE_MODULE
-    // Web builds: extend Node to get _process notifications for polling
-    constructors.string_name_new_with_latin1_chars(&class_name, "Node", false);
-#else
     constructors.string_name_new_with_latin1_chars(&class_name, "RefCounted", false);
-#endif
     
     GDExtensionObjectPtr object = api.classdb_construct_object(&class_name);
     destructors.string_name_destructor(&class_name);
@@ -122,34 +117,6 @@ GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata) {
     constructors.string_name_new_with_latin1_chars(&class_name2, "ColyseusClient", false);
     api.object_set_instance(object, &class_name2, wrapper);
     destructors.string_name_destructor(&class_name2);
-    
-#ifdef GDEXTENSION_SIDE_MODULE
-    // Enable processing so we receive NOTIFICATION_PROCESS for polling
-    // Call set_process(true) on the Node
-    {
-        StringName method_name;
-        constructors.string_name_new_with_latin1_chars(&method_name, "set_process", false);
-        
-        // Create Variant from object
-        Variant obj_variant;
-        constructors.variant_from_object_constructor(&obj_variant, &object);
-        
-        // Create boolean argument
-        Variant bool_arg;
-        GDExtensionBool true_val = 1;
-        constructors.variant_from_bool_constructor(&bool_arg, &true_val);
-        
-        GDExtensionConstVariantPtr args[1] = { &bool_arg };
-        Variant ret;
-        GDExtensionCallError error;
-        
-        api.variant_call(&obj_variant, &method_name, args, 1, &ret, &error);
-        
-        destructors.string_name_destructor(&method_name);
-        destructors.variant_destroy(&bool_arg);
-        destructors.variant_destroy(&obj_variant);
-    }
-#endif
     
     return object;
 }
