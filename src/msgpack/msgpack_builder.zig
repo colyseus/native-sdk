@@ -231,7 +231,10 @@ fn getPayloadForEncoding(wrapper: *PayloadWrapper) ?Payload {
             if (wrapper.array_elements) |list| {
                 var arr_payload = Payload.arrPayload(list.items.len, allocator) catch return null;
                 for (list.items, 0..) |item, i| {
-                    arr_payload.setArrElement(i, item) catch return null;
+                    arr_payload.setArrElement(i, item) catch {
+                        arr_payload.free(allocator);
+                        return null;
+                    };
                 }
                 return arr_payload;
             }

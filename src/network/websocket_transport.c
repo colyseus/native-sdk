@@ -123,6 +123,8 @@ static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
 
     if (!ws_connect_init(data)) {
         WS_LOG("Connect init failed");
+        free(data->url);
+        data->url = NULL;
         if (transport->events.on_error) {
             transport->events.on_error("Failed to initialize connection", transport->events.userdata);
         }
@@ -493,8 +495,8 @@ static bool ws_http_handshake_init(colyseus_ws_transport_data_t* data) {
     memcpy(data->buffer, request, req_len);
     data->buffer_offset = 0;
 
-    /* Store length at end for sending */
-    *(size_t*)(data->buffer + data->buffer_size - sizeof(size_t)) = req_len;
+    /* Store length for sending */
+    data->handshake_len = req_len;
 
     sdsfree(request);
     return true;
@@ -504,7 +506,7 @@ static bool ws_http_handshake_init(colyseus_ws_transport_data_t* data) {
 /* (Due to length, showing key parts - full implementation follows same pattern as C++ version) */
 
 static bool ws_http_handshake_send(colyseus_ws_transport_data_t* data) {
-    size_t total_len = *(size_t*)(data->buffer + data->buffer_size - sizeof(size_t));
+    size_t total_len = data->handshake_len;
 
     while (data->buffer_offset < total_len) {
         int would_block = 0;
