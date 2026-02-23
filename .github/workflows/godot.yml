@@ -36,8 +36,6 @@ jobs:
           echo "Version: ${{ steps.version-check.outputs.version }}"
 
   build-macos:
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -65,8 +63,6 @@ jobs:
           path: platforms/godot/addons/colyseus/bin/*.dylib
 
   build-ios:
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -344,8 +340,6 @@ jobs:
           path: platforms/godot/addons/colyseus/bin/*ios*.dylib
 
   build-linux:
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -373,8 +367,6 @@ jobs:
           path: platforms/godot/addons/colyseus/bin/*.so
 
   build-windows:
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -410,8 +402,6 @@ jobs:
           path: platforms/godot/addons/colyseus/bin/*.dll
 
   build-android:
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
