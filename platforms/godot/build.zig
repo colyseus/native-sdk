@@ -48,20 +48,6 @@ pub fn build(b: *std.Build) void {
         .optimize = zig_optimize,
     });
     const msgpack_module = msgpack_dep.module("msgpack");
-    const msgpack_builder_module = b.createModule(.{
-        .root_source_file = b.path("../../src/msgpack/msgpack_builder.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    msgpack_builder_module.addImport("msgpack", msgpack_module);
-    const msgpack_builder_object = b.addLibrary(.{
-        .name = "msgpack_builder",
-        .root_module = msgpack_builder_module,
-        .linkage = .static,
-    });
-    if (os_tag != .ios and !is_android) {
-        msgpack_builder_object.linkLibC();
-    }
 
     // For iOS and Android: disable libc linking on msgpack module
     if (os_tag == .ios or is_android) {
@@ -134,9 +120,6 @@ pub fn build(b: *std.Build) void {
             const has_emscripten = if (std.fs.accessAbsolute(dot_emsc_path, .{})) |_| true else |_| false;
 
     // Link Zig HTTP and URL parsing libraries
-    lib.linkLibrary(http_object);
-    lib.linkLibrary(strutil_object);
-    lib.linkLibrary(msgpack_builder_object);
             var emsdk_activate: ?*std.Build.Step.Run = null;
             if (!has_emscripten) {
                 const emsdk_install = b.addSystemCommand(&.{emsdk_dep.path("emsdk").getPath(b)});

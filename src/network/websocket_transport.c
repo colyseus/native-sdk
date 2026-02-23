@@ -750,3 +750,11 @@ static void ws_cleanup_wslay(colyseus_ws_transport_data_t* data) {
         data->wslay_ctx = NULL;
     }
 }
+
+void colyseus_http_poll(void) {
+    /* Native HTTP is synchronous - no polling needed */
+}
+
+void colyseus_ws_poll(void) {
+    /* Native WebSocket runs on its own thread - no polling needed */
+}
