@@ -34,6 +34,7 @@ extern "C" {
         /* size_t fields (8 bytes on 64-bit) */
         size_t buffer_size;
         size_t buffer_offset;
+        size_t handshake_len;
 
         /* 4-byte fields */
         colyseus_ws_state_t state;
