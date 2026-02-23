@@ -320,7 +320,10 @@ fn buildUrl(alloc: Allocator, base: []const u8, path: []const u8) ![]u8 {
 
 fn buildHeaders(http_client: *colyseus_http_t) !OwnedHeaders {
     var headers: std.ArrayListUnmanaged(http.Header) = .empty;
+    errdefer headers.deinit(allocator); // leak-safe on any failure
+
     var auth_value: ?[]u8 = null;
+    errdefer if (auth_value) |v| allocator.free(v); // leak-safe on any failure
 
     var header: ?*colyseus_header_t = http_client.settings.headers;
     while (header) |h| {
@@ -336,7 +339,6 @@ fn buildHeaders(http_client: *colyseus_http_t) !OwnedHeaders {
         const token_slice = cStrToSlice(http_client.auth_token);
         if (token_slice) |tok| {
             auth_value = try std.fmt.allocPrint(allocator, "Bearer {s}", .{tok});
-            errdefer if (auth_value) |v| allocator.free(v); // leak-safe on append failure
             try headers.append(allocator, .{ .name = "Authorization", .value = auth_value.? });
         }
     }
