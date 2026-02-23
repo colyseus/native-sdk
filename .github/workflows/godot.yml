@@ -26,10 +26,9 @@ jobs:
       - name: Check version changes
         uses: EndBug/version-check@v2
         id: version-check
-        continue-on-error: true
         with:
           file-name: platforms/godot/addons/colyseus/version.json
-          diff-search: ${{ github.event_name == 'push' }}
+          diff-search: true
 
       - name: Log version info
         run: |
