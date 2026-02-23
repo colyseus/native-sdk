@@ -16,6 +16,16 @@ const http = if (!is_emscripten) std.http else struct {
     };
 };
 
+const OwnedHeaders = struct {
+    headers: []const http.Header,
+    auth_value: ?[]u8, // only field allocated by Zig
+
+    fn deinit(self: *OwnedHeaders, alloc: Allocator) void {
+        if (self.auth_value) |v| alloc.free(v);
+        alloc.free(self.headers);
+    }
+};
+
 // Forward declarations for C types (avoiding @cImport to support iOS cross-compilation)
 // These match the definitions in colyseus/settings.h and uthash.h
 
@@ -234,8 +244,8 @@ fn httpRequestImpl(
     var response_writer: std.Io.Writer.Allocating = .init(allocator);
     defer response_writer.deinit();
 
-    const extra_headers = try buildHeaders(h);
-    defer allocator.free(extra_headers);
+    var owned_headers = try buildHeaders(h);
+    defer owned_headers.deinit(allocator);
 
     const body_slice = if (body_cstr != null) cStrToSlice(body_cstr) else null;
 
@@ -243,7 +253,7 @@ fn httpRequestImpl(
         .location = .{ .url = url },
         .method = method,
         .payload = body_slice,
-        .extra_headers = extra_headers,
+        .extra_headers = owned_headers.headers,
         .response_writer = &response_writer.writer,
     }) catch |err| {
         if (on_error) |callback| {
@@ -308,8 +318,9 @@ fn buildUrl(alloc: Allocator, base: []const u8, path: []const u8) ![]u8 {
     }
 }
 
-fn buildHeaders(http_client: *colyseus_http_t) ![]const http.Header {
+fn buildHeaders(http_client: *colyseus_http_t) !OwnedHeaders {
     var headers: std.ArrayListUnmanaged(http.Header) = .empty;
+    var auth_value: ?[]u8 = null;
 
     var header: ?*colyseus_header_t = http_client.settings.headers;
     while (header) |h| {
@@ -324,10 +335,14 @@ fn buildHeaders(http_client: *colyseus_http_t) ![]const http.Header {
     if (http_client.auth_token != null) {
         const token_slice = cStrToSlice(http_client.auth_token);
         if (token_slice) |tok| {
-            const auth_value = try std.fmt.allocPrint(allocator, "Bearer {s}", .{tok});
-            try headers.append(allocator, .{ .name = "Authorization", .value = auth_value });
+            auth_value = try std.fmt.allocPrint(allocator, "Bearer {s}", .{tok});
+            errdefer if (auth_value) |v| allocator.free(v); // leak-safe on append failure
+            try headers.append(allocator, .{ .name = "Authorization", .value = auth_value.? });
         }
     }
 
-    return headers.toOwnedSlice(allocator);
+    return OwnedHeaders{
+        .headers = try headers.toOwnedSlice(allocator),
+        .auth_value = auth_value,
+    };
 }
