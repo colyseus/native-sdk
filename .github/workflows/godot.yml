@@ -111,6 +111,7 @@ jobs:
             -I../../third_party/cJSON
             -I../../third_party/wslay/lib/includes
             -I../../third_party/wslay/lib
+            -I../../third_party/mbedtls/include
             -Iinclude
             -Isrc
           )
@@ -146,6 +147,7 @@ jobs:
             ../../third_party/wslay/lib/wslay_frame.c
             ../../third_party/wslay/lib/wslay_net.c
             ../../third_party/wslay/lib/wslay_queue.c
+            ../../third_party/mbedtls/library/aes.c
           )
 
           # Generate wslay config headers

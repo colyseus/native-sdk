@@ -690,6 +690,14 @@ pub fn build(b: *std.Build) void {
 
                 lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib/{s}/{s}", .{ ndk_sysroot, android_triple, api_level }) });
                 lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib/{s}", .{ ndk_sysroot, android_triple }) });
+
+                // mbedtls libs:
+                mbedcrypto.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{ndk_sysroot}) });
+                mbedcrypto.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/{s}", .{ ndk_sysroot, android_triple }) });
+                mbedx509.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{ndk_sysroot}) });
+                mbedx509.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/{s}", .{ ndk_sysroot, android_triple }) });
+                mbedtls.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{ndk_sysroot}) });
+                mbedtls.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/{s}", .{ ndk_sysroot, android_triple }) });
             } else |_| {
                 std.debug.print("Warning: ANDROID_NDK_HOME not set for Android build\n", .{});
             }
@@ -704,6 +712,7 @@ pub fn build(b: *std.Build) void {
             lib.linkLibC();
             lib.linkSystemLibrary("ws2_32");
             lib.linkSystemLibrary("crypt32");
+            lib.linkSystemLibrary("bcrypt");
         } else {
             lib.linkLibC();
             lib.linkSystemLibrary("pthread");

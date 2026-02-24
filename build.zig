@@ -468,6 +468,7 @@ pub fn build(b: *std.Build) void {
     } else if (target.result.os.tag == .windows) {
         colyseus.linkSystemLibrary("ws2_32");
         colyseus.linkSystemLibrary("crypt32");
+        colyseus.linkSystemLibrary("bcrypt");
     }
 
     // Install the library
