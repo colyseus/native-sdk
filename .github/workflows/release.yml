@@ -2,18 +2,14 @@ name: Native SDK Pre-built Binaries
 
 on:
   push:
-  pull_request:
-
-# on:
-#   push:
-#     tags:
-#       - 'v*'
-#   workflow_dispatch:
-#     inputs:
-#       tag:
-#         description: 'Release tag (e.g., v0.15.2)'
-#         required: true
-#         type: string
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.15.2)'
+        required: true
+        type: string
 
 env:
   ZIG_VERSION: '0.15.2'
