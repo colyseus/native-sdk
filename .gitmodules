@@ -10,3 +10,8 @@
 [submodule "third_party/wslay"]
 	path = third_party/wslay
 	url = https://github.com/tatsuhiro-t/wslay.git
+[submodule "third_party/mbedtls"]
+	path = third_party/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git
+	branch = v2.28.8
+    shallow = true

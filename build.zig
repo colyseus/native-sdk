@@ -205,6 +205,154 @@ pub fn build(b: *std.Build) void {
     addAppleSdkPaths(msgpack_reader_object, ios_sdk_path);
 
     // ========================================================================
+    // Build mbedTLS from source (v2.28.x)
+    // ========================================================================
+
+    const mbedcrypto = b.addLibrary(.{
+        .name = "mbedcrypto",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
+        .linkage = .static,
+    });
+    mbedcrypto.linkLibC();
+    addAppleSdkPaths(mbedcrypto, ios_sdk_path);
+    mbedcrypto.addIncludePath(b.path("third_party/mbedtls/include"));
+    mbedcrypto.addIncludePath(b.path("third_party/mbedtls/library"));
+    mbedcrypto.addCSourceFiles(.{
+        .files = &.{
+            "third_party/mbedtls/library/aes.c",
+            "third_party/mbedtls/library/aesni.c",
+            "third_party/mbedtls/library/arc4.c",
+            "third_party/mbedtls/library/aria.c",
+            "third_party/mbedtls/library/asn1parse.c",
+            "third_party/mbedtls/library/asn1write.c",
+            "third_party/mbedtls/library/base64.c",
+            "third_party/mbedtls/library/bignum.c",
+            "third_party/mbedtls/library/blowfish.c",
+            "third_party/mbedtls/library/camellia.c",
+            "third_party/mbedtls/library/ccm.c",
+            "third_party/mbedtls/library/certs.c",
+            "third_party/mbedtls/library/chacha20.c",
+            "third_party/mbedtls/library/chachapoly.c",
+            "third_party/mbedtls/library/cipher.c",
+            "third_party/mbedtls/library/cipher_wrap.c",
+            "third_party/mbedtls/library/cmac.c",
+            "third_party/mbedtls/library/constant_time.c",
+            "third_party/mbedtls/library/ctr_drbg.c",
+            "third_party/mbedtls/library/des.c",
+            "third_party/mbedtls/library/dhm.c",
+            "third_party/mbedtls/library/ecdh.c",
+            "third_party/mbedtls/library/ecdsa.c",
+            "third_party/mbedtls/library/ecjpake.c",
+            "third_party/mbedtls/library/ecp.c",
+            "third_party/mbedtls/library/ecp_curves.c",
+            "third_party/mbedtls/library/entropy.c",
+            "third_party/mbedtls/library/entropy_poll.c",
+            "third_party/mbedtls/library/error.c",
+            "third_party/mbedtls/library/gcm.c",
+            "third_party/mbedtls/library/havege.c",
+            "third_party/mbedtls/library/hkdf.c",
+            "third_party/mbedtls/library/hmac_drbg.c",
+            "third_party/mbedtls/library/md.c",
+            "third_party/mbedtls/library/md2.c",
+            "third_party/mbedtls/library/md4.c",
+            "third_party/mbedtls/library/md5.c",
+            "third_party/mbedtls/library/memory_buffer_alloc.c",
+            "third_party/mbedtls/library/mps_reader.c",
+            "third_party/mbedtls/library/mps_trace.c",
+            "third_party/mbedtls/library/nist_kw.c",
+            "third_party/mbedtls/library/oid.c",
+            "third_party/mbedtls/library/padlock.c",
+            "third_party/mbedtls/library/pem.c",
+            "third_party/mbedtls/library/pk.c",
+            "third_party/mbedtls/library/pk_wrap.c",
+            "third_party/mbedtls/library/pkcs11.c",
+            "third_party/mbedtls/library/pkcs12.c",
+            "third_party/mbedtls/library/pkcs5.c",
+            "third_party/mbedtls/library/pkparse.c",
+            "third_party/mbedtls/library/pkwrite.c",
+            "third_party/mbedtls/library/platform.c",
+            "third_party/mbedtls/library/platform_util.c",
+            "third_party/mbedtls/library/poly1305.c",
+            "third_party/mbedtls/library/psa_crypto.c",
+            "third_party/mbedtls/library/psa_crypto_aead.c",
+            "third_party/mbedtls/library/psa_crypto_cipher.c",
+            "third_party/mbedtls/library/psa_crypto_client.c",
+            "third_party/mbedtls/library/psa_crypto_driver_wrappers.c",
+            "third_party/mbedtls/library/psa_crypto_ecp.c",
+            "third_party/mbedtls/library/psa_crypto_hash.c",
+            "third_party/mbedtls/library/psa_crypto_mac.c",
+            "third_party/mbedtls/library/psa_crypto_rsa.c",
+            "third_party/mbedtls/library/psa_crypto_se.c",
+            "third_party/mbedtls/library/psa_crypto_slot_management.c",
+            "third_party/mbedtls/library/psa_crypto_storage.c",
+            "third_party/mbedtls/library/psa_its_file.c",
+            "third_party/mbedtls/library/ripemd160.c",
+            "third_party/mbedtls/library/rsa.c",
+            "third_party/mbedtls/library/rsa_internal.c",
+            "third_party/mbedtls/library/sha1.c",
+            "third_party/mbedtls/library/sha256.c",
+            "third_party/mbedtls/library/sha512.c",
+            "third_party/mbedtls/library/threading.c",
+            "third_party/mbedtls/library/timing.c",
+            "third_party/mbedtls/library/version.c",
+            "third_party/mbedtls/library/version_features.c",
+            "third_party/mbedtls/library/xtea.c",
+        },
+        .flags = &.{ "-Wall", c_std },
+    });
+
+    const mbedx509 = b.addLibrary(.{
+        .name = "mbedx509",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
+        .linkage = .static,
+    });
+    mbedx509.linkLibC();
+    addAppleSdkPaths(mbedx509, ios_sdk_path);
+    mbedx509.addIncludePath(b.path("third_party/mbedtls/include"));
+    mbedx509.addIncludePath(b.path("third_party/mbedtls/library"));
+    mbedx509.addCSourceFiles(.{
+        .files = &.{
+            "third_party/mbedtls/library/x509.c",
+            "third_party/mbedtls/library/x509_create.c",
+            "third_party/mbedtls/library/x509_crl.c",
+            "third_party/mbedtls/library/x509_crt.c",
+            "third_party/mbedtls/library/x509_csr.c",
+            "third_party/mbedtls/library/x509write_crt.c",
+            "third_party/mbedtls/library/x509write_csr.c",
+        },
+        .flags = &.{ "-Wall", c_std },
+    });
+    mbedx509.linkLibrary(mbedcrypto);
+
+    const mbedtls = b.addLibrary(.{
+        .name = "mbedtls",
+        .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
+        .linkage = .static,
+    });
+    mbedtls.linkLibC();
+    addAppleSdkPaths(mbedtls, ios_sdk_path);
+    mbedtls.addIncludePath(b.path("third_party/mbedtls/include"));
+    mbedtls.addIncludePath(b.path("third_party/mbedtls/library"));
+    mbedtls.addCSourceFiles(.{
+        .files = &.{
+            "third_party/mbedtls/library/debug.c",
+            "third_party/mbedtls/library/net_sockets.c",
+            "third_party/mbedtls/library/ssl_cache.c",
+            "third_party/mbedtls/library/ssl_ciphersuites.c",
+            "third_party/mbedtls/library/ssl_cli.c",
+            "third_party/mbedtls/library/ssl_cookie.c",
+            "third_party/mbedtls/library/ssl_msg.c",
+            "third_party/mbedtls/library/ssl_srv.c",
+            "third_party/mbedtls/library/ssl_ticket.c",
+            "third_party/mbedtls/library/ssl_tls.c",
+            "third_party/mbedtls/library/ssl_tls13_keys.c",
+        },
+        .flags = &.{ "-Wall", c_std },
+    });
+    mbedtls.linkLibrary(mbedx509);
+    mbedtls.linkLibrary(mbedcrypto);
+
+    // ========================================================================
     // Build colyseus library
     // ========================================================================
     const colyseus_module = b.createModule(.{
@@ -278,9 +426,10 @@ pub fn build(b: *std.Build) void {
     });
     
     // Always link mbedTLS (TLS is runtime-enabled via settings)
-    colyseus.linkSystemLibrary("mbedtls");
-    colyseus.linkSystemLibrary("mbedx509");
-    colyseus.linkSystemLibrary("mbedcrypto");
+    colyseus.addIncludePath(b.path("third_party/mbedtls/include"));
+    colyseus.linkLibrary(mbedtls);
+    colyseus.linkLibrary(mbedx509);
+    colyseus.linkLibrary(mbedcrypto);
 
     // Link Zig libraries
     colyseus.linkLibrary(http_object);
