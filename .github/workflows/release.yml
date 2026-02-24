@@ -1,0 +1,245 @@
+name: Native SDK Pre-built Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.15.2)'
+        required: true
+        type: string
+
+env:
+  ZIG_VERSION: '0.15.2'
+
+jobs:
+  # Run tests first on all platforms
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libc6-dev
+
+      - name: Run tests
+        run: zig build test -Dskip-integration
+
+  # Build pre-built binaries for all targets
+  build:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          # macOS
+          - os: macos-latest
+            target: aarch64-macos
+            artifact_name: colyseus-macos-arm64
+          - os: macos-latest
+            target: x86_64-macos
+            artifact_name: colyseus-macos-x86_64
+          # Linux
+          - os: ubuntu-latest
+            target: x86_64-linux-gnu
+            artifact_name: colyseus-linux-x86_64
+          - os: ubuntu-latest
+            target: aarch64-linux-gnu
+            artifact_name: colyseus-linux-arm64
+          # Windows
+          - os: windows-latest
+            target: x86_64-windows
+            artifact_name: colyseus-windows-x86_64
+          # iOS (cross-compile from macOS)
+          - os: macos-latest
+            target: aarch64-ios
+            artifact_name: colyseus-ios-arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      IS_WASM: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libc6-dev
+
+      - name: Build library
+        shell: bash
+        run: |
+          zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast -Dexamples=false
+
+      - name: Package artifacts (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p package/lib
+          
+          # Copy library
+          cp zig-out/lib/libcolyseus.a package/lib/
+          
+          # Copy all headers (already installed by zig build)
+          cp -r zig-out/include package/
+          
+          # Create archive
+          tar -czvf ${{ matrix.artifact_name }}.tar.gz -C package .
+
+      - name: Package artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/lib
+          
+          # Copy library
+          Copy-Item zig-out/lib/colyseus.lib package/lib/
+          
+          # Copy all headers (already installed by zig build)
+          Copy-Item -Recurse zig-out/include package/
+          
+          # Create archive
+          Compress-Archive -Path package/* -DestinationPath ${{ matrix.artifact_name }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.artifact_name }}.tar.gz
+            ${{ matrix.artifact_name }}.zip
+          if-no-files-found: ignore
+
+  # Build WASM library using emsdk/emcc
+  build-wasm:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: '4.0.23'
+
+      - name: Verify emcc
+        run: emcc --version
+
+      - name: Build WASM library
+        run: ./build-wasm.sh
+
+      - name: Package artifacts
+        run: |
+          mkdir -p package/lib
+          cp build/libcolyseus.a package/lib/
+          
+          # Copy headers
+          cp -r include package/
+          cp third_party/uthash/src/uthash.h package/include/
+          
+          tar -czvf colyseus-wasm32.tar.gz -C package .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: colyseus-wasm32
+          path: colyseus-wasm32.tar.gz
+
+  # Create GitHub release with all artifacts
+  release:
+    needs: [build, build-wasm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+          body: |
+            ## Pre-built Binaries
+            
+            Download the appropriate archive for your platform:
+            
+            | Platform | Architecture | File |
+            |----------|--------------|------|
+            | macOS | arm64 (Apple Silicon) | `colyseus-macos-arm64.tar.gz` |
+            | macOS | x86_64 (Intel) | `colyseus-macos-x86_64.tar.gz` |
+            | Linux | x86_64 | `colyseus-linux-x86_64.tar.gz` |
+            | Linux | arm64 | `colyseus-linux-arm64.tar.gz` |
+            | Windows | x86_64 | `colyseus-windows-x86_64.zip` |
+            | iOS | arm64 | `colyseus-ios-arm64.tar.gz` |
+            | WebAssembly | wasm32 | `colyseus-wasm32.tar.gz` |
+            
+            ### Usage
+            
+            Extract the archive and link the library:
+            
+            ```c
+            // Include headers
+            #include <colyseus/client.h>
+            #include <colyseus/room.h>
+            
+            // Link: -L/path/to/lib -lcolyseus
+            // Include: -I/path/to/include
+            ```
+            
+            ### Zig Build System
+            
+            ```zig
+            exe.addObjectFile(.{ .cwd_relative = "path/to/lib/libcolyseus.a" });
+            exe.addIncludePath(.{ .cwd_relative = "path/to/include" });
+            ```
