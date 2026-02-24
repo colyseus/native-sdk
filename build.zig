@@ -188,6 +188,22 @@ pub fn build(b: *std.Build) void {
     msgpack_builder_object.linkLibC();
     addAppleSdkPaths(msgpack_builder_object, ios_sdk_path);
 
+    // Msgpack reader module (for decoding msgpack in on_message callbacks)
+    const msgpack_reader_module = b.createModule(.{
+        .root_source_file = b.path("src/msgpack/msgpack_reader.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    msgpack_reader_module.addImport("msgpack", msgpack_dep.module("msgpack"));
+
+    const msgpack_reader_object = b.addLibrary(.{
+        .name = "msgpack_reader",
+        .root_module = msgpack_reader_module,
+        .linkage = .static,
+    });
+    msgpack_reader_object.linkLibC();
+    addAppleSdkPaths(msgpack_reader_object, ios_sdk_path);
+
     // ========================================================================
     // Build colyseus library
     // ========================================================================
@@ -265,6 +281,7 @@ pub fn build(b: *std.Build) void {
     colyseus.linkLibrary(http_object);
     colyseus.linkLibrary(strutil_object);
     colyseus.linkLibrary(msgpack_builder_object);
+    colyseus.linkLibrary(msgpack_reader_object);
 
     // Link wslay
     colyseus.linkLibrary(wslay);
@@ -308,7 +325,7 @@ pub fn build(b: *std.Build) void {
         "utils/strUtil.h",
         "auth/auth.h",
         "auth/secure_storage.h",
-        "msgpack_builder.h",
+        "messages.h",
     };
 
     inline for (headers) |header| {
@@ -415,13 +432,16 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
+        .{ .name = "test_messages", .file = "tests/test_messages.zig", .description = "Run message types tests (requires server)" },
     };
 
     // Build each Zig test
     for (zig_test_files) |test_file| {
-        // Skip integration test if requested
+        // Skip integration tests if requested (these require a running server)
         if (skip_integration and
-            (std.mem.eql(u8, test_file.name, "test_integration") or std.mem.eql(u8, test_file.name, "test_schema_callbacks")))
+            (std.mem.eql(u8, test_file.name, "test_integration") or
+                std.mem.eql(u8, test_file.name, "test_schema_callbacks") or
+                std.mem.eql(u8, test_file.name, "test_messages")))
         {
             continue;
         }

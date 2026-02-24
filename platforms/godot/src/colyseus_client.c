@@ -404,7 +404,7 @@ static void on_join_or_create_success(colyseus_room_t* room, void* userdata) {
     colyseus_room_on_state_change(room, on_room_state_change, room_wrapper);
     colyseus_room_on_error(room, on_room_error, room_wrapper);
     colyseus_room_on_leave(room, on_room_leave, room_wrapper);
-    colyseus_room_on_message_any_with_type(room, on_room_message_with_type, room_wrapper);
+    colyseus_room_on_message_any_with_type_encoded(room, on_room_message_with_type, room_wrapper);
 }
 
 // Matchmaking error callback

@@ -77,35 +77,35 @@ fn createPrimitiveWrapper(payload: Payload) ?*PayloadWrapper {
 // Creation functions
 // ============================================================================
 
-export fn msgpack_map_create() ?*PayloadWrapper {
+export fn colyseus_message_map_create() ?*PayloadWrapper {
     return createMapWrapper();
 }
 
-export fn msgpack_array_create() ?*PayloadWrapper {
+export fn colyseus_message_array_create() ?*PayloadWrapper {
     return createArrayWrapper();
 }
 
-export fn msgpack_nil_create() ?*PayloadWrapper {
+export fn colyseus_message_nil_create() ?*PayloadWrapper {
     return createPrimitiveWrapper(Payload.nilToPayload());
 }
 
-export fn msgpack_bool_create(value: bool) ?*PayloadWrapper {
+export fn colyseus_message_bool_create(value: bool) ?*PayloadWrapper {
     return createPrimitiveWrapper(Payload.boolToPayload(value));
 }
 
-export fn msgpack_int_create(value: i64) ?*PayloadWrapper {
+export fn colyseus_message_int_create(value: i64) ?*PayloadWrapper {
     return createPrimitiveWrapper(Payload.intToPayload(value));
 }
 
-export fn msgpack_uint_create(value: u64) ?*PayloadWrapper {
+export fn colyseus_message_uint_create(value: u64) ?*PayloadWrapper {
     return createPrimitiveWrapper(Payload.uintToPayload(value));
 }
 
-export fn msgpack_float_create(value: f64) ?*PayloadWrapper {
+export fn colyseus_message_float_create(value: f64) ?*PayloadWrapper {
     return createPrimitiveWrapper(Payload.floatToPayload(value));
 }
 
-export fn msgpack_str_create(value: [*c]const u8) ?*PayloadWrapper {
+export fn colyseus_message_str_create(value: [*c]const u8) ?*PayloadWrapper {
     if (value == null) return createPrimitiveWrapper(Payload.nilToPayload());
     const str = std.mem.span(value);
     const payload = Payload.strToPayload(str, allocator) catch return null;
@@ -116,7 +116,7 @@ export fn msgpack_str_create(value: [*c]const u8) ?*PayloadWrapper {
 // Map operations
 // ============================================================================
 
-export fn msgpack_map_put_str(map: ?*PayloadWrapper, key: [*c]const u8, value: [*c]const u8) void {
+export fn colyseus_message_map_put_str(map: ?*PayloadWrapper, key: [*c]const u8, value: [*c]const u8) void {
     if (map == null or key == null or map.?.payload_type != .map) return;
     const key_str = std.mem.span(key);
     if (value == null) {
@@ -128,37 +128,37 @@ export fn msgpack_map_put_str(map: ?*PayloadWrapper, key: [*c]const u8, value: [
     }
 }
 
-export fn msgpack_map_put_int(map: ?*PayloadWrapper, key: [*c]const u8, value: i64) void {
+export fn colyseus_message_map_put_int(map: ?*PayloadWrapper, key: [*c]const u8, value: i64) void {
     if (map == null or key == null or map.?.payload_type != .map) return;
     const key_str = std.mem.span(key);
     map.?.payload.?.mapPut(key_str, Payload.intToPayload(value)) catch return;
 }
 
-export fn msgpack_map_put_uint(map: ?*PayloadWrapper, key: [*c]const u8, value: u64) void {
+export fn colyseus_message_map_put_uint(map: ?*PayloadWrapper, key: [*c]const u8, value: u64) void {
     if (map == null or key == null or map.?.payload_type != .map) return;
     const key_str = std.mem.span(key);
     map.?.payload.?.mapPut(key_str, Payload.uintToPayload(value)) catch return;
 }
 
-export fn msgpack_map_put_float(map: ?*PayloadWrapper, key: [*c]const u8, value: f64) void {
+export fn colyseus_message_map_put_float(map: ?*PayloadWrapper, key: [*c]const u8, value: f64) void {
     if (map == null or key == null or map.?.payload_type != .map) return;
     const key_str = std.mem.span(key);
     map.?.payload.?.mapPut(key_str, Payload.floatToPayload(value)) catch return;
 }
 
-export fn msgpack_map_put_bool(map: ?*PayloadWrapper, key: [*c]const u8, value: bool) void {
+export fn colyseus_message_map_put_bool(map: ?*PayloadWrapper, key: [*c]const u8, value: bool) void {
     if (map == null or key == null or map.?.payload_type != .map) return;
     const key_str = std.mem.span(key);
     map.?.payload.?.mapPut(key_str, Payload.boolToPayload(value)) catch return;
 }
 
-export fn msgpack_map_put_nil(map: ?*PayloadWrapper, key: [*c]const u8) void {
+export fn colyseus_message_map_put_nil(map: ?*PayloadWrapper, key: [*c]const u8) void {
     if (map == null or key == null or map.?.payload_type != .map) return;
     const key_str = std.mem.span(key);
     map.?.payload.?.mapPut(key_str, Payload.nilToPayload()) catch return;
 }
 
-export fn msgpack_map_put_payload(map: ?*PayloadWrapper, key: [*c]const u8, value: ?*PayloadWrapper) void {
+export fn colyseus_message_map_put(map: ?*PayloadWrapper, key: [*c]const u8, value: ?*PayloadWrapper) void {
     if (map == null or key == null or value == null or map.?.payload_type != .map) return;
     const key_str = std.mem.span(key);
 
@@ -170,7 +170,7 @@ export fn msgpack_map_put_payload(map: ?*PayloadWrapper, key: [*c]const u8, valu
 // Array operations
 // ============================================================================
 
-export fn msgpack_array_push_str(arr: ?*PayloadWrapper, value: [*c]const u8) void {
+export fn colyseus_message_array_push_str(arr: ?*PayloadWrapper, value: [*c]const u8) void {
     if (arr == null or arr.?.payload_type != .array) return;
     var list = &arr.?.array_elements.?;
     if (value == null) {
@@ -182,37 +182,37 @@ export fn msgpack_array_push_str(arr: ?*PayloadWrapper, value: [*c]const u8) voi
     }
 }
 
-export fn msgpack_array_push_int(arr: ?*PayloadWrapper, value: i64) void {
+export fn colyseus_message_array_push_int(arr: ?*PayloadWrapper, value: i64) void {
     if (arr == null or arr.?.payload_type != .array) return;
     var list = &arr.?.array_elements.?;
     list.append(allocator, Payload.intToPayload(value)) catch return;
 }
 
-export fn msgpack_array_push_uint(arr: ?*PayloadWrapper, value: u64) void {
+export fn colyseus_message_array_push_uint(arr: ?*PayloadWrapper, value: u64) void {
     if (arr == null or arr.?.payload_type != .array) return;
     var list = &arr.?.array_elements.?;
     list.append(allocator, Payload.uintToPayload(value)) catch return;
 }
 
-export fn msgpack_array_push_float(arr: ?*PayloadWrapper, value: f64) void {
+export fn colyseus_message_array_push_float(arr: ?*PayloadWrapper, value: f64) void {
     if (arr == null or arr.?.payload_type != .array) return;
     var list = &arr.?.array_elements.?;
     list.append(allocator, Payload.floatToPayload(value)) catch return;
 }
 
-export fn msgpack_array_push_bool(arr: ?*PayloadWrapper, value: bool) void {
+export fn colyseus_message_array_push_bool(arr: ?*PayloadWrapper, value: bool) void {
     if (arr == null or arr.?.payload_type != .array) return;
     var list = &arr.?.array_elements.?;
     list.append(allocator, Payload.boolToPayload(value)) catch return;
 }
 
-export fn msgpack_array_push_nil(arr: ?*PayloadWrapper) void {
+export fn colyseus_message_array_push_nil(arr: ?*PayloadWrapper) void {
     if (arr == null or arr.?.payload_type != .array) return;
     var list = &arr.?.array_elements.?;
     list.append(allocator, Payload.nilToPayload()) catch return;
 }
 
-export fn msgpack_array_push_payload(arr: ?*PayloadWrapper, value: ?*PayloadWrapper) void {
+export fn colyseus_message_array_push(arr: ?*PayloadWrapper, value: ?*PayloadWrapper) void {
     if (arr == null or value == null or arr.?.payload_type != .array) return;
     var list = &arr.?.array_elements.?;
 
@@ -247,7 +247,7 @@ fn getPayloadForEncoding(wrapper: *PayloadWrapper) ?Payload {
 // Encoding
 // ============================================================================
 
-export fn msgpack_payload_encode(wrapper: ?*PayloadWrapper, out_len: *usize) ?[*]u8 {
+export fn colyseus_message_encode(wrapper: ?*PayloadWrapper, out_len: *usize) ?[*]u8 {
     if (wrapper == null) {
         out_len.* = 0;
         return null;
@@ -303,13 +303,13 @@ export fn msgpack_payload_encode(wrapper: ?*PayloadWrapper, out_len: *usize) ?[*
 // Cleanup
 // ============================================================================
 
-export fn msgpack_payload_free(wrapper: ?*PayloadWrapper) void {
+export fn colyseus_message_free(wrapper: ?*PayloadWrapper) void {
     if (wrapper == null) return;
     wrapper.?.deinit();
     allocator.destroy(wrapper.?);
 }
 
-export fn msgpack_encoded_data_free(data: ?[*]u8, len: usize) void {
+export fn colyseus_message_encoded_free(data: ?[*]u8, len: usize) void {
     if (data == null or len == 0) return;
     allocator.free(data.?[0..len]);
 }

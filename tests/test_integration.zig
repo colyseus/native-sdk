@@ -27,9 +27,8 @@ fn onStateChange(userdata: ?*anyopaque) callconv(.c) void {
     state_received = 1;
 }
 
-fn onMessageAny(data: [*c]const u8, length: usize, userdata: ?*anyopaque) callconv(.c) void {
-    _ = data;
-    _ = length;
+fn onMessageAny(reader: ?*c.colyseus_message_reader_t, userdata: ?*anyopaque) callconv(.c) void {
+    _ = reader;
     _ = userdata;
     message_received = 1;
 }
@@ -109,8 +108,9 @@ test "integration: full connection flow" {
     try testing.expect(joined == 1);
 
     // Test sending a message if connected
-    const test_msg = [_]u8{0x80};
-    c.colyseus_room_send(room.?, "test", &test_msg, test_msg.len);
+    const msg = c.colyseus_message_map_create();
+    defer c.colyseus_message_free(msg);
+    c.colyseus_room_send(room.?, "test", msg);
 
     std.Thread.sleep(50 * std.time.ns_per_ms);
 

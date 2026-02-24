@@ -88,6 +88,31 @@ pub fn build(b: *std.Build) void {
         msgpack_module.unwind_tables = .none;
     }
 
+    // Build msgpack_reader Zig module (provides msgpack reader API for on_message callbacks)
+    const msgpack_reader_module = b.createModule(.{
+        .root_source_file = b.path("../../src/msgpack/msgpack_reader.zig"),
+        .target = target,
+        .optimize = zig_optimize,
+        .stack_check = if (is_emscripten) false else null,
+        .pic = if (is_emscripten) true else null,
+        .omit_frame_pointer = if (is_emscripten) true else null,
+        .unwind_tables = if (is_emscripten) .none else null,
+    });
+    msgpack_reader_module.addImport("msgpack", msgpack_module);
+
+    const msgpack_reader_object = b.addLibrary(.{
+        .name = "msgpack_reader",
+        .root_module = msgpack_reader_module,
+        .linkage = .static,
+    });
+    if (os_tag != .ios and !is_android) {
+        msgpack_reader_object.linkLibC();
+    }
+
+    if (os_tag == .ios or is_android) {
+        msgpack_reader_module.link_libc = false;
+    }
+
     // Build strutil Zig module (used by both native and web)
     const strutil_zig_module = b.createModule(.{
         .root_source_file = b.path("../../src/utils/strUtil.zig"),
@@ -221,6 +246,7 @@ pub fn build(b: *std.Build) void {
             // Add Zig libraries
             emcc.addArtifactArg(strutil_object);
             emcc.addArtifactArg(msgpack_builder_object);
+            emcc.addArtifactArg(msgpack_reader_object);
             emcc.addArtifactArg(msgpack_godot_object);
 
             // C flags and defines
@@ -421,6 +447,7 @@ pub fn build(b: *std.Build) void {
         lib.linkLibrary(http_object);
         lib.linkLibrary(strutil_object);
         lib.linkLibrary(msgpack_builder_object);
+        lib.linkLibrary(msgpack_reader_object);
 
         // Generate wslay version header
         const wslay_version_h = b.addConfigHeader(.{

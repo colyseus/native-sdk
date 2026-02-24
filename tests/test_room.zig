@@ -9,9 +9,8 @@ const c = @cImport({
 var message_received: c_int = 0;
 var state_changed: c_int = 0;
 
-fn onMessageString(data: [*c]const u8, length: usize, userdata: ?*anyopaque) callconv(.c) void {
-    _ = data;
-    _ = length;
+fn onMessageString(reader: ?*c.colyseus_message_reader_t, userdata: ?*anyopaque) callconv(.c) void {
+    _ = reader;
     _ = userdata;
     message_received += 1;
 }
