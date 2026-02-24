@@ -81,6 +81,24 @@ pub fn build(b: *std.Build) void {
     });
     msgpack_builder_object.linkLibC();
 
+    const msgpack_reader_module = b.createModule(.{
+        .root_source_file = b.path("../../src/msgpack/msgpack_reader.zig"),
+        .target = target,
+        .optimize = optimize,
+        .stack_check = if (is_emscripten) false else null,
+        .pic = if (is_emscripten) true else null,
+        .omit_frame_pointer = if (is_emscripten) true else null,
+        .unwind_tables = if (is_emscripten) .none else null,
+    });
+    msgpack_reader_module.addImport("msgpack", msgpack_module);
+
+    const msgpack_reader_object = b.addLibrary(.{
+        .name = "msgpack_reader",
+        .root_module = msgpack_reader_module,
+        .linkage = .static,
+    });
+    msgpack_reader_object.linkLibC();
+
     // Native executable (not used for emscripten - emcc compiles C directly)
     const exe = if (!is_emscripten) blk: {
         const exe_module = b.createModule(.{
@@ -195,6 +213,7 @@ pub fn build(b: *std.Build) void {
         exe.linkLibrary(http_object);
         exe.linkLibrary(strutil_object);
         exe.linkLibrary(msgpack_builder_object);
+        exe.linkLibrary(msgpack_reader_object);
 
         // Link raylib
         exe.linkLibrary(raylib_dep.artifact("raylib"));
@@ -317,6 +336,7 @@ pub fn build(b: *std.Build) void {
             // Add Zig libraries (excluding http which is C-based for web)
             emcc.addArtifactArg(strutil_object);
             emcc.addArtifactArg(msgpack_builder_object);
+            emcc.addArtifactArg(msgpack_reader_object);
 
             // C flags and defines
             emcc.addArgs(&.{

@@ -34,6 +34,8 @@ cd platforms/raylib
 zig build -Dtarget=wasm32-emscripten -Doptimize=ReleaseSmall
 ```
 
+> If `emcc` fails, you may need to run `emsdk_env.sh` from the module fetched by Zig. Use the following command to execute it `source $(find ~/.cache/zig/* -name emsdk_env.sh | head -n 1)`
+
 The output will be in `zig-out/web/`. Serve it with a local HTTP server:
 
 ```bash

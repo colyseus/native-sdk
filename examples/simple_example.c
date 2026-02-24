@@ -10,15 +10,18 @@ static volatile int keep_running = 1;
 colyseus_room_t* my_room = NULL;
 
 void sigint_handler(int dummy) {
+    (void)dummy;
     keep_running = 0;
 }
 
 void on_join(void* userdata) {
+    (void)userdata;
     printf("Successfully joined room\n");
     fflush(stdout);
 }
 
 void on_state_change(void* userdata) {
+    (void)userdata;
     printf("State changed\n");
     fflush(stdout);
 
@@ -31,22 +34,28 @@ void on_state_change(void* userdata) {
 }
 
 void on_room_error(int code, const char* message, void* userdata) {
+    (void)userdata;
     printf("Room error (%d): %s\n", code, message);
     fflush(stdout);
 }
 
 void on_leave(int code, const char* reason, void* userdata) {
+    (void)code;
+    (void)userdata;
     printf("Left room: %s\n", reason);
     fflush(stdout);
 }
 
 void on_error(int code, const char* message, void* userdata) {
+    (void)userdata;
     printf("Error (%d): %s\n", code, message);
     fflush(stdout);
     keep_running = 0;
 }
 
-void on_message_any(const uint8_t* data, size_t length, void* userdata) {
+void on_message_any_encoded(const uint8_t* data, size_t length, void* userdata) {
+    (void)data;
+    (void)userdata;
     printf("Received message: %zu bytes\n", length);
     fflush(stdout);
 }
@@ -66,7 +75,7 @@ void on_room_success(colyseus_room_t* room, void* userdata) {
     colyseus_room_on_error(room, on_room_error, NULL);
     colyseus_room_on_leave(room, on_leave, NULL);
     colyseus_room_on_state_change(room, on_state_change, NULL);
-    colyseus_room_on_message_any(room, on_message_any, NULL);
+    colyseus_room_on_message_any_encoded(room, on_message_any_encoded, NULL);
 
     printf("Room event handlers set, waiting for join\n");
     fflush(stdout);

@@ -13,7 +13,7 @@
 #include <colyseus/schema.h>
 #include <colyseus/schema/callbacks.h>
 #include <colyseus/schema/collections.h>
-#include <colyseus/msgpack_builder.h>
+#include <colyseus/messages.h>
 #include "test_room_state.h"
 
 #define MAX_PLAYERS 16
@@ -42,6 +42,7 @@ static bool connected = false;
 static bool joined = false;
 static char status_message[256] = "Connecting...";
 static bool callbacks_setup = false;
+static char current_weather[64] = "";
 
 static Color player_colors[] = {
     RED, BLUE, GREEN, YELLOW, PURPLE, ORANGE, PINK, SKYBLUE,
@@ -144,6 +145,20 @@ static void on_leave(int code, const char* reason, void* userdata) {
     snprintf(status_message, sizeof(status_message), "Disconnected");
 }
 
+static void on_weather_message(colyseus_message_reader_t* reader, void* userdata) {
+    const char* weather = NULL;
+    size_t len = 0;
+
+    if (colyseus_message_reader_map_get_str(reader, "weather", &weather, &len)) {
+        size_t copy_len = len < sizeof(current_weather) - 1 ? len : sizeof(current_weather) - 1;
+        memcpy(current_weather, weather, copy_len);
+        current_weather[copy_len] = '\0';
+
+        printf("[on_weather_message] Weather: %s\n", current_weather);
+        fflush(stdout);
+    }
+}
+
 static void on_error(int code, const char* message, void* userdata) {
     printf("[on_error] Connection error (%d): %s\n", code, message);
     fflush(stdout);
@@ -161,6 +176,9 @@ static void on_room_success(colyseus_room_t* joined_room, void* userdata) {
 
     // Set state type before setting up handlers
     colyseus_room_set_state_type(room, &test_room_state_vtable);
+
+    // Listen for weather broadcast messages
+    colyseus_room_on_message(room, "weather", on_weather_message, NULL);
 
     // Set up room event handlers
     colyseus_room_on_join(room, on_join, NULL);
@@ -221,11 +239,11 @@ static void setup_state_callbacks(void) {
 static void send_move_message(double x, double y) {
     if (!room || !joined) return;
 
-    msgpack_payload_t* msg = msgpack_map_create();
-    msgpack_map_put_float(msg, "x", x);
-    msgpack_map_put_float(msg, "y", y);
+    colyseus_message_t* msg = colyseus_message_map_create();
+    colyseus_message_map_put_float(msg, "x", x);
+    colyseus_message_map_put_float(msg, "y", y);
     colyseus_room_send(room, "move", msg);
-    msgpack_payload_free(msg);
+    colyseus_message_free(msg);
 }
 
 static void handle_input(void) {
@@ -372,6 +390,13 @@ static void update_draw_frame(void) {
 
     // Draw status
     DrawText(status_message, 10, 10, 20, WHITE);
+
+    // Draw current weather if available
+    if (current_weather[0] != '\0') {
+        char weather_msg[128];
+        snprintf(weather_msg, sizeof(weather_msg), "Weather: %s", current_weather);
+        DrawText(weather_msg, 10, 60, 18, SKYBLUE);
+    }
 
     // Draw instructions
     if (joined) {

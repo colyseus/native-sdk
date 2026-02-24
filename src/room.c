@@ -1,6 +1,6 @@
 #include "colyseus/room.h"
 #include "colyseus/schema.h"
-#include "colyseus/msgpack_builder.h"
+#include "colyseus/messages.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -11,6 +11,7 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
 static void room_on_transport_close(int code, const char* reason, void* userdata);
 static void room_on_transport_error(const char* error, void* userdata);
 static void room_dispatch_message(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
+static void room_dispatch_message_bytes(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
 static char* room_get_message_key_str(const char* type);
 static char* room_get_message_key_int(int type);
 
@@ -194,48 +195,38 @@ void colyseus_room_on_leave(colyseus_room_t* room, colyseus_room_on_leave_fn cal
     room->on_leave_userdata = userdata;
 }
 
-/* Message handlers */
-void colyseus_room_on_message_str(colyseus_room_t* room, const char* type, colyseus_room_on_message_fn callback, void* userdata) {
-    if (!room) return;
-
-    char* key = room_get_message_key_str(type);
-
-    /* Find or create handler */
+/* Helper to find or create a message handler */
+static colyseus_message_handler_t* room_find_or_create_handler(colyseus_room_t* room, char* key) {
     colyseus_message_handler_t* handler = NULL;
     HASH_FIND_STR(room->message_handlers, key, handler);
 
-    if (handler) {
-        handler->callback = callback;
-        handler->userdata = userdata;
-        free(key);
-    } else {
+    if (!handler) {
         handler = malloc(sizeof(colyseus_message_handler_t));
+        memset(handler, 0, sizeof(colyseus_message_handler_t));
         handler->key = key;
-        handler->callback = callback;
-        handler->userdata = userdata;
         HASH_ADD_KEYPTR(hh, room->message_handlers, handler->key, strlen(handler->key), handler);
+    } else {
+        free(key);
     }
+
+    return handler;
+}
+
+/* Message handlers - default (msgpack reader) */
+void colyseus_room_on_message(colyseus_room_t* room, const char* type, colyseus_room_on_message_fn callback, void* userdata) {
+    if (!room) return;
+    char* key = room_get_message_key_str(type);
+    colyseus_message_handler_t* handler = room_find_or_create_handler(room, key);
+    handler->callback = callback;
+    handler->userdata = userdata;
 }
 
 void colyseus_room_on_message_int(colyseus_room_t* room, int type, colyseus_room_on_message_fn callback, void* userdata) {
     if (!room) return;
-
     char* key = room_get_message_key_int(type);
-
-    colyseus_message_handler_t* handler = NULL;
-    HASH_FIND_STR(room->message_handlers, key, handler);
-
-    if (handler) {
-        handler->callback = callback;
-        handler->userdata = userdata;
-        free(key);
-    } else {
-        handler = malloc(sizeof(colyseus_message_handler_t));
-        handler->key = key;
-        handler->callback = callback;
-        handler->userdata = userdata;
-        HASH_ADD_KEYPTR(hh, room->message_handlers, handler->key, strlen(handler->key), handler);
-    }
+    colyseus_message_handler_t* handler = room_find_or_create_handler(room, key);
+    handler->callback = callback;
+    handler->userdata = userdata;
 }
 
 void colyseus_room_on_message_any(colyseus_room_t* room, colyseus_room_on_message_fn callback, void* userdata) {
@@ -248,6 +239,64 @@ void colyseus_room_on_message_any_with_type(colyseus_room_t* room, colyseus_room
     if (!room) return;
     room->on_message_any_with_type = callback;
     room->on_message_any_with_type_userdata = userdata;
+}
+
+/* Message handlers - encoded (raw msgpack bytes) */
+void colyseus_room_on_message_encoded(colyseus_room_t* room, const char* type, colyseus_room_on_message_encoded_fn callback, void* userdata) {
+    if (!room) return;
+    char* key = room_get_message_key_str(type);
+    colyseus_message_handler_t* handler = room_find_or_create_handler(room, key);
+    handler->callback_encoded = callback;
+    handler->userdata_encoded = userdata;
+}
+
+void colyseus_room_on_message_int_encoded(colyseus_room_t* room, int type, colyseus_room_on_message_encoded_fn callback, void* userdata) {
+    if (!room) return;
+    char* key = room_get_message_key_int(type);
+    colyseus_message_handler_t* handler = room_find_or_create_handler(room, key);
+    handler->callback_encoded = callback;
+    handler->userdata_encoded = userdata;
+}
+
+void colyseus_room_on_message_any_encoded(colyseus_room_t* room, colyseus_room_on_message_encoded_fn callback, void* userdata) {
+    if (!room) return;
+    room->on_message_any_encoded = callback;
+    room->on_message_any_encoded_userdata = userdata;
+}
+
+void colyseus_room_on_message_any_with_type_encoded(colyseus_room_t* room, colyseus_room_on_message_with_type_encoded_fn callback, void* userdata) {
+    if (!room) return;
+    room->on_message_any_with_type_encoded = callback;
+    room->on_message_any_with_type_encoded_userdata = userdata;
+}
+
+/* Message handlers - bytes (raw bytes, ROOM_DATA_BYTES) */
+void colyseus_room_on_message_bytes(colyseus_room_t* room, const char* type, colyseus_room_on_message_bytes_fn callback, void* userdata) {
+    if (!room) return;
+    char* key = room_get_message_key_str(type);
+    colyseus_message_handler_t* handler = room_find_or_create_handler(room, key);
+    handler->callback_bytes = callback;
+    handler->userdata_bytes = userdata;
+}
+
+void colyseus_room_on_message_int_bytes(colyseus_room_t* room, int type, colyseus_room_on_message_bytes_fn callback, void* userdata) {
+    if (!room) return;
+    char* key = room_get_message_key_int(type);
+    colyseus_message_handler_t* handler = room_find_or_create_handler(room, key);
+    handler->callback_bytes = callback;
+    handler->userdata_bytes = userdata;
+}
+
+void colyseus_room_on_message_any_bytes(colyseus_room_t* room, colyseus_room_on_message_bytes_fn callback, void* userdata) {
+    if (!room) return;
+    room->on_message_any_bytes = callback;
+    room->on_message_any_bytes_userdata = userdata;
+}
+
+void colyseus_room_on_message_any_with_type_bytes(colyseus_room_t* room, colyseus_room_on_message_with_type_bytes_fn callback, void* userdata) {
+    if (!room) return;
+    room->on_message_any_with_type_bytes = callback;
+    room->on_message_any_with_type_bytes_userdata = userdata;
 }
 
 /* Helper function to encode msgpack string */
@@ -334,23 +383,23 @@ static bool decode_number_check(const uint8_t* bytes, size_t offset) {
     return colyseus_decode_number_check(bytes, &it);
 }
 
-/* Send messages (msgpack payload - default, encodes automatically) */
-void colyseus_room_send(colyseus_room_t* room, const char* type, msgpack_payload_t* payload) {
+/* Send messages (colyseus message - default, encodes automatically) */
+void colyseus_room_send(colyseus_room_t* room, const char* type, colyseus_message_t* payload) {
     if (!room || !type || !payload) return;
 
     size_t encoded_len = 0;
-    uint8_t* encoded_data = msgpack_payload_encode(payload, &encoded_len);
+    uint8_t* encoded_data = colyseus_message_encode(payload, &encoded_len);
 
     if (encoded_data && encoded_len > 0) {
         colyseus_room_send_encoded(room, type, encoded_data, encoded_len);
     }
 }
 
-void colyseus_room_send_int(colyseus_room_t* room, int type, msgpack_payload_t* payload) {
+void colyseus_room_send_int(colyseus_room_t* room, int type, colyseus_message_t* payload) {
     if (!room || !payload) return;
 
     size_t encoded_len = 0;
-    uint8_t* encoded_data = msgpack_payload_encode(payload, &encoded_len);
+    uint8_t* encoded_data = colyseus_message_encode(payload, &encoded_len);
 
     if (encoded_data && encoded_len > 0) {
         colyseus_room_send_int_encoded(room, type, encoded_data, encoded_len);
@@ -602,9 +651,8 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
             break;
         }
 
-        case COLYSEUS_PROTOCOL_ROOM_DATA:
-        case COLYSEUS_PROTOCOL_ROOM_DATA_BYTES: {
-            /* Decode message type and data */
+        case COLYSEUS_PROTOCOL_ROOM_DATA: {
+            /* Decode message type and msgpack data */
             if (length > offset) {
                 char type_str[256] = {0};
 
@@ -621,9 +669,35 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
                     }
                 }
 
-                /* Dispatch the message with remaining data */
+                /* Dispatch the msgpack message */
                 if (strlen(type_str) > 0) {
                     room_dispatch_message(room, type_str, data + offset, length - offset);
+                }
+            }
+            break;
+        }
+
+        case COLYSEUS_PROTOCOL_ROOM_DATA_BYTES: {
+            /* Decode message type and raw bytes data */
+            if (length > offset) {
+                char type_str[256] = {0};
+
+                if (decode_number_check(data, offset)) {
+                    /* Numeric type */
+                    int type_num = (int)decode_number(data, &offset);
+                    snprintf(type_str, sizeof(type_str), "i%d", type_num);
+                } else {
+                    /* String type */
+                    char* decoded_type = decode_string(data, &offset);
+                    if (decoded_type) {
+                        strncpy(type_str, decoded_type, sizeof(type_str) - 1);
+                        free(decoded_type);
+                    }
+                }
+
+                /* Dispatch the raw bytes message */
+                if (strlen(type_str) > 0) {
+                    room_dispatch_message_bytes(room, type_str, data + offset, length - offset);
                 }
             }
             break;
@@ -671,15 +745,83 @@ static void room_dispatch_message(colyseus_room_t* room, const char* type, const
     colyseus_message_handler_t* handler = NULL;
     HASH_FIND_STR(room->message_handlers, key, handler);
 
-    if (handler && handler->callback) {
-        handler->callback(message, length, handler->userdata);
-    } else if (room->on_message_any) {
-        room->on_message_any(message, length, room->on_message_any_userdata);
+    colyseus_message_reader_t* reader = NULL;
+    bool reader_created = false;
+
+    /* Call type-specific handler if registered */
+    if (handler) {
+        /* Default callback (msgpack reader) */
+        if (handler->callback) {
+            if (!reader_created) {
+                reader = colyseus_message_reader_create(message, length);
+                reader_created = true;
+            }
+            handler->callback(reader, handler->userdata);
+        }
+
+        /* Encoded callback (raw msgpack bytes) */
+        if (handler->callback_encoded) {
+            handler->callback_encoded(message, length, handler->userdata_encoded);
+        }
     }
 
-    /* Also call the "with type" callback if registered */
+    /* Call wildcard handlers */
+
+    /* Default wildcard (msgpack reader) */
+    if (room->on_message_any) {
+        if (!reader_created) {
+            reader = colyseus_message_reader_create(message, length);
+            reader_created = true;
+        }
+        room->on_message_any(reader, room->on_message_any_userdata);
+    }
+
+    /* Default wildcard with type (msgpack reader) */
     if (room->on_message_any_with_type) {
-        room->on_message_any_with_type(type, message, length, room->on_message_any_with_type_userdata);
+        if (!reader_created) {
+            reader = colyseus_message_reader_create(message, length);
+            reader_created = true;
+        }
+        room->on_message_any_with_type(type, reader, room->on_message_any_with_type_userdata);
+    }
+
+    /* Encoded wildcard (raw msgpack bytes) */
+    if (room->on_message_any_encoded) {
+        room->on_message_any_encoded(message, length, room->on_message_any_encoded_userdata);
+    }
+
+    /* Encoded wildcard with type (raw msgpack bytes) */
+    if (room->on_message_any_with_type_encoded) {
+        room->on_message_any_with_type_encoded(type, message, length, room->on_message_any_with_type_encoded_userdata);
+    }
+
+    /* Free reader if created */
+    if (reader) {
+        colyseus_message_reader_free(reader);
+    }
+
+    free(key);
+}
+
+/* Dispatch raw bytes message (ROOM_DATA_BYTES protocol) */
+static void room_dispatch_message_bytes(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length) {
+    char* key = room_get_message_key_str(type);
+
+    colyseus_message_handler_t* handler = NULL;
+    HASH_FIND_STR(room->message_handlers, key, handler);
+
+    /* Call type-specific bytes handler if registered */
+    if (handler && handler->callback_bytes) {
+        handler->callback_bytes(message, length, handler->userdata_bytes);
+    }
+
+    /* Call wildcard bytes handlers */
+    if (room->on_message_any_bytes) {
+        room->on_message_any_bytes(message, length, room->on_message_any_bytes_userdata);
+    }
+
+    if (room->on_message_any_with_type_bytes) {
+        room->on_message_any_with_type_bytes(type, message, length, room->on_message_any_with_type_bytes_userdata);
     }
 
     free(key);

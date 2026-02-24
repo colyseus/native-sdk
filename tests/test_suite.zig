@@ -43,9 +43,8 @@ test "room: register message handlers" {
     defer c.colyseus_room_free(room);
 
     const Handler = struct {
-        fn onMessage(data: [*c]const u8, length: usize, userdata: ?*anyopaque) callconv(.c) void {
-            _ = data;
-            _ = length;
+        fn onMessage(reader: ?*c.colyseus_message_reader_t, userdata: ?*anyopaque) callconv(.c) void {
+            _ = reader;
             _ = userdata;
         }
 

@@ -317,8 +317,9 @@ test "callbacks: onAdd for map collection" {
     try testing.expect(last_player_key != null);
 
     // Send message to add a bot (this should trigger another onAdd)
-    const add_bot_msg = [_]u8{0x80}; // Empty msgpack object
-    c.colyseus_room_send(room.?, "add_bot", &add_bot_msg, add_bot_msg.len);
+    const add_bot_msg = c.colyseus_message_map_create();
+    defer c.colyseus_message_free(add_bot_msg);
+    c.colyseus_room_send(room.?, "add_bot", add_bot_msg);
 
     // Wait for the bot to be added - use longer wait for reliability
     std.Thread.sleep(500 * std.time.ns_per_ms);
@@ -394,14 +395,16 @@ test "callbacks: onRemove for map collection" {
     try testing.expect(handle != c.COLYSEUS_INVALID_CALLBACK_HANDLE);
 
     // First add a bot
-    const add_bot_msg = [_]u8{0x80};
-    c.colyseus_room_send(room.?, "add_bot", &add_bot_msg, add_bot_msg.len);
+    const add_bot_msg = c.colyseus_message_map_create();
+    defer c.colyseus_message_free(add_bot_msg);
+    c.colyseus_room_send(room.?, "add_bot", add_bot_msg);
 
     std.Thread.sleep(500 * std.time.ns_per_ms);
 
     // Now remove the bot
-    const remove_bot_msg = [_]u8{0x80};
-    c.colyseus_room_send(room.?, "remove_bot", &remove_bot_msg, remove_bot_msg.len);
+    const remove_bot_msg = c.colyseus_message_map_create();
+    defer c.colyseus_message_free(remove_bot_msg);
+    c.colyseus_room_send(room.?, "remove_bot", remove_bot_msg);
 
     std.Thread.sleep(500 * std.time.ns_per_ms);
 
@@ -480,8 +483,9 @@ test "callbacks: nested property listening" {
     try testing.expect(on_add_callback_count >= 1);
 
     // Add a bot (bots move around, triggering x changes)
-    const add_bot_msg = [_]u8{0x80};
-    c.colyseus_room_send(room.?, "add_bot", &add_bot_msg, add_bot_msg.len);
+    const add_bot_msg = c.colyseus_message_map_create();
+    defer c.colyseus_message_free(add_bot_msg);
+    c.colyseus_room_send(room.?, "add_bot", add_bot_msg);
 
     // Wait for bot movement updates
     std.Thread.sleep(500 * std.time.ns_per_ms);
@@ -563,8 +567,9 @@ test "callbacks: remove callback by handle" {
 
     // Add a bot - shouldn't trigger callback since we removed it
     const count_before = on_add_callback_count;
-    const add_bot_msg = [_]u8{0x80};
-    c.colyseus_room_send(room.?, "add_bot", &add_bot_msg, add_bot_msg.len);
+    const add_bot_msg = c.colyseus_message_map_create();
+    defer c.colyseus_message_free(add_bot_msg);
+    c.colyseus_room_send(room.?, "add_bot", add_bot_msg);
 
     std.Thread.sleep(200 * std.time.ns_per_ms);
 
