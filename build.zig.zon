@@ -1,6 +1,6 @@
 .{
-    .name = .native_sdk,
-    .version = "0.15.2",
+    .name = .colyseus_sdk,
+    .version = "0.17.0",
     .dependencies = .{
         .zig_msgpack = .{
             .url = "git+https://github.com/zigcc/zig-msgpack?ref=main#47c15d217efebd17a585dd04125f9b6b6f659d5a",
@@ -8,5 +8,5 @@
         },
     },
     .paths = .{""},
-    .fingerprint = 0xc3099661f12e6a44,
+    .fingerprint = 0x700aa7cbb8c8c3f4,
 }

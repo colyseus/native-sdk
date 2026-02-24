@@ -25,7 +25,20 @@ The executable will be located at `zig-out/bin/raylib_colyseus`.
 
 ### Web Build (Emscripten)
 
-The build system automatically downloads and uses the Emscripten SDK as a dependency.
+The web build requires two steps: first build the WASM library, then build the raylib application.
+
+**Step 1: Build the colyseus WASM library**
+
+From the native-sdk root directory, run the build script (requires `emcc` in your PATH):
+
+```bash
+# From native-sdk root
+./build-wasm.sh
+```
+
+Or download pre-built WASM binaries from [GitHub Releases](https://github.com/colyseus/native-sdk/releases).
+
+**Step 2: Build the raylib web application**
 
 ```bash
 cd platforms/raylib
