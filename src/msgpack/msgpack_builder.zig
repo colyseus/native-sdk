@@ -5,12 +5,12 @@ const Payload = msgpack.Payload;
 const Allocator = std.mem.Allocator;
 
 // Select allocator based on target platform
-// - All platforms: use c_allocator (emscripten provides libc)
+// - Use c_allocator for platforms that provide libc (including emscripten)
+// - page_allocator can fail on some WASM environments
 const builtin = @import("builtin");
 const is_android = builtin.os.tag == .linux and (builtin.abi == .android or builtin.abi == .androideabi);
 const is_ios = builtin.os.tag == .ios;
-const is_emscripten = builtin.os.tag == .emscripten;
-const allocator = if (is_android or is_ios or is_emscripten) std.heap.page_allocator else std.heap.c_allocator;
+const allocator = if (is_android or is_ios) std.heap.page_allocator else std.heap.c_allocator;
 
 const PayloadType = enum {
     map,

@@ -6,8 +6,7 @@ const Payload = msgpack.Payload;
 
 const is_android = builtin.os.tag == .linux and (builtin.abi == .android or builtin.abi == .androideabi);
 const is_ios = builtin.os.tag == .ios;
-const is_emscripten = builtin.os.tag == .emscripten;
-const allocator = if (is_android or is_ios or is_emscripten) std.heap.page_allocator else std.heap.c_allocator;
+const allocator = if (is_android or is_ios) std.heap.page_allocator else std.heap.c_allocator;
 
 const ColyseusMessageType = enum(c_int) {
     nil = 0,
