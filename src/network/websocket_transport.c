@@ -7,6 +7,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include "../../include/colyseus/tls_context.h"
+#include "colyseus/settings.h"
 
 /* Platform-specific includes */
 #ifdef _WIN32
@@ -45,6 +47,9 @@ static void ws_send_unreliable_impl(colyseus_transport_t* transport, const uint8
 static void ws_close_impl(colyseus_transport_t* transport, int code, const char* reason);
 static bool ws_is_open_impl(const colyseus_transport_t* transport);
 static void ws_destroy_impl(colyseus_transport_t* transport);
+static bool ws_tls_init(colyseus_ws_transport_data_t* data);
+static void ws_tls_cleanup(colyseus_ws_transport_data_t* data);
+static bool ws_tls_handshake_tick(colyseus_ws_transport_data_t* data);
 
 /* Internal functions */
 static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg);
@@ -102,6 +107,9 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
     data->socket_fd = -1;
     data->buffer_size = 8192;
     data->buffer = malloc(data->buffer_size);
+    data->use_tls = false;
+    data->tls_skip_verify = false;
+    data->tls_ctx = NULL;
 
     transport->impl_data = data;
 
@@ -111,8 +119,9 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
 /* Implementation functions */
 static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
+    // use_tls and tls_skip_verify are already set on data before this is called
 
-    WS_LOG("Connect called: %s", url);
+    WS_LOG("Connect called: %s (TLS=%d, skip_verify=%d)", url, data->use_tls, data->tls_skip_verify);
 
     if (data->state != COLYSEUS_WS_DISCONNECTED) {
         WS_LOG("Already connecting/connected, state=%d", data->state);
@@ -196,6 +205,7 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
         wslay_event_send(data->wslay_ctx);
     }
 
+    ws_tls_cleanup(data);
     ws_socket_close(data);
     ws_cleanup_wslay(data);
 
@@ -271,6 +281,7 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
                data->pending_close_code,
                data->pending_close_reason ? data->pending_close_reason : "(null)");
 
+        ws_tls_cleanup(data);
         ws_socket_close(data);
         ws_cleanup_wslay(data);
 
@@ -326,6 +337,21 @@ static void ws_tick_once(colyseus_transport_t* transport) {
     if (data->state == COLYSEUS_WS_CONNECTING) {
         if (ws_connect_tick(data)) {
             WS_LOG("TCP connected");
+            if (data->use_tls) {
+                if (!ws_tls_init(data)) {
+                    ws_close_impl(transport, 1006, "TLS init failed");
+                    return;
+                }
+                data->state = COLYSEUS_WS_TLS_HANDSHAKE;
+            } else {
+                data->state = COLYSEUS_WS_HANDSHAKE_SENDING;
+                ws_http_handshake_init(data);
+            }
+        }
+    }
+    else if (data->state == COLYSEUS_WS_TLS_HANDSHAKE) {
+        if (ws_tls_handshake_tick(data)) {
+            WS_LOG("TLS handshake complete");
             data->state = COLYSEUS_WS_HANDSHAKE_SENDING;
             ws_http_handshake_init(data);
         }
@@ -692,6 +718,27 @@ static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, 
     *would_block = 0;
     *eof = 0;
 
+    if (data->use_tls && data->tls_ctx) {
+        colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
+        int ret = mbedtls_ssl_read(&tls->ssl, buf, len);
+        
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            *would_block = 1;
+            return 0;
+        }
+        if (ret < 0) {
+            if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+                *eof = 1;
+                return 0;
+            }
+            return -1;
+        }
+        if (ret == 0) {
+            *eof = 1;
+        }
+        return ret;
+    }
+
     ssize_t ret = recv(data->socket_fd, (char*)buf, len, 0);
 
     if (ret < 0) {
@@ -716,6 +763,20 @@ static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, 
 
 static ssize_t ws_socket_send(colyseus_ws_transport_data_t* data, const uint8_t* buf, size_t len, int* would_block) {
     *would_block = 0;
+
+    if (data->use_tls && data->tls_ctx) {
+        colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
+        int ret = mbedtls_ssl_write(&tls->ssl, buf, len);
+        
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            *would_block = 1;
+            return 0;
+        }
+        if (ret < 0) {
+            return -1;
+        }
+        return ret;
+    }
 
     ssize_t ret = send(data->socket_fd, (const char*)buf, len, 0);
 
@@ -752,6 +813,128 @@ static void ws_cleanup_wslay(colyseus_ws_transport_data_t* data) {
     }
 }
 
+/* TLS functions */
+
+static int tls_bio_send(void* ctx, const unsigned char* buf, size_t len) {
+    int fd = *(int*)ctx;
+    ssize_t ret = send(fd, (const char*)buf, len, 0);
+    if (ret < 0) {
+#ifdef _WIN32
+        if (WSAGetLastError() == WSAEWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_WRITE;
+#else
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_WRITE;
+#endif
+        return MBEDTLS_ERR_NET_SEND_FAILED;
+    }
+    return (int)ret;
+}
+
+static int tls_bio_recv(void* ctx, unsigned char* buf, size_t len) {
+    int fd = *(int*)ctx;
+    ssize_t ret = recv(fd, (char*)buf, len, 0);
+    if (ret < 0) {
+#ifdef _WIN32
+        if (WSAGetLastError() == WSAEWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_READ;
+#else
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_READ;
+#endif
+        return MBEDTLS_ERR_NET_RECV_FAILED;
+    }
+    if (ret == 0) return MBEDTLS_ERR_NET_CONN_RESET;
+    return (int)ret;
+}
+
+static bool ws_tls_init(colyseus_ws_transport_data_t* data) {
+    colyseus_tls_context_t* tls = malloc(sizeof(colyseus_tls_context_t));
+    if (!tls) return false;
+    
+    mbedtls_ssl_init(&tls->ssl);
+    mbedtls_ssl_config_init(&tls->conf);
+    mbedtls_entropy_init(&tls->entropy);
+    mbedtls_ctr_drbg_init(&tls->ctr_drbg);
+    tls->handshake_done = 0;
+    data->tls_ctx = tls;  /* assign early so ws_tls_cleanup can free it */
+    
+    if (mbedtls_ctr_drbg_seed(&tls->ctr_drbg, mbedtls_entropy_func, &tls->entropy, NULL, 0) != 0) {
+        ws_tls_cleanup(data);
+        return false;
+    }
+    
+    if (mbedtls_ssl_config_defaults(&tls->conf, MBEDTLS_SSL_IS_CLIENT,
+                                     MBEDTLS_SSL_TRANSPORT_STREAM,
+                                     MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
+        ws_tls_cleanup(data);
+        return false;
+    }
+    
+    if (data->tls_skip_verify) {
+        mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_NONE);
+    } else {
+        mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+        /* No CA chain loaded — relies on server presenting a valid cert chain
+           that mbedTLS can verify if compiled with default trust store support,
+           otherwise this will fail. For dev/self-signed certs use tls_skip_verify=true. */
+    }
+    
+    mbedtls_ssl_conf_rng(&tls->conf, mbedtls_ctr_drbg_random, &tls->ctr_drbg);
+    
+    if (mbedtls_ssl_setup(&tls->ssl, &tls->conf) != 0) {
+        ws_tls_cleanup(data);
+        return false;
+    }
+    
+    if (mbedtls_ssl_set_hostname(&tls->ssl, data->url_host) != 0) {
+        ws_tls_cleanup(data);
+        return false;
+    }
+    
+    mbedtls_ssl_set_bio(&tls->ssl, &data->socket_fd, tls_bio_send, tls_bio_recv, NULL);
+
+    return true;
+}
+
+static void ws_tls_cleanup(colyseus_ws_transport_data_t* data) {
+    if (!data->tls_ctx) return;
+    
+    colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
+    mbedtls_ssl_free(&tls->ssl);
+    mbedtls_ssl_config_free(&tls->conf);
+    mbedtls_ctr_drbg_free(&tls->ctr_drbg);
+    mbedtls_entropy_free(&tls->entropy);
+    free(tls);
+    data->tls_ctx = NULL;
+}
+
+static bool ws_tls_handshake_tick(colyseus_ws_transport_data_t* data) {
+    if (!data->tls_ctx) return false;
+    
+    colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
+    if (tls->handshake_done) return true;
+    
+    int ret = mbedtls_ssl_handshake(&tls->ssl);
+    
+    if (ret == 0) {
+        tls->handshake_done = 1;
+        return true;
+    }
+    
+    if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+        return false;
+    }
+    
+    return false;
+}
+
+/* Public API wrapper for connecting with settings */
+void colyseus_websocket_connect_with_settings(colyseus_transport_t* transport,
+                                               const char* url,
+                                               const colyseus_settings_t* settings) {
+    colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
+    data->use_tls        = settings ? settings->use_secure_protocol  : false;
+    data->tls_skip_verify = settings ? settings->tls_skip_verification : false;
+    transport->connect(transport, url);
+}
+
 void colyseus_http_poll(void) {
     /* Native HTTP is synchronous - no polling needed */
 }
@@ -759,3 +942,4 @@ void colyseus_http_poll(void) {
 void colyseus_ws_poll(void) {
     /* Native WebSocket runs on its own thread - no polling needed */
 }
+

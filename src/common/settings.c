@@ -16,6 +16,7 @@ void colyseus_settings_init(colyseus_settings_t* settings) {
     settings->server_address = strdup("localhost");
     settings->server_port = strdup("2567");
     settings->use_secure_protocol = false;
+    settings->tls_skip_verification = false;
     settings->headers = NULL;  /* Empty hash map */
 }
 

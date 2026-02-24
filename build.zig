@@ -276,6 +276,11 @@ pub fn build(b: *std.Build) void {
             c_std,
         },
     });
+    
+    // Always link mbedTLS (TLS is runtime-enabled via settings)
+    colyseus.linkSystemLibrary("mbedtls");
+    colyseus.linkSystemLibrary("mbedx509");
+    colyseus.linkSystemLibrary("mbedcrypto");
 
     // Link Zig libraries
     colyseus.linkLibrary(http_object);

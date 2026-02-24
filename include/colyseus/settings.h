@@ -20,6 +20,7 @@ extern "C" {
         char* server_address;
         char* server_port;
         bool use_secure_protocol;
+        bool tls_skip_verification;  /* Skip TLS certificate verification (wss:// only) */
         colyseus_header_t* headers;  /* Hash map of headers */
     } colyseus_settings_t;
 
