@@ -471,9 +471,8 @@ static bool ws_http_handshake_init(colyseus_ws_transport_data_t* data) {
         random_bytes[i] = rand() % 256;
     }
 
-    sds random_str = sdsnewlen(random_bytes, 16);
-    data->client_key = colyseus_base64_encode(random_str);
-    sdsfree(random_str);
+    /* Use binary version to avoid strlen() truncating at null bytes */
+    data->client_key = colyseus_base64_encode_binary(random_bytes, 16);
 
     /* Build HTTP request */
     sds request = sdsempty();
@@ -565,12 +564,12 @@ static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data) {
     // Calculate where headers end
     size_t headers_length = (header_end - (char*)data->buffer) + 4; // +4 for \r\n\r\n
 
-    fprintf(stderr, "Headers length: %zu, total buffered: %zu\n", headers_length, data->buffer_offset);
+    fprintf(stdout, "Headers length: %zu, total buffered: %zu\n", headers_length, data->buffer_offset);
 
     // Check if there's extra data after headers (WebSocket frames that came with handshake)
     if (data->buffer_offset > headers_length) {
         size_t extra_data_len = data->buffer_offset - headers_length;
-        fprintf(stderr, "Found %zu bytes of data after handshake headers\n", extra_data_len);
+        fprintf(stdout, "Found %zu bytes of data after handshake headers\n", extra_data_len);
 
         // Move the extra data to the beginning of the buffer
         // This data will be read by wslay on the next recv_callback
