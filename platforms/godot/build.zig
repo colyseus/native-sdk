@@ -449,6 +449,11 @@ pub fn build(b: *std.Build) void {
         lib.linkLibrary(msgpack_builder_object);
         lib.linkLibrary(msgpack_reader_object);
 
+        // Always link mbedTLS (TLS is runtime-enabled via settings)
+        lib.linkSystemLibrary("mbedtls");
+        lib.linkSystemLibrary("mbedx509");
+        lib.linkSystemLibrary("mbedcrypto");
+
         // Generate wslay version header
         const wslay_version_h = b.addConfigHeader(.{
             .style = .{ .cmake = b.path("../../third_party/wslay/lib/includes/wslay/wslayver.h.in") },
