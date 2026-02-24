@@ -21,10 +21,16 @@ pub fn build(b: *std.Build) void {
     const skip_integration = b.option(bool, "skip-integration", "Skip integration tests (which require a running server)") orelse false;
     const debug_tests = b.option(bool, "debug-tests", "Install test executables for debugging") orelse false;
 
-    // iOS/tvOS SDK path option (auto-detected on macOS if not specified)
-    const ios_sdk_path: ?[]const u8 = b.option([]const u8, "ios-sdk", "Path to iOS SDK (e.g., from 'xcrun --sdk iphoneos --show-sdk-path')") orelse blk: {
-        if (target.result.os.tag == .ios or target.result.os.tag == .tvos) {
-            const sdk_name = if (target.result.os.tag == .tvos) "appletvos" else "iphoneos";
+    // Apple SDK path option (auto-detected on macOS if not specified)
+    // Handles macOS, iOS, and tvOS targets
+    const apple_sdk_path: ?[]const u8 = b.option([]const u8, "apple-sdk", "Path to Apple SDK (e.g., from 'xcrun --sdk macosx --show-sdk-path')") orelse blk: {
+        const os = target.result.os.tag;
+        if (os == .macos or os == .ios or os == .tvos) {
+            const sdk_name = switch (os) {
+                .macos => "macosx",
+                .tvos => "appletvos",
+                else => "iphoneos",
+            };
             const result = std.process.Child.run(.{
                 .allocator = b.allocator,
                 .argv = &.{ "xcrun", "--sdk", sdk_name, "--show-sdk-path" },
@@ -39,7 +45,7 @@ pub fn build(b: *std.Build) void {
         break :blk null;
     };
 
-    // Helper to add iOS SDK paths to a compile step
+    // Helper to add Apple SDK paths to a compile step (macOS, iOS, tvOS)
     const addAppleSdkPaths = struct {
         fn add(compile_step: *std.Build.Step.Compile, sdk_path: ?[]const u8) void {
             if (sdk_path) |sdk| {
@@ -107,7 +113,7 @@ pub fn build(b: *std.Build) void {
         });
 
         wslay.?.linkLibC();
-        addAppleSdkPaths(wslay.?, ios_sdk_path);
+        addAppleSdkPaths(wslay.?, apple_sdk_path);
         wslay.?.addIncludePath(b.path("third_party/wslay/lib/includes"));
         wslay.?.addIncludePath(b.path("third_party/wslay/lib"));
         wslay.?.addConfigHeader(wslay_config_h);
@@ -171,7 +177,7 @@ pub fn build(b: *std.Build) void {
             .linkage = .static,
         });
         http_object.?.linkLibC();
-        addAppleSdkPaths(http_object.?, ios_sdk_path);
+        addAppleSdkPaths(http_object.?, apple_sdk_path);
     }
 
     // String util Zig module (needed for both native and emscripten)
@@ -192,7 +198,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
     strutil_object.linkLibC();
-    if (!is_emscripten) addAppleSdkPaths(strutil_object, ios_sdk_path);
+    if (!is_emscripten) addAppleSdkPaths(strutil_object, apple_sdk_path);
 
     // ========================================================================
     // Build msgpack builder module (wraps zig-msgpack for C interop)
@@ -229,7 +235,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
     msgpack_builder_object.linkLibC();
-    if (!is_emscripten) addAppleSdkPaths(msgpack_builder_object, ios_sdk_path);
+    if (!is_emscripten) addAppleSdkPaths(msgpack_builder_object, apple_sdk_path);
 
     // Msgpack reader module (for decoding msgpack in on_message callbacks)
     const msgpack_reader_module = b.createModule(.{
@@ -249,7 +255,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
     msgpack_reader_object.linkLibC();
-    if (!is_emscripten) addAppleSdkPaths(msgpack_reader_object, ios_sdk_path);
+    if (!is_emscripten) addAppleSdkPaths(msgpack_reader_object, apple_sdk_path);
 
     // ========================================================================
     // Build colyseus library
@@ -271,7 +277,7 @@ pub fn build(b: *std.Build) void {
     });
 
     colyseus.linkLibC();
-    if (!is_emscripten) addAppleSdkPaths(colyseus, ios_sdk_path);
+    if (!is_emscripten) addAppleSdkPaths(colyseus, apple_sdk_path);
 
     // Add include paths
     colyseus.addIncludePath(b.path("include"));
