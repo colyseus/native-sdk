@@ -461,26 +461,107 @@ static void raw_value_to_variant(void* raw_value, bool has_schema_child,
 /* Callback context for map iteration */
 typedef struct {
     Variant* map_instance;
+    bool has_schema_child;
+    const char* child_primitive_type;
 } map_populate_ctx_t;
+
+/* Helper to convert a primitive void* value to a Variant (GDScript path) */
+static void gdscript_primitive_to_variant(void* value, const char* primitive_type, Variant* r_variant) {
+    if (!value || !primitive_type) {
+        memset(r_variant, 0, sizeof(*r_variant));
+        return;
+    }
+
+    colyseus_field_type_t ft = colyseus_field_type_from_string(primitive_type);
+    switch (ft) {
+        case COLYSEUS_FIELD_STRING: {
+            String str;
+            constructors.string_new_with_utf8_chars(&str, (const char*)value);
+            constructors.variant_from_string_constructor(r_variant, &str);
+            destructors.string_destructor(&str);
+            break;
+        }
+        case COLYSEUS_FIELD_NUMBER:
+        case COLYSEUS_FIELD_FLOAT64: {
+            double d = *(double*)value;
+            constructors.variant_from_float_constructor(r_variant, &d);
+            break;
+        }
+        case COLYSEUS_FIELD_FLOAT32: {
+            double d = (double)*(float*)value;
+            constructors.variant_from_float_constructor(r_variant, &d);
+            break;
+        }
+        case COLYSEUS_FIELD_BOOLEAN: {
+            GDExtensionBool b = *(bool*)value ? 1 : 0;
+            constructors.variant_from_bool_constructor(r_variant, &b);
+            break;
+        }
+        case COLYSEUS_FIELD_INT8: {
+            int64_t i = (int64_t)*(int8_t*)value;
+            constructors.variant_from_int_constructor(r_variant, &i);
+            break;
+        }
+        case COLYSEUS_FIELD_UINT8: {
+            int64_t i = (int64_t)*(uint8_t*)value;
+            constructors.variant_from_int_constructor(r_variant, &i);
+            break;
+        }
+        case COLYSEUS_FIELD_INT16: {
+            int64_t i = (int64_t)*(int16_t*)value;
+            constructors.variant_from_int_constructor(r_variant, &i);
+            break;
+        }
+        case COLYSEUS_FIELD_UINT16: {
+            int64_t i = (int64_t)*(uint16_t*)value;
+            constructors.variant_from_int_constructor(r_variant, &i);
+            break;
+        }
+        case COLYSEUS_FIELD_INT32: {
+            int64_t i = (int64_t)*(int32_t*)value;
+            constructors.variant_from_int_constructor(r_variant, &i);
+            break;
+        }
+        case COLYSEUS_FIELD_UINT32: {
+            int64_t i = (int64_t)*(uint32_t*)value;
+            constructors.variant_from_int_constructor(r_variant, &i);
+            break;
+        }
+        case COLYSEUS_FIELD_INT64: {
+            constructors.variant_from_int_constructor(r_variant, &(*(int64_t*)value));
+            break;
+        }
+        case COLYSEUS_FIELD_UINT64: {
+            int64_t i = (int64_t)*(uint64_t*)value;
+            constructors.variant_from_int_constructor(r_variant, &i);
+            break;
+        }
+        default:
+            memset(r_variant, 0, sizeof(*r_variant));
+            break;
+    }
+}
 
 /* Callback for populating GDScript Map */
 static void populate_map_callback(const char* key, void* value, void* userdata) {
     map_populate_ctx_t* ctx = (map_populate_ctx_t*)userdata;
     if (!ctx || !ctx->map_instance || !key) return;
-    
-    /* Get the map schema to determine child type */
-    /* For now, assume schema children have userdata */
-    colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
-    
+
     Variant value_variant;
-    if (dyn_schema && dyn_schema->userdata) {
-        /* Schema child - get the GDScript instance */
-        api.variant_new_copy(&value_variant, (Variant*)dyn_schema->userdata);
+    if (ctx->has_schema_child && value) {
+        colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
+        if (dyn_schema->userdata) {
+            /* Schema child - get the GDScript instance */
+            api.variant_new_copy(&value_variant, (Variant*)dyn_schema->userdata);
+        } else {
+            memset(&value_variant, 0, sizeof(value_variant));
+        }
+    } else if (value) {
+        gdscript_primitive_to_variant(value, ctx->child_primitive_type, &value_variant);
     } else {
-        /* Primitive or null - try to convert */
         memset(&value_variant, 0, sizeof(value_variant));
     }
-    
+
     gdscript_map_set_item(ctx->map_instance, key, &value_variant);
     destructors.variant_destroy(&value_variant);
 }
@@ -488,25 +569,30 @@ static void populate_map_callback(const char* key, void* value, void* userdata) 
 /* Callback context for array iteration */
 typedef struct {
     Variant* array_instance;
+    bool has_schema_child;
+    const char* child_primitive_type;
 } array_populate_ctx_t;
 
 /* Callback for populating GDScript ArraySchema */
 static void populate_array_callback(int index, void* value, void* userdata) {
     array_populate_ctx_t* ctx = (array_populate_ctx_t*)userdata;
     if (!ctx || !ctx->array_instance) return;
-    
-    /* Get the array schema to determine child type */
-    colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
-    
+
     Variant value_variant;
-    if (dyn_schema && dyn_schema->userdata) {
-        /* Schema child - get the GDScript instance */
-        api.variant_new_copy(&value_variant, (Variant*)dyn_schema->userdata);
+    if (ctx->has_schema_child && value) {
+        colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
+        if (dyn_schema->userdata) {
+            /* Schema child - get the GDScript instance */
+            api.variant_new_copy(&value_variant, (Variant*)dyn_schema->userdata);
+        } else {
+            memset(&value_variant, 0, sizeof(value_variant));
+        }
+    } else if (value) {
+        gdscript_primitive_to_variant(value, ctx->child_primitive_type, &value_variant);
     } else {
-        /* Primitive or null - try to convert */
         memset(&value_variant, 0, sizeof(value_variant));
     }
-    
+
     gdscript_array_set_at(ctx->array_instance, index, &value_variant);
     destructors.variant_destroy(&value_variant);
 }
@@ -595,7 +681,11 @@ void gdscript_value_to_variant(colyseus_dynamic_value_t* value, Variant* r_varia
             }
             
             /* Populate the map with items */
-            map_populate_ctx_t ctx = { .map_instance = map_instance };
+            map_populate_ctx_t ctx = {
+                .map_instance = map_instance,
+                .has_schema_child = map->has_schema_child,
+                .child_primitive_type = map->child_primitive_type
+            };
             colyseus_map_schema_foreach(map, populate_map_callback, &ctx);
             
             /* Return the map instance */
@@ -622,7 +712,11 @@ void gdscript_value_to_variant(colyseus_dynamic_value_t* value, Variant* r_varia
             }
             
             /* Populate the array with items */
-            array_populate_ctx_t ctx = { .array_instance = array_instance };
+            array_populate_ctx_t ctx = {
+                .array_instance = array_instance,
+                .has_schema_child = arr->has_schema_child,
+                .child_primitive_type = arr->child_primitive_type
+            };
             colyseus_array_schema_foreach(arr, populate_array_callback, &ctx);
             
             /* Return the array instance */

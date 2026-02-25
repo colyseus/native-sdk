@@ -412,11 +412,65 @@ void colyseus_dynamic_schema_to_dictionary(
     colyseus_dynamic_schema_to_dictionary_with_vtable(schema, NULL, result);
 }
 
+// Helper to convert a primitive void* value (from colyseus_decode_primitive) to a Variant
+static void primitive_value_to_variant(void* value, const char* primitive_type, Variant* result) {
+    if (!value || !primitive_type) {
+        memset(result, 0, sizeof(Variant));
+        return;
+    }
+
+    colyseus_field_type_t ft = colyseus_field_type_from_string(primitive_type);
+    switch (ft) {
+        case COLYSEUS_FIELD_STRING:
+            // decode_primitive returns char* directly for strings
+            variant_from_string(result, (const char*)value);
+            break;
+        case COLYSEUS_FIELD_NUMBER:
+        case COLYSEUS_FIELD_FLOAT64:
+            variant_from_float(result, *(double*)value);
+            break;
+        case COLYSEUS_FIELD_FLOAT32:
+            variant_from_float(result, (double)*(float*)value);
+            break;
+        case COLYSEUS_FIELD_BOOLEAN:
+            variant_from_bool(result, *(bool*)value);
+            break;
+        case COLYSEUS_FIELD_INT8:
+            variant_from_int(result, (int64_t)*(int8_t*)value);
+            break;
+        case COLYSEUS_FIELD_UINT8:
+            variant_from_int(result, (int64_t)*(uint8_t*)value);
+            break;
+        case COLYSEUS_FIELD_INT16:
+            variant_from_int(result, (int64_t)*(int16_t*)value);
+            break;
+        case COLYSEUS_FIELD_UINT16:
+            variant_from_int(result, (int64_t)*(uint16_t*)value);
+            break;
+        case COLYSEUS_FIELD_INT32:
+            variant_from_int(result, (int64_t)*(int32_t*)value);
+            break;
+        case COLYSEUS_FIELD_UINT32:
+            variant_from_int(result, (int64_t)*(uint32_t*)value);
+            break;
+        case COLYSEUS_FIELD_INT64:
+            variant_from_int(result, *(int64_t*)value);
+            break;
+        case COLYSEUS_FIELD_UINT64:
+            variant_from_int(result, (int64_t)*(uint64_t*)value);
+            break;
+        default:
+            memset(result, 0, sizeof(Variant));
+            break;
+    }
+}
+
 // Callback context for array iteration
 typedef struct {
     Array* result;
     const colyseus_schema_vtable_t* child_vtable;
     bool has_schema_child;
+    const char* child_primitive_type;
 } ArrayConvertContext;
 
 static void array_item_to_godot(int index, void* value, void* userdata) {
@@ -438,13 +492,11 @@ static void array_item_to_godot(int index, void* value, void* userdata) {
         }
         variant_from_dictionary(&item_variant, &child_dict);
     } else if (value) {
-        // For primitive arrays, value is the actual value
-        // TODO: Handle primitive types properly based on child_primitive_type
-        memset(&item_variant, 0, sizeof(Variant));
+        primitive_value_to_variant(value, ctx->child_primitive_type, &item_variant);
     } else {
         memset(&item_variant, 0, sizeof(Variant));
     }
-    
+
     array_push_back(ctx->result, &item_variant);
     destructors.variant_destroy(&item_variant);
 }
@@ -454,11 +506,12 @@ void colyseus_array_to_godot_array(
     Array* result
 ) {
     if (!array || !result) return;
-    
+
     ArrayConvertContext ctx = {
         .result = result,
         .child_vtable = array->child_vtable,
-        .has_schema_child = array->has_schema_child
+        .has_schema_child = array->has_schema_child,
+        .child_primitive_type = array->child_primitive_type
     };
     
     // Iterate through array items
@@ -470,6 +523,7 @@ typedef struct {
     Dictionary* result;
     const colyseus_schema_vtable_t* child_vtable;
     bool has_schema_child;
+    const char* child_primitive_type;
 } MapConvertContext;
 
 static void map_item_to_godot(const char* key, void* value, void* userdata) {
@@ -490,13 +544,11 @@ static void map_item_to_godot(const char* key, void* value, void* userdata) {
         }
         variant_from_dictionary(&item_variant, &child_dict);
     } else if (value) {
-        // For primitive maps, value is the actual value
-        // TODO: Handle primitive types properly based on child_primitive_type
-        memset(&item_variant, 0, sizeof(Variant));
+        primitive_value_to_variant(value, ctx->child_primitive_type, &item_variant);
     } else {
         memset(&item_variant, 0, sizeof(Variant));
     }
-    
+
     dictionary_set(ctx->result, key, &item_variant);
 }
 
@@ -505,11 +557,12 @@ void colyseus_map_to_dictionary(
     Dictionary* result
 ) {
     if (!map || !result) return;
-    
+
     MapConvertContext ctx = {
         .result = result,
         .child_vtable = map->child_vtable,
-        .has_schema_child = map->has_schema_child
+        .has_schema_child = map->has_schema_child,
+        .child_primitive_type = map->child_primitive_type
     };
     
     // Iterate through map items
