@@ -1,4 +1,5 @@
 #include "colyseus/room.h"
+#include "colyseus/websocket_transport.h"
 #include "colyseus/schema.h"
 #include "colyseus/messages.h"
 #include <stdlib.h>
@@ -84,6 +85,7 @@ void* colyseus_room_get_state(colyseus_room_t* room) {
 void colyseus_room_connect(
     colyseus_room_t* room,
     const char* endpoint,
+    const colyseus_settings_t* settings,
     void (*on_success)(void* userdata),
     void (*on_error)(int code, const char* message, void* userdata),
     void* userdata
@@ -111,8 +113,12 @@ void colyseus_room_connect(
     room->connect_on_error = on_error;
     room->connect_userdata = userdata;
 
-    /* Connect */
-    colyseus_transport_connect(room->transport, endpoint);
+    /* Connect (with TLS settings if provided) */
+    if (settings) {
+        colyseus_websocket_connect_with_settings(room->transport, endpoint, settings);
+    } else {
+        colyseus_transport_connect(room->transport, endpoint);
+    }
 }
 
 void colyseus_room_leave(colyseus_room_t* room, bool consented) {

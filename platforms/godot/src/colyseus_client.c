@@ -1,5 +1,6 @@
 #include "godot_colyseus.h"
 #include "msgpack_variant.h"
+#include "tls_certificates.h"
 #include <colyseus/client.h>
 #include <colyseus/room.h>
 #include <colyseus/settings.h>
@@ -170,6 +171,13 @@ void gdext_colyseus_client_set_endpoint(void* p_method_userdata, GDExtensionClas
     colyseus_settings_set_address(settings, address);
     colyseus_settings_set_port(settings, port);
     colyseus_settings_set_secure(settings, use_secure);
+    
+    // Set CA certificates for TLS verification (auto-loaded at init time)
+    const unsigned char* ca_data = gdext_tls_get_ca_certificates();
+    size_t ca_len = gdext_tls_get_ca_certificates_len();
+    if (ca_data && ca_len > 0) {
+        colyseus_settings_set_ca_certificates(settings, ca_data, ca_len);
+    }
     
     // Create native client
     if (wrapper->native_client) {

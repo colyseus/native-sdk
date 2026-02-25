@@ -111,6 +111,7 @@ jobs:
             -I../../third_party/cJSON
             -I../../third_party/wslay/lib/includes
             -I../../third_party/wslay/lib
+            -I../../third_party/mbedtls/include
             -Iinclude
             -Isrc
           )
@@ -125,6 +126,7 @@ jobs:
             src/colyseus_gdscript_schema.c
             src/msgpack_variant.c
             src/msgpack_encoder.c
+            src/tls_certificates.c
             ../../src/common/settings.c
             ../../src/client.c
             ../../src/room.c
@@ -140,13 +142,122 @@ jobs:
             ../../src/utils/sha1_c.c
             ../../src/auth/auth.c
             ../../src/auth/secure_storage.c
+            ../../src/certs/ca_bundle.c
             ../../third_party/sds/sds.c
             ../../third_party/cJSON/cJSON.c
             ../../third_party/wslay/lib/wslay_event.c
             ../../third_party/wslay/lib/wslay_frame.c
             ../../third_party/wslay/lib/wslay_net.c
             ../../third_party/wslay/lib/wslay_queue.c
-          )
+            ../../third_party/mbedtls/library/aes.c
+            ../../third_party/mbedtls/library/aesce.c
+            ../../third_party/mbedtls/library/aesni.c
+            ../../third_party/mbedtls/library/aria.c
+            ../../third_party/mbedtls/library/asn1parse.c
+            ../../third_party/mbedtls/library/asn1write.c
+            ../../third_party/mbedtls/library/base64.c
+            ../../third_party/mbedtls/library/bignum.c
+            ../../third_party/mbedtls/library/bignum_core.c
+            ../../third_party/mbedtls/library/bignum_mod.c
+            ../../third_party/mbedtls/library/bignum_mod_raw.c
+            ../../third_party/mbedtls/library/block_cipher.c
+            ../../third_party/mbedtls/library/camellia.c
+            ../../third_party/mbedtls/library/ccm.c
+            ../../third_party/mbedtls/library/chacha20.c
+            ../../third_party/mbedtls/library/chachapoly.c
+            ../../third_party/mbedtls/library/cipher.c
+            ../../third_party/mbedtls/library/cipher_wrap.c
+            ../../third_party/mbedtls/library/cmac.c
+            ../../third_party/mbedtls/library/constant_time.c
+            ../../third_party/mbedtls/library/ctr_drbg.c
+            ../../third_party/mbedtls/library/debug.c
+            ../../third_party/mbedtls/library/des.c
+            ../../third_party/mbedtls/library/dhm.c
+            ../../third_party/mbedtls/library/ecdh.c
+            ../../third_party/mbedtls/library/ecdsa.c
+            ../../third_party/mbedtls/library/ecjpake.c
+            ../../third_party/mbedtls/library/ecp.c
+            ../../third_party/mbedtls/library/ecp_curves.c
+            ../../third_party/mbedtls/library/ecp_curves_new.c
+            ../../third_party/mbedtls/library/entropy.c
+            ../../third_party/mbedtls/library/entropy_poll.c
+            ../../third_party/mbedtls/library/error.c
+            ../../third_party/mbedtls/library/gcm.c
+            ../../third_party/mbedtls/library/hkdf.c
+            ../../third_party/mbedtls/library/hmac_drbg.c
+            ../../third_party/mbedtls/library/lmots.c
+            ../../third_party/mbedtls/library/lms.c
+            ../../third_party/mbedtls/library/md.c
+            ../../third_party/mbedtls/library/md5.c
+            ../../third_party/mbedtls/library/memory_buffer_alloc.c
+            ../../third_party/mbedtls/library/mps_reader.c
+            ../../third_party/mbedtls/library/mps_trace.c
+            ../../third_party/mbedtls/library/net_sockets.c
+            ../../third_party/mbedtls/library/nist_kw.c
+            ../../third_party/mbedtls/library/oid.c
+            ../../third_party/mbedtls/library/padlock.c
+            ../../third_party/mbedtls/library/pem.c
+            ../../third_party/mbedtls/library/pk.c
+            ../../third_party/mbedtls/library/pk_ecc.c
+            ../../third_party/mbedtls/library/pk_wrap.c
+            ../../third_party/mbedtls/library/pkcs12.c
+            ../../third_party/mbedtls/library/pkcs5.c
+            ../../third_party/mbedtls/library/pkcs7.c
+            ../../third_party/mbedtls/library/pkparse.c
+            ../../third_party/mbedtls/library/pkwrite.c
+            ../../third_party/mbedtls/library/platform.c
+            ../../third_party/mbedtls/library/platform_util.c
+            ../../third_party/mbedtls/library/poly1305.c
+            ../../third_party/mbedtls/library/psa_crypto.c
+            ../../third_party/mbedtls/library/psa_crypto_aead.c
+            ../../third_party/mbedtls/library/psa_crypto_cipher.c
+            ../../third_party/mbedtls/library/psa_crypto_client.c
+            ../../third_party/mbedtls/library/psa_crypto_driver_wrappers_no_static.c
+            ../../third_party/mbedtls/library/psa_crypto_ecp.c
+            ../../third_party/mbedtls/library/psa_crypto_ffdh.c
+            ../../third_party/mbedtls/library/psa_crypto_hash.c
+            ../../third_party/mbedtls/library/psa_crypto_mac.c
+            ../../third_party/mbedtls/library/psa_crypto_pake.c
+            ../../third_party/mbedtls/library/psa_crypto_rsa.c
+            ../../third_party/mbedtls/library/psa_crypto_se.c
+            ../../third_party/mbedtls/library/psa_crypto_slot_management.c
+            ../../third_party/mbedtls/library/psa_crypto_storage.c
+            ../../third_party/mbedtls/library/psa_its_file.c
+            ../../third_party/mbedtls/library/psa_util.c
+            ../../third_party/mbedtls/library/ripemd160.c
+            ../../third_party/mbedtls/library/rsa.c
+            ../../third_party/mbedtls/library/rsa_alt_helpers.c
+            ../../third_party/mbedtls/library/sha1.c
+            ../../third_party/mbedtls/library/sha256.c
+            ../../third_party/mbedtls/library/sha3.c
+            ../../third_party/mbedtls/library/sha512.c
+            ../../third_party/mbedtls/library/ssl_cache.c
+            ../../third_party/mbedtls/library/ssl_ciphersuites.c
+            ../../third_party/mbedtls/library/ssl_client.c
+            ../../third_party/mbedtls/library/ssl_cookie.c
+            ../../third_party/mbedtls/library/ssl_debug_helpers_generated.c
+            ../../third_party/mbedtls/library/ssl_msg.c
+            ../../third_party/mbedtls/library/ssl_ticket.c
+            ../../third_party/mbedtls/library/ssl_tls.c
+            ../../third_party/mbedtls/library/ssl_tls12_client.c
+            ../../third_party/mbedtls/library/ssl_tls12_server.c
+            ../../third_party/mbedtls/library/ssl_tls13_client.c
+            ../../third_party/mbedtls/library/ssl_tls13_generic.c
+            ../../third_party/mbedtls/library/ssl_tls13_keys.c
+            ../../third_party/mbedtls/library/ssl_tls13_server.c
+            ../../third_party/mbedtls/library/threading.c
+            ../../third_party/mbedtls/library/timing.c
+            ../../third_party/mbedtls/library/version.c
+            ../../third_party/mbedtls/library/version_features.c
+            ../../third_party/mbedtls/library/x509.c
+            ../../third_party/mbedtls/library/x509_create.c
+            ../../third_party/mbedtls/library/x509_crl.c
+            ../../third_party/mbedtls/library/x509_crt.c
+            ../../third_party/mbedtls/library/x509_csr.c
+            ../../third_party/mbedtls/library/x509write.c
+            ../../third_party/mbedtls/library/x509write_crt.c
+            ../../third_party/mbedtls/library/x509write_csr.c
+            )
 
           # Generate wslay config headers
           mkdir -p .zig-cache/config/wslay
@@ -209,6 +320,14 @@ jobs:
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_reader.o
 
+          zig build-obj \
+            -target aarch64-ios \
+            -ODebug \
+            --sysroot "$SDK" \
+            -Mroot=../../src/certs/system_certs.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/system_certs.o
+
           # Link everything with clang
           xcrun clang \
             -target arm64-apple-ios13.0 \
@@ -225,6 +344,7 @@ jobs:
             .zig-cache/strutil_zig.o \
             .zig-cache/msgpack_builder.o \
             .zig-cache/msgpack_reader.o \
+            .zig-cache/system_certs.o \
             -framework CoreFoundation \
             -framework Security \
             -lc
@@ -250,6 +370,7 @@ jobs:
             -I../../third_party/cJSON
             -I../../third_party/wslay/lib/includes
             -I../../third_party/wslay/lib
+            -I../../third_party/mbedtls/include 
             -Iinclude
             -Isrc
             -I.zig-cache/config
@@ -265,6 +386,7 @@ jobs:
             src/colyseus_gdscript_schema.c
             src/msgpack_variant.c
             src/msgpack_encoder.c
+            src/tls_certificates.c
             ../../src/common/settings.c
             ../../src/client.c
             ../../src/room.c
@@ -280,13 +402,122 @@ jobs:
             ../../src/utils/sha1_c.c
             ../../src/auth/auth.c
             ../../src/auth/secure_storage.c
+            ../../src/certs/ca_bundle.c
             ../../third_party/sds/sds.c
             ../../third_party/cJSON/cJSON.c
             ../../third_party/wslay/lib/wslay_event.c
             ../../third_party/wslay/lib/wslay_frame.c
             ../../third_party/wslay/lib/wslay_net.c
             ../../third_party/wslay/lib/wslay_queue.c
-          )
+            ../../third_party/mbedtls/library/aes.c
+            ../../third_party/mbedtls/library/aesce.c
+            ../../third_party/mbedtls/library/aesni.c
+            ../../third_party/mbedtls/library/aria.c
+            ../../third_party/mbedtls/library/asn1parse.c
+            ../../third_party/mbedtls/library/asn1write.c
+            ../../third_party/mbedtls/library/base64.c
+            ../../third_party/mbedtls/library/bignum.c
+            ../../third_party/mbedtls/library/bignum_core.c
+            ../../third_party/mbedtls/library/bignum_mod.c
+            ../../third_party/mbedtls/library/bignum_mod_raw.c
+            ../../third_party/mbedtls/library/block_cipher.c
+            ../../third_party/mbedtls/library/camellia.c
+            ../../third_party/mbedtls/library/ccm.c
+            ../../third_party/mbedtls/library/chacha20.c
+            ../../third_party/mbedtls/library/chachapoly.c
+            ../../third_party/mbedtls/library/cipher.c
+            ../../third_party/mbedtls/library/cipher_wrap.c
+            ../../third_party/mbedtls/library/cmac.c
+            ../../third_party/mbedtls/library/constant_time.c
+            ../../third_party/mbedtls/library/ctr_drbg.c
+            ../../third_party/mbedtls/library/debug.c
+            ../../third_party/mbedtls/library/des.c
+            ../../third_party/mbedtls/library/dhm.c
+            ../../third_party/mbedtls/library/ecdh.c
+            ../../third_party/mbedtls/library/ecdsa.c
+            ../../third_party/mbedtls/library/ecjpake.c
+            ../../third_party/mbedtls/library/ecp.c
+            ../../third_party/mbedtls/library/ecp_curves.c
+            ../../third_party/mbedtls/library/ecp_curves_new.c
+            ../../third_party/mbedtls/library/entropy.c
+            ../../third_party/mbedtls/library/entropy_poll.c
+            ../../third_party/mbedtls/library/error.c
+            ../../third_party/mbedtls/library/gcm.c
+            ../../third_party/mbedtls/library/hkdf.c
+            ../../third_party/mbedtls/library/hmac_drbg.c
+            ../../third_party/mbedtls/library/lmots.c
+            ../../third_party/mbedtls/library/lms.c
+            ../../third_party/mbedtls/library/md.c
+            ../../third_party/mbedtls/library/md5.c
+            ../../third_party/mbedtls/library/memory_buffer_alloc.c
+            ../../third_party/mbedtls/library/mps_reader.c
+            ../../third_party/mbedtls/library/mps_trace.c
+            ../../third_party/mbedtls/library/net_sockets.c
+            ../../third_party/mbedtls/library/nist_kw.c
+            ../../third_party/mbedtls/library/oid.c
+            ../../third_party/mbedtls/library/padlock.c
+            ../../third_party/mbedtls/library/pem.c
+            ../../third_party/mbedtls/library/pk.c
+            ../../third_party/mbedtls/library/pk_ecc.c
+            ../../third_party/mbedtls/library/pk_wrap.c
+            ../../third_party/mbedtls/library/pkcs12.c
+            ../../third_party/mbedtls/library/pkcs5.c
+            ../../third_party/mbedtls/library/pkcs7.c
+            ../../third_party/mbedtls/library/pkparse.c
+            ../../third_party/mbedtls/library/pkwrite.c
+            ../../third_party/mbedtls/library/platform.c
+            ../../third_party/mbedtls/library/platform_util.c
+            ../../third_party/mbedtls/library/poly1305.c
+            ../../third_party/mbedtls/library/psa_crypto.c
+            ../../third_party/mbedtls/library/psa_crypto_aead.c
+            ../../third_party/mbedtls/library/psa_crypto_cipher.c
+            ../../third_party/mbedtls/library/psa_crypto_client.c
+            ../../third_party/mbedtls/library/psa_crypto_driver_wrappers_no_static.c
+            ../../third_party/mbedtls/library/psa_crypto_ecp.c
+            ../../third_party/mbedtls/library/psa_crypto_ffdh.c
+            ../../third_party/mbedtls/library/psa_crypto_hash.c
+            ../../third_party/mbedtls/library/psa_crypto_mac.c
+            ../../third_party/mbedtls/library/psa_crypto_pake.c
+            ../../third_party/mbedtls/library/psa_crypto_rsa.c
+            ../../third_party/mbedtls/library/psa_crypto_se.c
+            ../../third_party/mbedtls/library/psa_crypto_slot_management.c
+            ../../third_party/mbedtls/library/psa_crypto_storage.c
+            ../../third_party/mbedtls/library/psa_its_file.c
+            ../../third_party/mbedtls/library/psa_util.c
+            ../../third_party/mbedtls/library/ripemd160.c
+            ../../third_party/mbedtls/library/rsa.c
+            ../../third_party/mbedtls/library/rsa_alt_helpers.c
+            ../../third_party/mbedtls/library/sha1.c
+            ../../third_party/mbedtls/library/sha256.c
+            ../../third_party/mbedtls/library/sha3.c
+            ../../third_party/mbedtls/library/sha512.c
+            ../../third_party/mbedtls/library/ssl_cache.c
+            ../../third_party/mbedtls/library/ssl_ciphersuites.c
+            ../../third_party/mbedtls/library/ssl_client.c
+            ../../third_party/mbedtls/library/ssl_cookie.c
+            ../../third_party/mbedtls/library/ssl_debug_helpers_generated.c
+            ../../third_party/mbedtls/library/ssl_msg.c
+            ../../third_party/mbedtls/library/ssl_ticket.c
+            ../../third_party/mbedtls/library/ssl_tls.c
+            ../../third_party/mbedtls/library/ssl_tls12_client.c
+            ../../third_party/mbedtls/library/ssl_tls12_server.c
+            ../../third_party/mbedtls/library/ssl_tls13_client.c
+            ../../third_party/mbedtls/library/ssl_tls13_generic.c
+            ../../third_party/mbedtls/library/ssl_tls13_keys.c
+            ../../third_party/mbedtls/library/ssl_tls13_server.c
+            ../../third_party/mbedtls/library/threading.c
+            ../../third_party/mbedtls/library/timing.c
+            ../../third_party/mbedtls/library/version.c
+            ../../third_party/mbedtls/library/version_features.c
+            ../../third_party/mbedtls/library/x509.c
+            ../../third_party/mbedtls/library/x509_create.c
+            ../../third_party/mbedtls/library/x509_crl.c
+            ../../third_party/mbedtls/library/x509_crt.c
+            ../../third_party/mbedtls/library/x509_csr.c
+            ../../third_party/mbedtls/library/x509write.c
+            ../../third_party/mbedtls/library/x509write_crt.c
+            ../../third_party/mbedtls/library/x509write_csr.c
+            )
 
           zig build-obj \
             -target aarch64-ios \
@@ -337,6 +568,14 @@ jobs:
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_reader_rel.o
 
+          zig build-obj \
+            -target aarch64-ios \
+            -OReleaseSafe \
+            --sysroot "$SDK" \
+            -Mroot=../../src/certs/system_certs.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/system_certs_rel.o
+
           xcrun clang \
             -target arm64-apple-ios13.0 \
             -isysroot "$SDK" \
@@ -353,6 +592,7 @@ jobs:
             .zig-cache/strutil_zig_rel.o \
             .zig-cache/msgpack_builder_rel.o \
             .zig-cache/msgpack_reader_rel.o \
+            .zig-cache/system_certs_rel.o \
             -framework CoreFoundation \
             -framework Security \
             -lc

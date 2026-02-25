@@ -1,6 +1,7 @@
 #include "godot_colyseus.h"
 #include "colyseus_callbacks.h"
 #include "colyseus_schema_registry.h"
+#include "tls_certificates.h"
 #include <gdextension_interface.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1048,6 +1049,9 @@ static void colyseus_initialize(void *userdata, GDExtensionInitializationLevel p
         return;
     }
     
+    /* Initialize TLS certificates (auto-loads bundled or override certs) */
+    gdext_tls_certificates_init();
+    
     register_colyseus_client();
     register_colyseus_room();
     register_colyseus_callbacks();
@@ -1059,6 +1063,8 @@ static void colyseus_deinitialize(void *userdata, GDExtensionInitializationLevel
         return;
     }
     
+    /* Cleanup TLS certificates */
+    gdext_tls_certificates_cleanup();
 }
 
 GDExtensionBool GDE_EXPORT colyseus_sdk_init(
@@ -1135,6 +1141,9 @@ GDExtensionBool GDE_EXPORT colyseus_sdk_init(
     destructors.array_destructor = api.variant_get_ptr_destructor(GDEXTENSION_VARIANT_TYPE_ARRAY);
     destructors.packed_byte_array_destructor = api.variant_get_ptr_destructor(GDEXTENSION_VARIANT_TYPE_PACKED_BYTE_ARRAY);
     destructors.variant_destroy = (GDExtensionInterfaceVariantDestroy)p_get_proc_address("variant_destroy");
+
+    // Initialize TLS certificate API (needed before init callback)
+    gdext_tls_certificates_set_api(p_get_proc_address);
 
     r_initialization->initialize = colyseus_initialize;
     r_initialization->deinitialize = colyseus_deinitialize;

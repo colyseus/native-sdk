@@ -16,7 +16,10 @@ void colyseus_settings_init(colyseus_settings_t* settings) {
     settings->server_address = strdup("localhost");
     settings->server_port = strdup("2567");
     settings->use_secure_protocol = false;
+    settings->tls_skip_verification = false;
     settings->headers = NULL;  /* Empty hash map */
+    settings->ca_pem_data = NULL;
+    settings->ca_pem_len = 0;
 }
 
 void colyseus_settings_free(colyseus_settings_t* settings) {
@@ -49,6 +52,14 @@ void colyseus_settings_set_port(colyseus_settings_t* settings, const char* port)
 
 void colyseus_settings_set_secure(colyseus_settings_t* settings, bool secure) {
     settings->use_secure_protocol = secure;
+    settings->server_port = strdup("443");
+}
+
+void colyseus_settings_set_ca_certificates(colyseus_settings_t* settings,
+                                           const unsigned char* pem_data,
+                                           size_t pem_len) {
+    settings->ca_pem_data = pem_data;
+    settings->ca_pem_len = pem_len;
 }
 
 void colyseus_settings_add_header(colyseus_settings_t* settings, const char* key, const char* value) {

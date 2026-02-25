@@ -6,6 +6,8 @@
 #include <stdbool.h>
 #include <wslay/wslay.h>
 
+#include "settings.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -14,6 +16,7 @@ extern "C" {
     typedef enum {
         COLYSEUS_WS_DISCONNECTED,
         COLYSEUS_WS_CONNECTING,
+        COLYSEUS_WS_TLS_HANDSHAKE,
         COLYSEUS_WS_HANDSHAKE_SENDING,
         COLYSEUS_WS_HANDSHAKE_RECEIVING,
         COLYSEUS_WS_CONNECTED,
@@ -30,11 +33,14 @@ extern "C" {
         char* buffer;
         wslay_event_context_ptr wslay_ctx;  /* wslay_event_context_ptr */
         void* tick_thread;  /* Thread handle (platform specific) */
+        void* tls_ctx;  /* colyseus_tls_context_t* */
+        const unsigned char* ca_pem_data;  /* CA certificates in PEM format */
 
         /* size_t fields (8 bytes on 64-bit) */
         size_t buffer_size;
         size_t buffer_offset;
         size_t handshake_len;
+        size_t ca_pem_len;           /* Length of CA PEM data */
 
         /* 4-byte fields */
         colyseus_ws_state_t state;
@@ -47,10 +53,17 @@ extern "C" {
         bool pending_close;          /* Close requested from within tick thread */
         int pending_close_code;      /* Close code for deferred close */
         char* pending_close_reason;  /* Close reason for deferred close (must free) */
+        bool use_tls;                /* True for wss:// */
+        bool tls_skip_verify;        /* Skip certificate verification */
     } colyseus_ws_transport_data_t;
 
     /* Create WebSocket transport (implements transport interface) */
     colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transport_events_t* events);
+
+    /* Connect with settings (extracts TLS config from settings) */
+    void colyseus_websocket_connect_with_settings(colyseus_transport_t* transport, 
+                                                   const char* url,
+                                                   const colyseus_settings_t* settings);
 
 #ifdef __cplusplus
 }
