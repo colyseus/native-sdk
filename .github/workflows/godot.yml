@@ -126,6 +126,7 @@ jobs:
             src/colyseus_gdscript_schema.c
             src/msgpack_variant.c
             src/msgpack_encoder.c
+            src/tls_certificates.c
             ../../src/common/settings.c
             ../../src/client.c
             ../../src/room.c
@@ -141,6 +142,7 @@ jobs:
             ../../src/utils/sha1_c.c
             ../../src/auth/auth.c
             ../../src/auth/secure_storage.c
+            ../../src/certs/ca_bundle.c
             ../../third_party/sds/sds.c
             ../../third_party/cJSON/cJSON.c
             ../../third_party/wslay/lib/wslay_event.c
@@ -318,6 +320,14 @@ jobs:
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_reader.o
 
+          zig build-obj \
+            -target aarch64-ios \
+            -ODebug \
+            --sysroot "$SDK" \
+            -Mroot=../../src/certs/system_certs.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/system_certs.o
+
           # Link everything with clang
           xcrun clang \
             -target arm64-apple-ios13.0 \
@@ -334,6 +344,7 @@ jobs:
             .zig-cache/strutil_zig.o \
             .zig-cache/msgpack_builder.o \
             .zig-cache/msgpack_reader.o \
+            .zig-cache/system_certs.o \
             -framework CoreFoundation \
             -framework Security \
             -lc
@@ -375,6 +386,7 @@ jobs:
             src/colyseus_gdscript_schema.c
             src/msgpack_variant.c
             src/msgpack_encoder.c
+            src/tls_certificates.c
             ../../src/common/settings.c
             ../../src/client.c
             ../../src/room.c
@@ -390,6 +402,7 @@ jobs:
             ../../src/utils/sha1_c.c
             ../../src/auth/auth.c
             ../../src/auth/secure_storage.c
+            ../../src/certs/ca_bundle.c
             ../../third_party/sds/sds.c
             ../../third_party/cJSON/cJSON.c
             ../../third_party/wslay/lib/wslay_event.c
@@ -555,6 +568,14 @@ jobs:
             "${INCLUDES[@]}" \
             -femit-bin=.zig-cache/msgpack_reader_rel.o
 
+          zig build-obj \
+            -target aarch64-ios \
+            -OReleaseSafe \
+            --sysroot "$SDK" \
+            -Mroot=../../src/certs/system_certs.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/system_certs_rel.o
+
           xcrun clang \
             -target arm64-apple-ios13.0 \
             -isysroot "$SDK" \
@@ -571,6 +592,7 @@ jobs:
             .zig-cache/strutil_zig_rel.o \
             .zig-cache/msgpack_builder_rel.o \
             .zig-cache/msgpack_reader_rel.o \
+            .zig-cache/system_certs_rel.o \
             -framework CoreFoundation \
             -framework Security \
             -lc

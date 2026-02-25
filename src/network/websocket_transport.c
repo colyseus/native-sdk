@@ -8,6 +8,8 @@
 #include <errno.h>
 #include "../../include/colyseus/tls_context.h"
 #include "colyseus/settings.h"
+#include "certs/system_certs.h"
+#include "certs/ca_bundle.h"
 
 /* Platform-specific includes */
 #ifdef _WIN32
@@ -109,6 +111,8 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
     data->use_tls = false;
     data->tls_skip_verify = false;
     data->tls_ctx = NULL;
+    data->ca_pem_data = NULL;
+    data->ca_pem_len = 0;
 
     transport->impl_data = data;
 
@@ -398,6 +402,13 @@ static bool ws_connect_init(colyseus_ws_transport_data_t* data) {
     data->url_host = strdup(parts->host);
     data->url_port = parts->port ? *parts->port : (strcmp(parts->scheme, "wss") == 0 ? 443 : 80);
     data->url_path = sdscatprintf(sdsempty(), "/%s", parts->path_and_args);
+
+    /* Auto-detect TLS from URL scheme (wss://) */
+    if (strcmp(parts->scheme, "wss") == 0) {
+        data->use_tls = true;
+    }
+
+    printf("Connecting to %s:%d (path=%s, TLS=%d)\n", data->url_host, data->url_port, data->url_path, data->use_tls);
 
     colyseus_url_parts_free(parts);
 
@@ -851,6 +862,7 @@ static bool ws_tls_init(colyseus_ws_transport_data_t* data) {
     mbedtls_ssl_config_init(&tls->conf);
     mbedtls_entropy_init(&tls->entropy);
     mbedtls_ctr_drbg_init(&tls->ctr_drbg);
+    tls->ca_chain_initialized = 0;
     tls->handshake_done = 0;
     data->tls_ctx = tls;  /* assign early so ws_tls_cleanup can free it */
     
@@ -870,9 +882,53 @@ static bool ws_tls_init(colyseus_ws_transport_data_t* data) {
         mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_NONE);
     } else {
         mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
-        /* No CA chain loaded — relies on server presenting a valid cert chain
-           that mbedTLS can verify if compiled with default trust store support,
-           otherwise this will fail. For dev/self-signed certs use tls_skip_verify=true. */
+        
+        /* Load CA certificates with fallback chain:
+         * 1. System certificates (via Zig's rescan)
+         * 2. Bundled Mozilla CA certificates
+         * 3. Settings-provided certificates
+         */
+        const unsigned char* ca_pem = NULL;
+        size_t ca_pem_len = 0;
+        const char* ca_source = NULL;
+        
+        /* Try system certificates first */
+        if (colyseus_system_certs_init()) {
+            ca_pem = colyseus_system_certs_get_pem();
+            ca_pem_len = colyseus_system_certs_get_pem_len();
+            ca_source = "system";
+        }
+        
+        /* Fall back to bundled certificates */
+        if (!ca_pem || ca_pem_len == 0) {
+            ca_pem = colyseus_ca_bundle_pem;
+            ca_pem_len = colyseus_ca_bundle_pem_len;
+            ca_source = "bundled Mozilla CA";
+        }
+        
+        /* Fall back to settings-provided certificates */
+        if ((!ca_pem || ca_pem_len == 0) && data->ca_pem_data && data->ca_pem_len > 0) {
+            ca_pem = data->ca_pem_data;
+            ca_pem_len = data->ca_pem_len;
+            ca_source = "settings";
+        }
+        
+        if (ca_pem && ca_pem_len > 0) {
+            mbedtls_x509_crt_init(&tls->ca_chain);
+            tls->ca_chain_initialized = 1;
+            
+            int ret = mbedtls_x509_crt_parse(&tls->ca_chain, ca_pem, ca_pem_len);
+            if (ret < 0) {
+                WS_LOG("Failed to parse CA certificates from %s: -0x%04x", ca_source, -ret);
+                ws_tls_cleanup(data);
+                return false;
+            }
+            
+            WS_LOG("Loaded CA certificates from %s (%d certs)", ca_source, ret == 0 ? 1 : ret);
+            mbedtls_ssl_conf_ca_chain(&tls->conf, &tls->ca_chain, NULL);
+        } else {
+            WS_LOG("No CA certificates available - verification will fail");
+        }
     }
     
     mbedtls_ssl_conf_rng(&tls->conf, mbedtls_ctr_drbg_random, &tls->ctr_drbg);
@@ -900,6 +956,9 @@ static void ws_tls_cleanup(colyseus_ws_transport_data_t* data) {
     mbedtls_ssl_config_free(&tls->conf);
     mbedtls_ctr_drbg_free(&tls->ctr_drbg);
     mbedtls_entropy_free(&tls->entropy);
+    if (tls->ca_chain_initialized) {
+        mbedtls_x509_crt_free(&tls->ca_chain);
+    }
     free(tls);
     data->tls_ctx = NULL;
 }
@@ -931,6 +990,8 @@ void colyseus_websocket_connect_with_settings(colyseus_transport_t* transport,
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
     data->use_tls        = settings ? settings->use_secure_protocol  : false;
     data->tls_skip_verify = settings ? settings->tls_skip_verification : false;
+    data->ca_pem_data    = settings ? settings->ca_pem_data : NULL;
+    data->ca_pem_len     = settings ? settings->ca_pem_len : 0;
     transport->connect(transport, url);
 }
 

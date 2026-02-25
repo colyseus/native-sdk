@@ -101,8 +101,16 @@ test "integration: full connection flow" {
         &room,
     );
 
-    std.Thread.sleep(50 * std.time.ns_per_ms);
-    // try testing.expect(false);
+    // Poll until joined or timeout (the HTTP matchmaking + WebSocket handshake
+    // needs multiple 10ms tick cycles to complete)
+    const deadline = 5 * std.time.ns_per_s;
+    var elapsed: u64 = 0;
+    const poll_interval = 10 * std.time.ns_per_ms;
+    while (elapsed < deadline) : (elapsed += poll_interval) {
+        if (joined == 1) break;
+        if (test_failed == 1) break;
+        std.Thread.sleep(poll_interval);
+    }
 
     // Should have joined by now
     try testing.expect(joined == 1);

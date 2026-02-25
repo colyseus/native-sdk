@@ -328,6 +328,22 @@ pub fn build(b: *std.Build) void {
             http_object.linkLibC();
         }
 
+        // Build system certificates Zig module (uses std.crypto.Certificate.Bundle)
+        const system_certs_module = b.createModule(.{
+            .root_source_file = b.path("../../src/certs/system_certs.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+
+        const system_certs_object = b.addLibrary(.{
+            .name = "system_certs_zig",
+            .root_module = system_certs_module,
+            .linkage = .static,
+        });
+        if (os_tag != .ios and !is_android) {
+            system_certs_object.linkLibC();
+        }
+
         // Create module for the shared library with Zig source file
         const lib_module = b.createModule(.{
             .root_source_file = b.path("src/msgpack_godot.zig"),
@@ -357,6 +373,7 @@ pub fn build(b: *std.Build) void {
                 "src/colyseus_gdscript_schema.c",
                 "src/msgpack_variant.c",
                 "src/msgpack_encoder.c",
+                "src/tls_certificates.c",
             },
             .flags = &.{
                 "-Wall",
@@ -388,6 +405,8 @@ pub fn build(b: *std.Build) void {
                 // Auth
                 "../../src/auth/auth.c",
                 "../../src/auth/secure_storage.c",
+                // TLS certificates bundle
+                "../../src/certs/ca_bundle.c",
                 // Third-party sources
                 "../../third_party/sds/sds.c",
                 "../../third_party/cJSON/cJSON.c",
@@ -613,6 +632,7 @@ pub fn build(b: *std.Build) void {
 
         // Link Zig libraries
         lib.linkLibrary(http_object);
+        lib.linkLibrary(system_certs_object);
         lib.linkLibrary(strutil_object);
         lib.linkLibrary(msgpack_builder_object);
         lib.linkLibrary(msgpack_reader_object);
@@ -655,6 +675,7 @@ pub fn build(b: *std.Build) void {
 
             lib.root_module.link_libc = false;
             http_zig_module.link_libc = false;
+            system_certs_module.link_libc = false;
             strutil_zig_module.link_libc = false;
 
             lib.root_module.linkFramework("CoreFoundation", .{ .weak = true });
@@ -664,6 +685,7 @@ pub fn build(b: *std.Build) void {
         } else if (is_android) {
             lib.root_module.link_libc = false;
             http_zig_module.link_libc = false;
+            system_certs_module.link_libc = false;
             strutil_zig_module.link_libc = false;
 
             const android_triple = switch (arch) {

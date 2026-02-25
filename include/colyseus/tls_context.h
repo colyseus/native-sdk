@@ -5,6 +5,7 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
+#include <mbedtls/x509_crt.h>
 #include <mbedtls/error.h>
 
 typedef struct {
@@ -12,6 +13,8 @@ typedef struct {
     mbedtls_ssl_config conf;
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_x509_crt ca_chain;  /* CA certificate chain for verification */
+    int ca_chain_initialized;   /* Whether ca_chain was initialized */
     int handshake_done;
 } colyseus_tls_context_t;
 

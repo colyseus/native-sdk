@@ -4,6 +4,7 @@
 #include "colyseus/transport.h"
 #include "colyseus/protocol.h"
 #include "colyseus/messages.h"
+#include "colyseus/settings.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -125,6 +126,7 @@ void* colyseus_room_get_state(colyseus_room_t* room);
 void colyseus_room_connect(
     colyseus_room_t* room,
     const char* endpoint,
+    const colyseus_settings_t* settings,
     void (*on_success)(void* userdata),
     void (*on_error)(int code, const char* message, void* userdata),
     void* userdata

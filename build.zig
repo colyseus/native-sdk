@@ -180,6 +180,24 @@ pub fn build(b: *std.Build) void {
         addAppleSdkPaths(http_object.?, apple_sdk_path);
     }
 
+    // System certificates Zig module (only for native - uses std.crypto.Certificate.Bundle)
+    var system_certs_object: ?*std.Build.Step.Compile = null;
+    if (!is_emscripten) {
+        const system_certs_module = b.createModule(.{
+            .root_source_file = b.path("src/certs/system_certs.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+
+        system_certs_object = b.addLibrary(.{
+            .name = "system_certs_zig",
+            .root_module = system_certs_module,
+            .linkage = .static,
+        });
+        system_certs_object.?.linkLibC();
+        addAppleSdkPaths(system_certs_object.?, apple_sdk_path);
+    }
+
     // String util Zig module (needed for both native and emscripten)
     const strutil_zig_module = b.createModule(.{
         .root_source_file = b.path("src/utils/strUtil.zig"),
@@ -258,8 +276,8 @@ pub fn build(b: *std.Build) void {
     if (!is_emscripten) addAppleSdkPaths(msgpack_reader_object, apple_sdk_path);
 
     // ========================================================================
-// Build mbedTLS from source (v3.6.4 LTS)
-// ========================================================================
+    // Build mbedTLS from source (v3.6.4 LTS)
+    // ========================================================================
 
     const mbedcrypto = b.addLibrary(.{
         .name = "mbedcrypto",
@@ -267,7 +285,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
     mbedcrypto.linkLibC();
-    addAppleSdkPaths(mbedcrypto, ios_sdk_path);
+    addAppleSdkPaths(mbedcrypto, apple_sdk_path);
     mbedcrypto.addIncludePath(b.path("third_party/mbedtls/include"));
     mbedcrypto.addIncludePath(b.path("third_party/mbedtls/library"));
     mbedcrypto.addCSourceFiles(.{
@@ -366,7 +384,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
     mbedx509.linkLibC();
-    addAppleSdkPaths(mbedx509, ios_sdk_path);
+    addAppleSdkPaths(mbedx509, apple_sdk_path);
     mbedx509.addIncludePath(b.path("third_party/mbedtls/include"));
     mbedx509.addIncludePath(b.path("third_party/mbedtls/library"));
     mbedx509.addCSourceFiles(.{
@@ -390,7 +408,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
     mbedtls.linkLibC();
-    addAppleSdkPaths(mbedtls, ios_sdk_path);
+    addAppleSdkPaths(mbedtls, apple_sdk_path);
     mbedtls.addIncludePath(b.path("third_party/mbedtls/include"));
     mbedtls.addIncludePath(b.path("third_party/mbedtls/library"));
     mbedtls.addCSourceFiles(.{
@@ -416,8 +434,6 @@ pub fn build(b: *std.Build) void {
     });
     mbedtls.linkLibrary(mbedx509);
     mbedtls.linkLibrary(mbedcrypto);
-
-
 
     // ========================================================================
     // Build colyseus library
@@ -473,6 +489,8 @@ pub fn build(b: *std.Build) void {
         // Auth
         "src/auth/auth.c",
         "src/auth/secure_storage.c",
+        // TLS certificates bundle
+        "src/certs/ca_bundle.c",
         // Third-party sources
         "third_party/sds/sds.c",
         "third_party/cJSON/cJSON.c",
@@ -497,7 +515,7 @@ pub fn build(b: *std.Build) void {
         .files = &common_sources,
         .flags = if (is_emscripten) &web_flags else &base_flags,
     });
-    
+
     // Always link mbedTLS (TLS is runtime-enabled via settings)
     colyseus.addIncludePath(b.path("third_party/mbedtls/include"));
     colyseus.linkLibrary(mbedtls);
@@ -519,6 +537,7 @@ pub fn build(b: *std.Build) void {
 
     // Link Zig libraries
     if (http_object) |http| colyseus.linkLibrary(http);
+    if (system_certs_object) |certs| colyseus.linkLibrary(certs);
     colyseus.linkLibrary(strutil_object);
     colyseus.linkLibrary(msgpack_builder_object);
     colyseus.linkLibrary(msgpack_reader_object);

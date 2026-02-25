@@ -34,11 +34,13 @@ extern "C" {
         wslay_event_context_ptr wslay_ctx;  /* wslay_event_context_ptr */
         void* tick_thread;  /* Thread handle (platform specific) */
         void* tls_ctx;  /* colyseus_tls_context_t* */
+        const unsigned char* ca_pem_data;  /* CA certificates in PEM format */
 
         /* size_t fields (8 bytes on 64-bit) */
         size_t buffer_size;
         size_t buffer_offset;
         size_t handshake_len;
+        size_t ca_pem_len;           /* Length of CA PEM data */
 
         /* 4-byte fields */
         colyseus_ws_state_t state;
