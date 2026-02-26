@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en-us">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Colyseus Raylib Example</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .container {
+            text-align: center;
+        }
+        h1 {
+            color: #eee;
+            margin-bottom: 20px;
+        }
+        #canvas {
+            border: 2px solid #444;
+            border-radius: 4px;
+            width: 800px;
+            height: 600px;
+        }
+        .status {
+            color: #888;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        #output {
+            max-width: 800px;
+            margin: 10px auto;
+            padding: 10px;
+            background: #0f0f1a;
+            border-radius: 4px;
+            color: #0f0;
+            font-family: monospace;
+            font-size: 12px;
+            text-align: left;
+            max-height: 150px;
+            overflow-y: auto;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Colyseus Raylib Example</h1>
+        <canvas id="canvas" width="800" height="600" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+        <p class="status">Use WASD or Arrow keys to move</p>
+        <pre id="output"></pre>
+    </div>
+
+    <script>
+        var Module = {
+            print: (function() {
+                var output = document.getElementById('output');
+                return function(text) {
+                    if (text) {
+                        output.style.display = 'block';
+                        output.innerHTML += text + '\n';
+                        output.scrollTop = output.scrollHeight;
+                        console.log(text);
+                    }
+                };
+            })(),
+            printErr: function(text) {
+                if (text) {
+                    var output = document.getElementById('output');
+                    output.style.display = 'block';
+                    output.innerHTML += '<span style="color:#f55">' + text + '</span>\n';
+                    output.scrollTop = output.scrollHeight;
+                    console.error(text);
+                }
+            },
+            canvas: (function() {
+                var canvas = document.getElementById('canvas');
+                canvas.addEventListener("webglcontextlost", function(e) {
+                    alert('WebGL context lost. You will need to reload the page.');
+                    e.preventDefault();
+                }, false);
+                return canvas;
+            })(),
+            setStatus: function(text) {
+                if (text) console.log('Status: ' + text);
+            },
+            totalDependencies: 0,
+            monitorRunDependencies: function(left) {
+                this.totalDependencies = Math.max(this.totalDependencies, left);
+                if (left) {
+                    Module.setStatus('Loading... (' + (this.totalDependencies - left) + '/' + this.totalDependencies + ')');
+                } else {
+                    Module.setStatus('');
+                }
+            }
+        };
+        window.onerror = function(event) {
+            console.error('Exception thrown:', event);
+            Module.printErr('Error: ' + event);
+        };
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>

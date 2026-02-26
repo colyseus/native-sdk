@@ -1,17 +1,21 @@
 #include "colyseus/websocket_transport.h"
 #include "colyseus/utils/strUtil.h"
-#include "colyseus/utils/sha1_c.h"
 #include "sds.h"
 #include <wslay/wslay.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include "../../include/colyseus/tls_context.h"
+#include "colyseus/settings.h"
+#include "certs/system_certs.h"
+#include "certs/ca_bundle.h"
 
 /* Platform-specific includes */
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include <mstcpip.h>  /* For SIO_KEEPALIVE_VALS */
     #include <windows.h>
     typedef HANDLE thread_t;
     typedef DWORD thread_return_t;
@@ -23,6 +27,7 @@
     #include <unistd.h>
     #include <fcntl.h>
     #include <arpa/inet.h>
+    #include <netinet/tcp.h>  /* For TCP keepalive options */
     typedef pthread_t thread_t;
     typedef void* thread_return_t;
     #define THREAD_CALL
@@ -43,6 +48,9 @@ static void ws_send_unreliable_impl(colyseus_transport_t* transport, const uint8
 static void ws_close_impl(colyseus_transport_t* transport, int code, const char* reason);
 static bool ws_is_open_impl(const colyseus_transport_t* transport);
 static void ws_destroy_impl(colyseus_transport_t* transport);
+static bool ws_tls_init(colyseus_ws_transport_data_t* data);
+static void ws_tls_cleanup(colyseus_ws_transport_data_t* data);
+static bool ws_tls_handshake_tick(colyseus_ws_transport_data_t* data);
 
 /* Internal functions */
 static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg);
@@ -52,7 +60,7 @@ static bool ws_connect_tick(colyseus_ws_transport_data_t* data);
 static bool ws_http_handshake_init(colyseus_ws_transport_data_t* data);
 static bool ws_http_handshake_send(colyseus_ws_transport_data_t* data);
 static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data);
-static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, size_t len, int* would_block);
+static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, size_t len, int* would_block, int* eof);
 static ssize_t ws_socket_send(colyseus_ws_transport_data_t* data, const uint8_t* buf, size_t len, int* would_block);
 static void ws_socket_close(colyseus_ws_transport_data_t* data);
 static void ws_cleanup_wslay(colyseus_ws_transport_data_t* data);
@@ -93,9 +101,18 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
     memset(data, 0, sizeof(colyseus_ws_transport_data_t));
     data->state = COLYSEUS_WS_DISCONNECTED;
     data->running = false;
+    data->in_tick_thread = false;
+    data->pending_close = false;
+    data->pending_close_code = 0;
+    data->pending_close_reason = NULL;
     data->socket_fd = -1;
     data->buffer_size = 8192;
     data->buffer = malloc(data->buffer_size);
+    data->use_tls = false;
+    data->tls_skip_verify = false;
+    data->tls_ctx = NULL;
+    data->ca_pem_data = NULL;
+    data->ca_pem_len = 0;
 
     transport->impl_data = data;
 
@@ -105,8 +122,9 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
 /* Implementation functions */
 static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
+    // use_tls and tls_skip_verify are already set on data before this is called
 
-    WS_LOG("Connect called: %s", url);
+    WS_LOG("Connect called: %s (TLS=%d, skip_verify=%d)", url, data->use_tls, data->tls_skip_verify);
 
     if (data->state != COLYSEUS_WS_DISCONNECTED) {
         WS_LOG("Already connecting/connected, state=%d", data->state);
@@ -117,6 +135,8 @@ static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
 
     if (!ws_connect_init(data)) {
         WS_LOG("Connect init failed");
+        free(data->url);
+        data->url = NULL;
         if (transport->events.on_error) {
             transport->events.on_error("Failed to initialize connection", transport->events.userdata);
         }
@@ -169,6 +189,18 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
         return;
     }
 
+    /* If we're being called from within the tick thread, defer the close.
+     * We cannot pthread_join() on ourselves - that would deadlock. */
+    if (data->in_tick_thread) {
+        WS_LOG("Close called from tick thread - deferring");
+        data->pending_close = true;
+        data->pending_close_code = code;
+        free(data->pending_close_reason);
+        data->pending_close_reason = reason ? strdup(reason) : NULL;
+        data->running = false;  /* Signal thread to exit */
+        return;
+    }
+
     data->running = false;
 
     if (data->wslay_ctx && data->state == COLYSEUS_WS_CONNECTED) {
@@ -176,6 +208,7 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
         wslay_event_send(data->wslay_ctx);
     }
 
+    ws_tls_cleanup(data);
     ws_socket_close(data);
     ws_cleanup_wslay(data);
 
@@ -219,6 +252,7 @@ static void ws_destroy_impl(colyseus_transport_t* transport) {
         sdsfree(data->url_path);
         free(data->client_key);
         free(data->buffer);
+        free(data->pending_close_reason);
         free(data);
     }
 
@@ -230,6 +264,8 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
     colyseus_transport_t* transport = (colyseus_transport_t*)arg;
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
+    data->in_tick_thread = true;
+
     while (data->running) {
         ws_tick_once(transport);
 
@@ -238,6 +274,31 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
 #else
         usleep(10000);  /* 10ms */
 #endif
+    }
+
+    data->in_tick_thread = false;
+
+    /* Handle deferred close (was requested from within tick thread) */
+    if (data->pending_close) {
+        WS_LOG("Handling deferred close: code=%d, reason=%s",
+               data->pending_close_code,
+               data->pending_close_reason ? data->pending_close_reason : "(null)");
+
+        ws_tls_cleanup(data);
+        ws_socket_close(data);
+        ws_cleanup_wslay(data);
+
+        data->state = COLYSEUS_WS_DISCONNECTED;
+
+        if (transport->events.on_close) {
+            transport->events.on_close(data->pending_close_code,
+                                       data->pending_close_reason,
+                                       transport->events.userdata);
+        }
+
+        free(data->pending_close_reason);
+        data->pending_close_reason = NULL;
+        data->pending_close = false;
     }
 
 #ifdef _WIN32
@@ -279,6 +340,21 @@ static void ws_tick_once(colyseus_transport_t* transport) {
     if (data->state == COLYSEUS_WS_CONNECTING) {
         if (ws_connect_tick(data)) {
             WS_LOG("TCP connected");
+            if (data->use_tls) {
+                if (!ws_tls_init(data)) {
+                    ws_close_impl(transport, 1006, "TLS init failed");
+                    return;
+                }
+                data->state = COLYSEUS_WS_TLS_HANDSHAKE;
+            } else {
+                data->state = COLYSEUS_WS_HANDSHAKE_SENDING;
+                ws_http_handshake_init(data);
+            }
+        }
+    }
+    else if (data->state == COLYSEUS_WS_TLS_HANDSHAKE) {
+        if (ws_tls_handshake_tick(data)) {
+            WS_LOG("TLS handshake complete");
             data->state = COLYSEUS_WS_HANDSHAKE_SENDING;
             ws_http_handshake_init(data);
         }
@@ -327,6 +403,13 @@ static bool ws_connect_init(colyseus_ws_transport_data_t* data) {
     data->url_port = parts->port ? *parts->port : (strcmp(parts->scheme, "wss") == 0 ? 443 : 80);
     data->url_path = sdscatprintf(sdsempty(), "/%s", parts->path_and_args);
 
+    /* Auto-detect TLS from URL scheme (wss://) */
+    if (strcmp(parts->scheme, "wss") == 0) {
+        data->use_tls = true;
+    }
+
+    printf("Connecting to %s:%d (path=%s, TLS=%d)\n", data->url_host, data->url_port, data->url_path, data->use_tls);
+
     colyseus_url_parts_free(parts);
 
     /* Create socket */
@@ -343,6 +426,40 @@ static bool ws_connect_init(colyseus_ws_transport_data_t* data) {
     int flags = fcntl(data->socket_fd, F_GETFL, 0);
     fcntl(data->socket_fd, F_SETFL, flags | O_NONBLOCK);
 #endif
+
+    /* Enable TCP keepalive to detect dead connections faster */
+#ifdef _WIN32
+    /* Windows: use SIO_KEEPALIVE_VALS for fine-grained control */
+    struct tcp_keepalive {
+        u_long onoff;
+        u_long keepalivetime;
+        u_long keepaliveinterval;
+    } keepalive_vals = {
+        .onoff = 1,
+        .keepalivetime = 10000,  /* 10 seconds before first probe */
+        .keepaliveinterval = 5000  /* 5 seconds between probes */
+    };
+    DWORD bytes_returned;
+    WSAIoctl(data->socket_fd, SIO_KEEPALIVE_VALS, &keepalive_vals, sizeof(keepalive_vals),
+             NULL, 0, &bytes_returned, NULL, NULL);
+#else
+    int keepalive = 1;
+    setsockopt(data->socket_fd, SOL_SOCKET, SO_KEEPALIVE, (const char*)&keepalive, sizeof(keepalive));
+
+#ifdef __linux__
+    /* Linux-specific: set keepalive parameters for faster detection */
+    int keepidle = 10;   /* Start probing after 10 seconds of inactivity */
+    int keepintvl = 5;   /* Probe interval: 5 seconds */
+    int keepcnt = 3;     /* Give up after 3 failed probes */
+    setsockopt(data->socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+    setsockopt(data->socket_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+    setsockopt(data->socket_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+#elif defined(__APPLE__)
+    /* macOS: set keepalive idle time */
+    int keepidle = 10;
+    setsockopt(data->socket_fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle, sizeof(keepidle));
+#endif
+#endif /* _WIN32 */
 
     /* Resolve hostname using getaddrinfo (modern, alignment-safe) */
     struct addrinfo hints, *result;
@@ -390,9 +507,8 @@ static bool ws_http_handshake_init(colyseus_ws_transport_data_t* data) {
         random_bytes[i] = rand() % 256;
     }
 
-    sds random_str = sdsnewlen(random_bytes, 16);
-    data->client_key = colyseus_base64_encode(random_str);
-    sdsfree(random_str);
+    /* Use binary version to avoid strlen() truncating at null bytes */
+    data->client_key = colyseus_base64_encode_binary(random_bytes, 16);
 
     /* Build HTTP request */
     sds request = sdsempty();
@@ -414,8 +530,8 @@ static bool ws_http_handshake_init(colyseus_ws_transport_data_t* data) {
     memcpy(data->buffer, request, req_len);
     data->buffer_offset = 0;
 
-    /* Store length at end for sending */
-    *(size_t*)(data->buffer + data->buffer_size - sizeof(size_t)) = req_len;
+    /* Store length for sending */
+    data->handshake_len = req_len;
 
     sdsfree(request);
     return true;
@@ -425,7 +541,7 @@ static bool ws_http_handshake_init(colyseus_ws_transport_data_t* data) {
 /* (Due to length, showing key parts - full implementation follows same pattern as C++ version) */
 
 static bool ws_http_handshake_send(colyseus_ws_transport_data_t* data) {
-    size_t total_len = *(size_t*)(data->buffer + data->buffer_size - sizeof(size_t));
+    size_t total_len = data->handshake_len;
 
     while (data->buffer_offset < total_len) {
         int would_block = 0;
@@ -448,8 +564,9 @@ static bool ws_http_handshake_send(colyseus_ws_transport_data_t* data) {
 
 static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data) {
     int would_block = 0;
+    int eof = 0;
     char buf[1024];
-    ssize_t received = ws_socket_recv(data, (uint8_t*)buf, sizeof(buf) - 1, &would_block);
+    ssize_t received = ws_socket_recv(data, (uint8_t*)buf, sizeof(buf) - 1, &would_block, &eof);
 
     if (received > 0) {
         size_t space_left = data->buffer_size - data->buffer_offset;
@@ -459,6 +576,12 @@ static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data) {
     }
 
     if (would_block) {
+        return false;
+    }
+
+    /* Connection closed during handshake */
+    if (eof) {
+        fprintf(stderr, "Connection closed during WebSocket handshake\n");
         return false;
     }
 
@@ -477,12 +600,12 @@ static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data) {
     // Calculate where headers end
     size_t headers_length = (header_end - (char*)data->buffer) + 4; // +4 for \r\n\r\n
 
-    fprintf(stderr, "Headers length: %zu, total buffered: %zu\n", headers_length, data->buffer_offset);
+    fprintf(stdout, "Headers length: %zu, total buffered: %zu\n", headers_length, data->buffer_offset);
 
     // Check if there's extra data after headers (WebSocket frames that came with handshake)
     if (data->buffer_offset > headers_length) {
         size_t extra_data_len = data->buffer_offset - headers_length;
-        fprintf(stderr, "Found %zu bytes of data after handshake headers\n", extra_data_len);
+        fprintf(stdout, "Found %zu bytes of data after handshake headers\n", extra_data_len);
 
         // Move the extra data to the beginning of the buffer
         // This data will be read by wslay on the next recv_callback
@@ -550,14 +673,20 @@ static ssize_t ws_recv_callback(wslay_event_context_ptr ctx, uint8_t* buf, size_
 
     // No buffered data, read from socket
     int would_block = 0;
-    ssize_t ret = ws_socket_recv(data, buf, len, &would_block);
+    int eof = 0;
+    ssize_t ret = ws_socket_recv(data, buf, len, &would_block, &eof);
 
-    WS_LOG("wslay recv_callback: requested=%zu, received=%zd, would_block=%d", len, ret, would_block);
+    WS_LOG("wslay recv_callback: requested=%zu, received=%zd, would_block=%d, eof=%d", len, ret, would_block, eof);
 
     if (would_block) {
         wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
         return -1;
     } else if (ret < 0) {
+        wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
+        return -1;
+    } else if (eof) {
+        /* Connection was closed by remote (server killed, network issue, etc.) */
+        WS_LOG("EOF detected - connection closed by remote");
         wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
         return -1;
     }
@@ -595,8 +724,30 @@ static int ws_genmask_callback(wslay_event_context_ptr ctx, uint8_t* buf, size_t
 }
 
 /* Socket I/O */
-static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, size_t len, int* would_block) {
+static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, size_t len, int* would_block, int* eof) {
     *would_block = 0;
+    *eof = 0;
+
+    if (data->use_tls && data->tls_ctx) {
+        colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
+        int ret = mbedtls_ssl_read(&tls->ssl, buf, len);
+        
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            *would_block = 1;
+            return 0;
+        }
+        if (ret < 0) {
+            if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+                *eof = 1;
+                return 0;
+            }
+            return -1;
+        }
+        if (ret == 0) {
+            *eof = 1;
+        }
+        return ret;
+    }
 
     ssize_t ret = recv(data->socket_fd, (char*)buf, len, 0);
 
@@ -612,11 +763,30 @@ static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, 
         return -1;
     }
 
+    /* recv() returning 0 means the connection was closed (EOF) */
+    if (ret == 0) {
+        *eof = 1;
+    }
+
     return ret;
 }
 
 static ssize_t ws_socket_send(colyseus_ws_transport_data_t* data, const uint8_t* buf, size_t len, int* would_block) {
     *would_block = 0;
+
+    if (data->use_tls && data->tls_ctx) {
+        colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
+        int ret = mbedtls_ssl_write(&tls->ssl, buf, len);
+        
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            *would_block = 1;
+            return 0;
+        }
+        if (ret < 0) {
+            return -1;
+        }
+        return ret;
+    }
 
     ssize_t ret = send(data->socket_fd, (const char*)buf, len, 0);
 
@@ -652,3 +822,184 @@ static void ws_cleanup_wslay(colyseus_ws_transport_data_t* data) {
         data->wslay_ctx = NULL;
     }
 }
+
+/* TLS functions */
+
+static int tls_bio_send(void* ctx, const unsigned char* buf, size_t len) {
+    int fd = *(int*)ctx;
+    ssize_t ret = send(fd, (const char*)buf, len, 0);
+    if (ret < 0) {
+#ifdef _WIN32
+        if (WSAGetLastError() == WSAEWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_WRITE;
+#else
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_WRITE;
+#endif
+        return MBEDTLS_ERR_NET_SEND_FAILED;
+    }
+    return (int)ret;
+}
+
+static int tls_bio_recv(void* ctx, unsigned char* buf, size_t len) {
+    int fd = *(int*)ctx;
+    ssize_t ret = recv(fd, (char*)buf, len, 0);
+    if (ret < 0) {
+#ifdef _WIN32
+        if (WSAGetLastError() == WSAEWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_READ;
+#else
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_READ;
+#endif
+        return MBEDTLS_ERR_NET_RECV_FAILED;
+    }
+    if (ret == 0) return MBEDTLS_ERR_NET_CONN_RESET;
+    return (int)ret;
+}
+
+static bool ws_tls_init(colyseus_ws_transport_data_t* data) {
+    colyseus_tls_context_t* tls = malloc(sizeof(colyseus_tls_context_t));
+    if (!tls) return false;
+    
+    mbedtls_ssl_init(&tls->ssl);
+    mbedtls_ssl_config_init(&tls->conf);
+    mbedtls_entropy_init(&tls->entropy);
+    mbedtls_ctr_drbg_init(&tls->ctr_drbg);
+    tls->ca_chain_initialized = 0;
+    tls->handshake_done = 0;
+    data->tls_ctx = tls;  /* assign early so ws_tls_cleanup can free it */
+    
+    if (mbedtls_ctr_drbg_seed(&tls->ctr_drbg, mbedtls_entropy_func, &tls->entropy, NULL, 0) != 0) {
+        ws_tls_cleanup(data);
+        return false;
+    }
+    
+    if (mbedtls_ssl_config_defaults(&tls->conf, MBEDTLS_SSL_IS_CLIENT,
+                                     MBEDTLS_SSL_TRANSPORT_STREAM,
+                                     MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
+        ws_tls_cleanup(data);
+        return false;
+    }
+    
+    if (data->tls_skip_verify) {
+        mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_NONE);
+    } else {
+        mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+        
+        /* Load CA certificates with fallback chain:
+         * 1. System certificates (via Zig's rescan)
+         * 2. Bundled Mozilla CA certificates
+         * 3. Settings-provided certificates
+         */
+        const unsigned char* ca_pem = NULL;
+        size_t ca_pem_len = 0;
+        const char* ca_source = NULL;
+        
+        /* Try system certificates first */
+        if (colyseus_system_certs_init()) {
+            ca_pem = colyseus_system_certs_get_pem();
+            ca_pem_len = colyseus_system_certs_get_pem_len();
+            ca_source = "system";
+        }
+        
+        /* Fall back to bundled certificates */
+        if (!ca_pem || ca_pem_len == 0) {
+            ca_pem = colyseus_ca_bundle_pem;
+            ca_pem_len = colyseus_ca_bundle_pem_len;
+            ca_source = "bundled Mozilla CA";
+        }
+        
+        /* Fall back to settings-provided certificates */
+        if ((!ca_pem || ca_pem_len == 0) && data->ca_pem_data && data->ca_pem_len > 0) {
+            ca_pem = data->ca_pem_data;
+            ca_pem_len = data->ca_pem_len;
+            ca_source = "settings";
+        }
+        
+        if (ca_pem && ca_pem_len > 0) {
+            mbedtls_x509_crt_init(&tls->ca_chain);
+            tls->ca_chain_initialized = 1;
+            
+            int ret = mbedtls_x509_crt_parse(&tls->ca_chain, ca_pem, ca_pem_len);
+            if (ret < 0) {
+                WS_LOG("Failed to parse CA certificates from %s: -0x%04x", ca_source, -ret);
+                ws_tls_cleanup(data);
+                return false;
+            }
+            
+            WS_LOG("Loaded CA certificates from %s (%d certs)", ca_source, ret == 0 ? 1 : ret);
+            mbedtls_ssl_conf_ca_chain(&tls->conf, &tls->ca_chain, NULL);
+        } else {
+            WS_LOG("No CA certificates available - verification will fail");
+        }
+    }
+    
+    mbedtls_ssl_conf_rng(&tls->conf, mbedtls_ctr_drbg_random, &tls->ctr_drbg);
+    
+    if (mbedtls_ssl_setup(&tls->ssl, &tls->conf) != 0) {
+        ws_tls_cleanup(data);
+        return false;
+    }
+    
+    if (mbedtls_ssl_set_hostname(&tls->ssl, data->url_host) != 0) {
+        ws_tls_cleanup(data);
+        return false;
+    }
+    
+    mbedtls_ssl_set_bio(&tls->ssl, &data->socket_fd, tls_bio_send, tls_bio_recv, NULL);
+
+    return true;
+}
+
+static void ws_tls_cleanup(colyseus_ws_transport_data_t* data) {
+    if (!data->tls_ctx) return;
+    
+    colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
+    mbedtls_ssl_free(&tls->ssl);
+    mbedtls_ssl_config_free(&tls->conf);
+    mbedtls_ctr_drbg_free(&tls->ctr_drbg);
+    mbedtls_entropy_free(&tls->entropy);
+    if (tls->ca_chain_initialized) {
+        mbedtls_x509_crt_free(&tls->ca_chain);
+    }
+    free(tls);
+    data->tls_ctx = NULL;
+}
+
+static bool ws_tls_handshake_tick(colyseus_ws_transport_data_t* data) {
+    if (!data->tls_ctx) return false;
+    
+    colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
+    if (tls->handshake_done) return true;
+    
+    int ret = mbedtls_ssl_handshake(&tls->ssl);
+    
+    if (ret == 0) {
+        tls->handshake_done = 1;
+        return true;
+    }
+    
+    if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+        return false;
+    }
+    
+    return false;
+}
+
+/* Public API wrapper for connecting with settings */
+void colyseus_websocket_connect_with_settings(colyseus_transport_t* transport,
+                                               const char* url,
+                                               const colyseus_settings_t* settings) {
+    colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
+    data->use_tls        = settings ? settings->use_secure_protocol  : false;
+    data->tls_skip_verify = settings ? settings->tls_skip_verification : false;
+    data->ca_pem_data    = settings ? settings->ca_pem_data : NULL;
+    data->ca_pem_len     = settings ? settings->ca_pem_len : 0;
+    transport->connect(transport, url);
+}
+
+void colyseus_http_poll(void) {
+    /* Native HTTP is synchronous - no polling needed */
+}
+
+void colyseus_ws_poll(void) {
+    /* Native WebSocket runs on its own thread - no polling needed */
+}
+

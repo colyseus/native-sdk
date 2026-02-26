@@ -20,6 +20,7 @@ typedef struct {
     colyseus_transport_factory_fn transport_factory;
     colyseus_http_t* http;
     colyseus_auth_t* auth;
+    void* http_worker;  /* Internal: background HTTP worker thread */
 } colyseus_client_t;
 
 /* Matchmaking callbacks */

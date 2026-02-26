@@ -5,6 +5,211 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Platform-specific threading */
+#ifdef _WIN32
+    #include <windows.h>
+    typedef DWORD thread_return_t;
+    #define THREAD_CALL WINAPI
+#else
+    #include <pthread.h>
+    typedef void* thread_return_t;
+    #define THREAD_CALL
+#endif
+
+/* ── HTTP worker thread (single thread, task queue) ────────────── */
+
+/* Task node in the queue */
+typedef struct http_task {
+    colyseus_http_t* http;
+    char* path;
+    char* body;
+    void (*on_success)(const colyseus_http_response_t*, void*);
+    void (*on_error)(const colyseus_http_error_t*, void*);
+    void* userdata;
+    struct http_task* next;
+} http_task_t;
+
+/* Worker state – one per client */
+typedef struct {
+#ifdef _WIN32
+    HANDLE thread;
+    CRITICAL_SECTION mutex;
+    CONDITION_VARIABLE cond;
+#else
+    pthread_t thread;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+#endif
+    http_task_t* head;  /* queue head */
+    http_task_t* tail;  /* queue tail */
+    bool running;
+    bool started;
+} http_worker_t;
+
+static thread_return_t THREAD_CALL http_worker_func(void* arg);
+
+static http_worker_t* http_worker_create(void) {
+    http_worker_t* w = malloc(sizeof(http_worker_t));
+    if (!w) return NULL;
+    memset(w, 0, sizeof(http_worker_t));
+
+#ifdef _WIN32
+    InitializeCriticalSection(&w->mutex);
+    InitializeConditionVariable(&w->cond);
+#else
+    pthread_mutex_init(&w->mutex, NULL);
+    pthread_cond_init(&w->cond, NULL);
+#endif
+
+    w->head = NULL;
+    w->tail = NULL;
+    w->running = true;
+    w->started = false;
+    return w;
+}
+
+static void http_worker_ensure_started(http_worker_t* w) {
+    if (w->started) return;
+    w->started = true;
+
+#ifdef _WIN32
+    w->thread = CreateThread(NULL, 0, http_worker_func, w, 0, NULL);
+#else
+    pthread_create(&w->thread, NULL, http_worker_func, w);
+#endif
+}
+
+static void http_worker_enqueue(http_worker_t* w, http_task_t* task) {
+    task->next = NULL;
+
+#ifdef _WIN32
+    EnterCriticalSection(&w->mutex);
+#else
+    pthread_mutex_lock(&w->mutex);
+#endif
+
+    if (w->tail) {
+        w->tail->next = task;
+    } else {
+        w->head = task;
+    }
+    w->tail = task;
+
+    http_worker_ensure_started(w);
+
+#ifdef _WIN32
+    WakeConditionVariable(&w->cond);
+    LeaveCriticalSection(&w->mutex);
+#else
+    pthread_cond_signal(&w->cond);
+    pthread_mutex_unlock(&w->mutex);
+#endif
+}
+
+static void http_worker_free(http_worker_t* w) {
+    if (!w) return;
+
+    /* Signal shutdown */
+#ifdef _WIN32
+    EnterCriticalSection(&w->mutex);
+    w->running = false;
+    WakeConditionVariable(&w->cond);
+    LeaveCriticalSection(&w->mutex);
+#else
+    pthread_mutex_lock(&w->mutex);
+    w->running = false;
+    pthread_cond_signal(&w->cond);
+    pthread_mutex_unlock(&w->mutex);
+#endif
+
+    /* Wait for thread to finish */
+    if (w->started) {
+#ifdef _WIN32
+        WaitForSingleObject(w->thread, INFINITE);
+        CloseHandle(w->thread);
+#else
+        pthread_join(w->thread, NULL);
+#endif
+    }
+
+    /* Drain remaining tasks */
+    http_task_t* t = w->head;
+    while (t) {
+        http_task_t* next = t->next;
+        free(t->path);
+        free(t->body);
+        free(t);
+        t = next;
+    }
+
+#ifdef _WIN32
+    DeleteCriticalSection(&w->mutex);
+#else
+    pthread_mutex_destroy(&w->mutex);
+    pthread_cond_destroy(&w->cond);
+#endif
+
+    free(w);
+}
+
+static thread_return_t THREAD_CALL http_worker_func(void* arg) {
+    http_worker_t* w = (http_worker_t*)arg;
+
+    while (1) {
+        http_task_t* task = NULL;
+
+#ifdef _WIN32
+        EnterCriticalSection(&w->mutex);
+        while (!w->head && w->running) {
+            SleepConditionVariableCS(&w->cond, &w->mutex, INFINITE);
+        }
+        if (!w->running && !w->head) {
+            LeaveCriticalSection(&w->mutex);
+            break;
+        }
+        task = w->head;
+        w->head = task->next;
+        if (!w->head) w->tail = NULL;
+        LeaveCriticalSection(&w->mutex);
+#else
+        pthread_mutex_lock(&w->mutex);
+        while (!w->head && w->running) {
+            pthread_cond_wait(&w->cond, &w->mutex);
+        }
+        if (!w->running && !w->head) {
+            pthread_mutex_unlock(&w->mutex);
+            break;
+        }
+        task = w->head;
+        w->head = task->next;
+        if (!w->head) w->tail = NULL;
+        pthread_mutex_unlock(&w->mutex);
+#endif
+
+        /* Execute the HTTP request (blocking, but on this worker thread) */
+        colyseus_http_post(
+            task->http,
+            task->path,
+            task->body,
+            task->on_success,
+            task->on_error,
+            task->userdata
+        );
+
+        free(task->path);
+        free(task->body);
+        free(task);
+    }
+
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+/* ── Matchmaking ──────────────────────────────────────────────── */
+
 /* Internal context for async operations */
 typedef struct {
     colyseus_client_t* client;
@@ -58,6 +263,7 @@ colyseus_client_t* colyseus_client_create_with_transport(
     client->transport_factory = transport_factory;
     client->http = colyseus_http_create(settings);
     client->auth = colyseus_auth_create(client->http);
+    client->http_worker = http_worker_create();
 
     return client;
 }
@@ -65,6 +271,7 @@ colyseus_client_t* colyseus_client_create_with_transport(
 void colyseus_client_free(colyseus_client_t* client) {
     if (!client) return;
 
+    http_worker_free((http_worker_t*)client->http_worker);
     colyseus_http_free(client->http);
     colyseus_auth_free(client->auth);
     free(client);
@@ -179,15 +386,17 @@ static void client_create_matchmake_request(
     ctx->on_error = on_error;
     ctx->userdata = userdata;
 
-    /* Make HTTP request */
-    colyseus_http_post(
-        client->http,
-        path,
-        options_json ? options_json : "{}",
-        client_on_matchmake_success,
-        client_on_matchmake_error,
-        ctx
-    );
+    /* Enqueue on the worker thread */
+    http_task_t* task = malloc(sizeof(http_task_t));
+    task->http = client->http;
+    task->path = strdup(path);
+    task->body = strdup(options_json ? options_json : "{}");
+    task->on_success = client_on_matchmake_success;
+    task->on_error = client_on_matchmake_error;
+    task->userdata = ctx;
+    task->next = NULL;
+
+    http_worker_enqueue((http_worker_t*)client->http_worker, task);
 
     sdsfree(path);
 }
@@ -229,27 +438,24 @@ static void client_on_matchmake_success(const colyseus_http_response_t* response
     }
 
     /* Parse room data */
-    cJSON* room = cJSON_GetObjectItem(json, "room");
-    if (room) {
-        cJSON* room_id = cJSON_GetObjectItem(room, "roomId");
-        if (room_id && cJSON_IsString(room_id)) {
-            reservation.room.room_id = strdup(room_id->valuestring);
-        }
+    cJSON* room_id = cJSON_GetObjectItem(json, "roomId");
+    if (room_id && cJSON_IsString(room_id)) {
+        reservation.room.room_id = strdup(room_id->valuestring);
+    }
 
-        cJSON* name = cJSON_GetObjectItem(room, "name");
-        if (name && cJSON_IsString(name)) {
-            reservation.room.name = strdup(name->valuestring);
-        }
+    cJSON* name = cJSON_GetObjectItem(json, "name");
+    if (name && cJSON_IsString(name)) {
+        reservation.room.name = strdup(name->valuestring);
+    }
 
-        cJSON* process_id = cJSON_GetObjectItem(room, "processId");
-        if (process_id && cJSON_IsString(process_id)) {
-            reservation.room.process_id = strdup(process_id->valuestring);
-        }
+    cJSON* process_id = cJSON_GetObjectItem(json, "processId");
+    if (process_id && cJSON_IsString(process_id)) {
+        reservation.room.process_id = strdup(process_id->valuestring);
+    }
 
-        cJSON* public_address = cJSON_GetObjectItem(room, "publicAddress");
-        if (public_address && cJSON_IsString(public_address)) {
-            reservation.room.public_address = strdup(public_address->valuestring);
-        }
+    cJSON* public_address = cJSON_GetObjectItem(json, "publicAddress");
+    if (public_address && cJSON_IsString(public_address)) {
+        reservation.room.public_address = strdup(public_address->valuestring);
     }
 
     cJSON_Delete(json);
@@ -299,10 +505,11 @@ static void client_consume_seat_reservation(
         reservation->reconnection_token
     );
 
-    /* Connect room */
+    /* Connect room (pass settings for TLS configuration) */
     colyseus_room_connect(
         room,
         endpoint,
+        client->settings,
         NULL,  /* on_success handled via room.on_join */
         on_error,
         userdata

@@ -1,0 +1,801 @@
+name: Godot Extension Build
+
+on:
+  push:
+    paths:
+      - 'platforms/godot/**'
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'platforms/godot/**'
+  workflow_dispatch:
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version-check.outputs.changed || 'true' }}
+      version: ${{ steps.version-check.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check version changes
+        uses: EndBug/version-check@v2
+        id: version-check
+        with:
+          file-name: platforms/godot/addons/colyseus/version.json
+          diff-search: true
+
+      - name: Log version info
+        run: |
+          echo "Version changed: ${{ steps.version-check.outputs.changed }}"
+          echo "Version: ${{ steps.version-check.outputs.version }}"
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build macOS arm64 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=aarch64-macos -Doptimize=Debug
+
+      - name: Build macOS arm64 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
+
+      - name: Upload macOS binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-macos
+          path: platforms/godot/addons/colyseus/bin/*.dylib
+
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Get iOS SDK path
+        id: ios-sdk
+        run: echo "path=$(xcrun --sdk iphoneos --show-sdk-path)" >> $GITHUB_OUTPUT
+
+      - name: Populate Zig cache (fetch dependencies)
+        working-directory: platforms/godot
+        run: |
+          zig build --fetch
+          echo "=== .zig-cache/p ==="
+          find .zig-cache/p -name "msgpack.zig" 2>/dev/null || echo "not found"
+          echo "=== ZIG_GLOBAL_CACHE_DIR ==="
+          echo "ZIG_GLOBAL_CACHE_DIR=$ZIG_GLOBAL_CACHE_DIR"
+          find "$ZIG_GLOBAL_CACHE_DIR/p" -name "msgpack.zig" 2>/dev/null || echo "not found"
+
+      - name: Build iOS arm64 (debug)
+        working-directory: platforms/godot
+        run: |
+          SDK="${{ steps.ios-sdk.outputs.path }}"
+          OUT="addons/colyseus/bin"
+          mkdir -p "$OUT"
+
+          MSGPACK_ZIG=$(find "$ZIG_GLOBAL_CACHE_DIR/p" -name "msgpack.zig" 2>/dev/null | grep zig_msgpack | head -1)
+          echo "Found msgpack.zig at: $MSGPACK_ZIG"
+            if [ -z "$MSGPACK_ZIG" ]; then
+          echo "ERROR: msgpack.zig not found"
+            exit 1
+            fi
+
+          INCLUDES=(
+            -I../../include
+            -I../../src
+            -I../../third_party/uthash/src
+            -I../../third_party/sds
+            -I../../third_party/cJSON
+            -I../../third_party/wslay/lib/includes
+            -I../../third_party/wslay/lib
+            -I../../third_party/mbedtls/include
+            -Iinclude
+            -Isrc
+          )
+
+          C_SOURCES=(
+            src/register_types.c
+            src/colyseus_client.c
+            src/colyseus_room.c
+            src/colyseus_callbacks.c
+            src/colyseus_state.c
+            src/colyseus_schema_registry.c
+            src/colyseus_gdscript_schema.c
+            src/msgpack_variant.c
+            src/msgpack_encoder.c
+            src/tls_certificates.c
+            ../../src/common/settings.c
+            ../../src/client.c
+            ../../src/room.c
+            ../../src/network/websocket_transport.c
+            ../../src/schema/decode.c
+            ../../src/schema/ref_tracker.c
+            ../../src/schema/collections.c
+            ../../src/schema/decoder.c
+            ../../src/schema/serializer.c
+            ../../src/schema/callbacks.c
+            ../../src/schema/dynamic_schema.c
+            ../../src/utils/strUtil.c
+            ../../src/utils/sha1_c.c
+            ../../src/auth/auth.c
+            ../../src/auth/secure_storage.c
+            ../../src/certs/ca_bundle.c
+            ../../third_party/sds/sds.c
+            ../../third_party/cJSON/cJSON.c
+            ../../third_party/wslay/lib/wslay_event.c
+            ../../third_party/wslay/lib/wslay_frame.c
+            ../../third_party/wslay/lib/wslay_net.c
+            ../../third_party/wslay/lib/wslay_queue.c
+            ../../third_party/mbedtls/library/aes.c
+            ../../third_party/mbedtls/library/aesce.c
+            ../../third_party/mbedtls/library/aesni.c
+            ../../third_party/mbedtls/library/aria.c
+            ../../third_party/mbedtls/library/asn1parse.c
+            ../../third_party/mbedtls/library/asn1write.c
+            ../../third_party/mbedtls/library/base64.c
+            ../../third_party/mbedtls/library/bignum.c
+            ../../third_party/mbedtls/library/bignum_core.c
+            ../../third_party/mbedtls/library/bignum_mod.c
+            ../../third_party/mbedtls/library/bignum_mod_raw.c
+            ../../third_party/mbedtls/library/block_cipher.c
+            ../../third_party/mbedtls/library/camellia.c
+            ../../third_party/mbedtls/library/ccm.c
+            ../../third_party/mbedtls/library/chacha20.c
+            ../../third_party/mbedtls/library/chachapoly.c
+            ../../third_party/mbedtls/library/cipher.c
+            ../../third_party/mbedtls/library/cipher_wrap.c
+            ../../third_party/mbedtls/library/cmac.c
+            ../../third_party/mbedtls/library/constant_time.c
+            ../../third_party/mbedtls/library/ctr_drbg.c
+            ../../third_party/mbedtls/library/debug.c
+            ../../third_party/mbedtls/library/des.c
+            ../../third_party/mbedtls/library/dhm.c
+            ../../third_party/mbedtls/library/ecdh.c
+            ../../third_party/mbedtls/library/ecdsa.c
+            ../../third_party/mbedtls/library/ecjpake.c
+            ../../third_party/mbedtls/library/ecp.c
+            ../../third_party/mbedtls/library/ecp_curves.c
+            ../../third_party/mbedtls/library/ecp_curves_new.c
+            ../../third_party/mbedtls/library/entropy.c
+            ../../third_party/mbedtls/library/entropy_poll.c
+            ../../third_party/mbedtls/library/error.c
+            ../../third_party/mbedtls/library/gcm.c
+            ../../third_party/mbedtls/library/hkdf.c
+            ../../third_party/mbedtls/library/hmac_drbg.c
+            ../../third_party/mbedtls/library/lmots.c
+            ../../third_party/mbedtls/library/lms.c
+            ../../third_party/mbedtls/library/md.c
+            ../../third_party/mbedtls/library/md5.c
+            ../../third_party/mbedtls/library/memory_buffer_alloc.c
+            ../../third_party/mbedtls/library/mps_reader.c
+            ../../third_party/mbedtls/library/mps_trace.c
+            ../../third_party/mbedtls/library/net_sockets.c
+            ../../third_party/mbedtls/library/nist_kw.c
+            ../../third_party/mbedtls/library/oid.c
+            ../../third_party/mbedtls/library/padlock.c
+            ../../third_party/mbedtls/library/pem.c
+            ../../third_party/mbedtls/library/pk.c
+            ../../third_party/mbedtls/library/pk_ecc.c
+            ../../third_party/mbedtls/library/pk_wrap.c
+            ../../third_party/mbedtls/library/pkcs12.c
+            ../../third_party/mbedtls/library/pkcs5.c
+            ../../third_party/mbedtls/library/pkcs7.c
+            ../../third_party/mbedtls/library/pkparse.c
+            ../../third_party/mbedtls/library/pkwrite.c
+            ../../third_party/mbedtls/library/platform.c
+            ../../third_party/mbedtls/library/platform_util.c
+            ../../third_party/mbedtls/library/poly1305.c
+            ../../third_party/mbedtls/library/psa_crypto.c
+            ../../third_party/mbedtls/library/psa_crypto_aead.c
+            ../../third_party/mbedtls/library/psa_crypto_cipher.c
+            ../../third_party/mbedtls/library/psa_crypto_client.c
+            ../../third_party/mbedtls/library/psa_crypto_driver_wrappers_no_static.c
+            ../../third_party/mbedtls/library/psa_crypto_ecp.c
+            ../../third_party/mbedtls/library/psa_crypto_ffdh.c
+            ../../third_party/mbedtls/library/psa_crypto_hash.c
+            ../../third_party/mbedtls/library/psa_crypto_mac.c
+            ../../third_party/mbedtls/library/psa_crypto_pake.c
+            ../../third_party/mbedtls/library/psa_crypto_rsa.c
+            ../../third_party/mbedtls/library/psa_crypto_se.c
+            ../../third_party/mbedtls/library/psa_crypto_slot_management.c
+            ../../third_party/mbedtls/library/psa_crypto_storage.c
+            ../../third_party/mbedtls/library/psa_its_file.c
+            ../../third_party/mbedtls/library/psa_util.c
+            ../../third_party/mbedtls/library/ripemd160.c
+            ../../third_party/mbedtls/library/rsa.c
+            ../../third_party/mbedtls/library/rsa_alt_helpers.c
+            ../../third_party/mbedtls/library/sha1.c
+            ../../third_party/mbedtls/library/sha256.c
+            ../../third_party/mbedtls/library/sha3.c
+            ../../third_party/mbedtls/library/sha512.c
+            ../../third_party/mbedtls/library/ssl_cache.c
+            ../../third_party/mbedtls/library/ssl_ciphersuites.c
+            ../../third_party/mbedtls/library/ssl_client.c
+            ../../third_party/mbedtls/library/ssl_cookie.c
+            ../../third_party/mbedtls/library/ssl_debug_helpers_generated.c
+            ../../third_party/mbedtls/library/ssl_msg.c
+            ../../third_party/mbedtls/library/ssl_ticket.c
+            ../../third_party/mbedtls/library/ssl_tls.c
+            ../../third_party/mbedtls/library/ssl_tls12_client.c
+            ../../third_party/mbedtls/library/ssl_tls12_server.c
+            ../../third_party/mbedtls/library/ssl_tls13_client.c
+            ../../third_party/mbedtls/library/ssl_tls13_generic.c
+            ../../third_party/mbedtls/library/ssl_tls13_keys.c
+            ../../third_party/mbedtls/library/ssl_tls13_server.c
+            ../../third_party/mbedtls/library/threading.c
+            ../../third_party/mbedtls/library/timing.c
+            ../../third_party/mbedtls/library/version.c
+            ../../third_party/mbedtls/library/version_features.c
+            ../../third_party/mbedtls/library/x509.c
+            ../../third_party/mbedtls/library/x509_create.c
+            ../../third_party/mbedtls/library/x509_crl.c
+            ../../third_party/mbedtls/library/x509_crt.c
+            ../../third_party/mbedtls/library/x509_csr.c
+            ../../third_party/mbedtls/library/x509write.c
+            ../../third_party/mbedtls/library/x509write_crt.c
+            ../../third_party/mbedtls/library/x509write_csr.c
+            )
+
+          # Generate wslay config headers
+          mkdir -p .zig-cache/config/wslay
+          cat > .zig-cache/config/config.h << 'EOF'
+          #define HAVE_ARPA_INET_H 1
+          #define HAVE_NETINET_IN_H 1
+          EOF
+          cp ../../third_party/wslay/lib/includes/wslay/wslayver.h.in .zig-cache/config/wslay/wslayver.h
+          sed -i '' 's/@PACKAGE_VERSION@/1.1.1/g' .zig-cache/config/wslay/wslayver.h
+
+          INCLUDES+=(-I.zig-cache/config)
+
+          # Compile Zig sources to object files
+          zig build-obj \
+            -target aarch64-ios \
+            -ODebug \
+            --sysroot "$SDK" \
+            --dep msgpack \
+            -Mroot=src/msgpack_godot.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/msgpack_godot.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -ODebug \
+            --sysroot "$SDK" \
+            -Mroot=../../src/network/http.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/http_zig.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -ODebug \
+            --sysroot "$SDK" \
+            -Mroot=../../src/utils/strUtil.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/strutil_zig.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -ODebug \
+            --sysroot "$SDK" \
+            --dep msgpack \
+            -Mroot=../../src/msgpack/msgpack_builder.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/msgpack_builder.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -ODebug \
+            --sysroot "$SDK" \
+            --dep msgpack \
+            -Mroot=../../src/msgpack/msgpack_reader.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/msgpack_reader.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -ODebug \
+            --sysroot "$SDK" \
+            -Mroot=../../src/certs/system_certs.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/system_certs.o
+
+          # Link everything with clang
+          xcrun clang \
+            -target arm64-apple-ios13.0 \
+            -isysroot "$SDK" \
+            -dynamiclib \
+            -install_name "@rpath/libcolyseus_godot.ios.arm64.debug.framework/libcolyseus_godot.ios.arm64.debug" \
+            -o "$OUT/libcolyseus_godot.ios.arm64.debug.dylib" \
+            "${INCLUDES[@]}" \
+            -Wall -Wextra -Wno-unused-parameter \
+            -DHAVE_CONFIG_H \
+            "${C_SOURCES[@]}" \
+            .zig-cache/msgpack_godot.o \
+            .zig-cache/http_zig.o \
+            .zig-cache/strutil_zig.o \
+            .zig-cache/msgpack_builder.o \
+            .zig-cache/msgpack_reader.o \
+            .zig-cache/system_certs.o \
+            -framework CoreFoundation \
+            -framework Security \
+            -lc
+
+      - name: Build iOS arm64 (release)
+        working-directory: platforms/godot
+        run: |
+          SDK="${{ steps.ios-sdk.outputs.path }}"
+          OUT="addons/colyseus/bin"
+
+          MSGPACK_ZIG=$(find "$ZIG_GLOBAL_CACHE_DIR/p" -name "msgpack.zig" 2>/dev/null | grep zig_msgpack | head -1)
+          echo "Found msgpack.zig at: $MSGPACK_ZIG"
+            if [ -z "$MSGPACK_ZIG" ]; then
+          echo "ERROR: msgpack.zig not found"
+            exit 1
+            fi
+
+          INCLUDES=(
+            -I../../include
+            -I../../src
+            -I../../third_party/uthash/src
+            -I../../third_party/sds
+            -I../../third_party/cJSON
+            -I../../third_party/wslay/lib/includes
+            -I../../third_party/wslay/lib
+            -I../../third_party/mbedtls/include 
+            -Iinclude
+            -Isrc
+            -I.zig-cache/config
+          )
+
+          C_SOURCES=(
+            src/register_types.c
+            src/colyseus_client.c
+            src/colyseus_room.c
+            src/colyseus_callbacks.c
+            src/colyseus_state.c
+            src/colyseus_schema_registry.c
+            src/colyseus_gdscript_schema.c
+            src/msgpack_variant.c
+            src/msgpack_encoder.c
+            src/tls_certificates.c
+            ../../src/common/settings.c
+            ../../src/client.c
+            ../../src/room.c
+            ../../src/network/websocket_transport.c
+            ../../src/schema/decode.c
+            ../../src/schema/ref_tracker.c
+            ../../src/schema/collections.c
+            ../../src/schema/decoder.c
+            ../../src/schema/serializer.c
+            ../../src/schema/callbacks.c
+            ../../src/schema/dynamic_schema.c
+            ../../src/utils/strUtil.c
+            ../../src/utils/sha1_c.c
+            ../../src/auth/auth.c
+            ../../src/auth/secure_storage.c
+            ../../src/certs/ca_bundle.c
+            ../../third_party/sds/sds.c
+            ../../third_party/cJSON/cJSON.c
+            ../../third_party/wslay/lib/wslay_event.c
+            ../../third_party/wslay/lib/wslay_frame.c
+            ../../third_party/wslay/lib/wslay_net.c
+            ../../third_party/wslay/lib/wslay_queue.c
+            ../../third_party/mbedtls/library/aes.c
+            ../../third_party/mbedtls/library/aesce.c
+            ../../third_party/mbedtls/library/aesni.c
+            ../../third_party/mbedtls/library/aria.c
+            ../../third_party/mbedtls/library/asn1parse.c
+            ../../third_party/mbedtls/library/asn1write.c
+            ../../third_party/mbedtls/library/base64.c
+            ../../third_party/mbedtls/library/bignum.c
+            ../../third_party/mbedtls/library/bignum_core.c
+            ../../third_party/mbedtls/library/bignum_mod.c
+            ../../third_party/mbedtls/library/bignum_mod_raw.c
+            ../../third_party/mbedtls/library/block_cipher.c
+            ../../third_party/mbedtls/library/camellia.c
+            ../../third_party/mbedtls/library/ccm.c
+            ../../third_party/mbedtls/library/chacha20.c
+            ../../third_party/mbedtls/library/chachapoly.c
+            ../../third_party/mbedtls/library/cipher.c
+            ../../third_party/mbedtls/library/cipher_wrap.c
+            ../../third_party/mbedtls/library/cmac.c
+            ../../third_party/mbedtls/library/constant_time.c
+            ../../third_party/mbedtls/library/ctr_drbg.c
+            ../../third_party/mbedtls/library/debug.c
+            ../../third_party/mbedtls/library/des.c
+            ../../third_party/mbedtls/library/dhm.c
+            ../../third_party/mbedtls/library/ecdh.c
+            ../../third_party/mbedtls/library/ecdsa.c
+            ../../third_party/mbedtls/library/ecjpake.c
+            ../../third_party/mbedtls/library/ecp.c
+            ../../third_party/mbedtls/library/ecp_curves.c
+            ../../third_party/mbedtls/library/ecp_curves_new.c
+            ../../third_party/mbedtls/library/entropy.c
+            ../../third_party/mbedtls/library/entropy_poll.c
+            ../../third_party/mbedtls/library/error.c
+            ../../third_party/mbedtls/library/gcm.c
+            ../../third_party/mbedtls/library/hkdf.c
+            ../../third_party/mbedtls/library/hmac_drbg.c
+            ../../third_party/mbedtls/library/lmots.c
+            ../../third_party/mbedtls/library/lms.c
+            ../../third_party/mbedtls/library/md.c
+            ../../third_party/mbedtls/library/md5.c
+            ../../third_party/mbedtls/library/memory_buffer_alloc.c
+            ../../third_party/mbedtls/library/mps_reader.c
+            ../../third_party/mbedtls/library/mps_trace.c
+            ../../third_party/mbedtls/library/net_sockets.c
+            ../../third_party/mbedtls/library/nist_kw.c
+            ../../third_party/mbedtls/library/oid.c
+            ../../third_party/mbedtls/library/padlock.c
+            ../../third_party/mbedtls/library/pem.c
+            ../../third_party/mbedtls/library/pk.c
+            ../../third_party/mbedtls/library/pk_ecc.c
+            ../../third_party/mbedtls/library/pk_wrap.c
+            ../../third_party/mbedtls/library/pkcs12.c
+            ../../third_party/mbedtls/library/pkcs5.c
+            ../../third_party/mbedtls/library/pkcs7.c
+            ../../third_party/mbedtls/library/pkparse.c
+            ../../third_party/mbedtls/library/pkwrite.c
+            ../../third_party/mbedtls/library/platform.c
+            ../../third_party/mbedtls/library/platform_util.c
+            ../../third_party/mbedtls/library/poly1305.c
+            ../../third_party/mbedtls/library/psa_crypto.c
+            ../../third_party/mbedtls/library/psa_crypto_aead.c
+            ../../third_party/mbedtls/library/psa_crypto_cipher.c
+            ../../third_party/mbedtls/library/psa_crypto_client.c
+            ../../third_party/mbedtls/library/psa_crypto_driver_wrappers_no_static.c
+            ../../third_party/mbedtls/library/psa_crypto_ecp.c
+            ../../third_party/mbedtls/library/psa_crypto_ffdh.c
+            ../../third_party/mbedtls/library/psa_crypto_hash.c
+            ../../third_party/mbedtls/library/psa_crypto_mac.c
+            ../../third_party/mbedtls/library/psa_crypto_pake.c
+            ../../third_party/mbedtls/library/psa_crypto_rsa.c
+            ../../third_party/mbedtls/library/psa_crypto_se.c
+            ../../third_party/mbedtls/library/psa_crypto_slot_management.c
+            ../../third_party/mbedtls/library/psa_crypto_storage.c
+            ../../third_party/mbedtls/library/psa_its_file.c
+            ../../third_party/mbedtls/library/psa_util.c
+            ../../third_party/mbedtls/library/ripemd160.c
+            ../../third_party/mbedtls/library/rsa.c
+            ../../third_party/mbedtls/library/rsa_alt_helpers.c
+            ../../third_party/mbedtls/library/sha1.c
+            ../../third_party/mbedtls/library/sha256.c
+            ../../third_party/mbedtls/library/sha3.c
+            ../../third_party/mbedtls/library/sha512.c
+            ../../third_party/mbedtls/library/ssl_cache.c
+            ../../third_party/mbedtls/library/ssl_ciphersuites.c
+            ../../third_party/mbedtls/library/ssl_client.c
+            ../../third_party/mbedtls/library/ssl_cookie.c
+            ../../third_party/mbedtls/library/ssl_debug_helpers_generated.c
+            ../../third_party/mbedtls/library/ssl_msg.c
+            ../../third_party/mbedtls/library/ssl_ticket.c
+            ../../third_party/mbedtls/library/ssl_tls.c
+            ../../third_party/mbedtls/library/ssl_tls12_client.c
+            ../../third_party/mbedtls/library/ssl_tls12_server.c
+            ../../third_party/mbedtls/library/ssl_tls13_client.c
+            ../../third_party/mbedtls/library/ssl_tls13_generic.c
+            ../../third_party/mbedtls/library/ssl_tls13_keys.c
+            ../../third_party/mbedtls/library/ssl_tls13_server.c
+            ../../third_party/mbedtls/library/threading.c
+            ../../third_party/mbedtls/library/timing.c
+            ../../third_party/mbedtls/library/version.c
+            ../../third_party/mbedtls/library/version_features.c
+            ../../third_party/mbedtls/library/x509.c
+            ../../third_party/mbedtls/library/x509_create.c
+            ../../third_party/mbedtls/library/x509_crl.c
+            ../../third_party/mbedtls/library/x509_crt.c
+            ../../third_party/mbedtls/library/x509_csr.c
+            ../../third_party/mbedtls/library/x509write.c
+            ../../third_party/mbedtls/library/x509write_crt.c
+            ../../third_party/mbedtls/library/x509write_csr.c
+            )
+
+          zig build-obj \
+            -target aarch64-ios \
+            -OReleaseSafe \
+            --sysroot "$SDK" \
+            --dep msgpack \
+            -Mroot=src/msgpack_godot.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/msgpack_godot_rel.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -OReleaseSafe \
+            --sysroot "$SDK" \
+            -Mroot=../../src/network/http.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/http_zig_rel.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -OReleaseSafe \
+            --sysroot "$SDK" \
+            -Mroot=../../src/utils/strUtil.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/strutil_zig_rel.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -OReleaseSafe \
+            --sysroot "$SDK" \
+            --dep msgpack \
+            -Mroot=../../src/msgpack/msgpack_builder.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/msgpack_builder_rel.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -OReleaseSafe \
+            --sysroot "$SDK" \
+            --dep msgpack \
+            -Mroot=../../src/msgpack/msgpack_reader.zig \
+            --dep msgpack \
+            -Mmsgpack="$MSGPACK_ZIG" \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/msgpack_reader_rel.o
+
+          zig build-obj \
+            -target aarch64-ios \
+            -OReleaseSafe \
+            --sysroot "$SDK" \
+            -Mroot=../../src/certs/system_certs.zig \
+            "${INCLUDES[@]}" \
+            -femit-bin=.zig-cache/system_certs_rel.o
+
+          xcrun clang \
+            -target arm64-apple-ios13.0 \
+            -isysroot "$SDK" \
+            -dynamiclib \
+            -O2 \
+            -install_name "@rpath/libcolyseus_godot.ios.arm64.release.framework/libcolyseus_godot.ios.arm64.release" \
+            -o "$OUT/libcolyseus_godot.ios.arm64.release.dylib" \
+            "${INCLUDES[@]}" \
+            -Wall -Wextra -Wno-unused-parameter \
+            -DHAVE_CONFIG_H \
+            "${C_SOURCES[@]}" \
+            .zig-cache/msgpack_godot_rel.o \
+            .zig-cache/http_zig_rel.o \
+            .zig-cache/strutil_zig_rel.o \
+            .zig-cache/msgpack_builder_rel.o \
+            .zig-cache/msgpack_reader_rel.o \
+            .zig-cache/system_certs_rel.o \
+            -framework CoreFoundation \
+            -framework Security \
+            -lc
+
+      - name: Upload iOS binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-ios
+          path: platforms/godot/addons/colyseus/bin/*ios*.dylib
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build Linux x86_64 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=Debug
+
+      - name: Build Linux x86_64 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe
+
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux
+          path: platforms/godot/addons/colyseus/bin/*.so
+
+  build-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build Windows x86_64 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=Debug
+
+      - name: Build Windows x86_64 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
+
+      - name: Build Windows x86_32 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86-windows-gnu -Doptimize=Debug
+
+      - name: Build Windows x86_32 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86-windows-gnu -Doptimize=ReleaseSafe
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-windows
+          path: platforms/godot/addons/colyseus/bin/*.dll
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+
+      - name: Build Android arm64 (debug)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=aarch64-linux-android -Doptimize=Debug
+
+      - name: Build Android arm64 (release)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=aarch64-linux-android -Doptimize=ReleaseSafe
+
+      - name: Build Android arm32 (debug)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=Debug
+
+      - name: Build Android arm32 (release)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=ReleaseSafe
+
+      - name: Build Android x86_64 (debug)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=x86_64-linux-android -Doptimize=Debug
+
+      - name: Build Android x86_64 (release)
+        working-directory: platforms/godot
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=x86_64-linux-android -Doptimize=ReleaseSafe
+
+      - name: Upload Android binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-android
+          path: platforms/godot/addons/colyseus/bin/*android*.so
+
+  release:
+    needs: [check-version, build-macos, build-ios, build-linux, build-windows, build-android]
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create bin directory
+        run: mkdir -p platforms/godot/addons/colyseus/bin
+
+      - name: Download macOS binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-macos
+          path: platforms/godot/addons/colyseus/bin
+
+      - name: Download iOS binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-ios
+          path: platforms/godot/addons/colyseus/bin
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-linux
+          path: platforms/godot/addons/colyseus/bin
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-windows
+          path: platforms/godot/addons/colyseus/bin
+
+      - name: Download Android binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-android
+          path: platforms/godot/addons/colyseus/bin
+
+      - name: List all binaries
+        run: ls -la platforms/godot/addons/colyseus/bin/
+
+      - name: Create release zip
+        working-directory: platforms/godot
+        run: zip -r colyseus-godot-${{ needs.check-version.outputs.version }}.zip addons
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: godot-v${{ needs.check-version.outputs.version }}
+          name: Godot SDK v${{ needs.check-version.outputs.version }}
+          body: |
+            ## Colyseus Godot SDK v${{ needs.check-version.outputs.version }}
+
+            ### Installation
+            1. Download the `colyseus-godot-${{ needs.check-version.outputs.version }}.zip` file
+            2. Extract the `addons` folder into your Godot project root
+            3. Enable the plugin in Project Settings > Plugins
+
+            ### Supported Platforms
+            - Web
+            - macOS (arm64)
+            - iOS (arm64)
+            - Windows (x86_32, x86_64)
+            - Linux (x86_64)
+            - Android (arm32, arm64, x86_64)
+          files: platforms/godot/colyseus-godot-${{ needs.check-version.outputs.version }}.zip
+          draft: false
+          prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}

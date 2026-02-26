@@ -1,0 +1,46 @@
+name: Zig CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Show Zig version
+        run: zig version
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libc6-dev
+          git submodule update --init --recursive
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          git submodule update --init --recursive
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git ..\vcpkg
+          ..\vcpkg\bootstrap-vcpkg.bat
+          git submodule update --init --recursive
+
+      - name: Run tests
+        run: zig build test -Dskip-integration

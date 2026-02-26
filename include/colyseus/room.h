@@ -3,6 +3,8 @@
 
 #include "colyseus/transport.h"
 #include "colyseus/protocol.h"
+#include "colyseus/messages.h"
+#include "colyseus/settings.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -12,21 +14,45 @@
 extern "C" {
 #endif
 
-/* Forward declaration */
+/* Forward declarations */
 typedef struct colyseus_room colyseus_room_t;
+typedef struct colyseus_schema_serializer colyseus_schema_serializer_t;
+typedef struct colyseus_schema_vtable colyseus_schema_vtable_t;
 
 /* Room event callbacks */
 typedef void (*colyseus_room_on_join_fn)(void* userdata);
 typedef void (*colyseus_room_on_state_change_fn)(void* userdata);
-typedef void (*colyseus_room_on_message_fn)(const uint8_t* data, size_t length, void* userdata);
 typedef void (*colyseus_room_on_error_fn)(int code, const char* message, void* userdata);
 typedef void (*colyseus_room_on_leave_fn)(int code, const char* reason, void* userdata);
+
+/* Message callbacks - default (message reader, auto-decoded) */
+typedef void (*colyseus_room_on_message_fn)(colyseus_message_reader_t* reader, void* userdata);
+typedef void (*colyseus_room_on_message_with_type_fn)(const char* type, colyseus_message_reader_t* reader, void* userdata);
+
+/* Message callbacks - encoded (raw msgpack bytes, platform decodes) */
+typedef void (*colyseus_room_on_message_encoded_fn)(const uint8_t* data, size_t length, void* userdata);
+typedef void (*colyseus_room_on_message_with_type_encoded_fn)(const char* type, const uint8_t* data, size_t length, void* userdata);
+
+/* Message callbacks - bytes (raw bytes, ROOM_DATA_BYTES protocol) */
+typedef void (*colyseus_room_on_message_bytes_fn)(const uint8_t* data, size_t length, void* userdata);
+typedef void (*colyseus_room_on_message_with_type_bytes_fn)(const char* type, const uint8_t* data, size_t length, void* userdata);
 
 /* Message handler entry for hash map */
 typedef struct {
     char* key;  /* Message type as string (or "i123" for numeric) */
+
+    /* Default callback (msgpack reader) */
     colyseus_room_on_message_fn callback;
     void* userdata;
+
+    /* Encoded callback (raw msgpack bytes) */
+    colyseus_room_on_message_encoded_fn callback_encoded;
+    void* userdata_encoded;
+
+    /* Bytes callback (raw bytes, ROOM_DATA_BYTES) */
+    colyseus_room_on_message_bytes_fn callback_bytes;
+    void* userdata_bytes;
+
     UT_hash_handle hh;
 } colyseus_message_handler_t;
 
@@ -36,10 +62,20 @@ struct colyseus_room {
     char* room_id;
     char* session_id;
     char* reconnection_token;
+    char* serializer_id;
     bool has_joined;
 
     colyseus_transport_t* transport;
     colyseus_transport_factory_fn transport_factory;
+
+    /* Schema serializer */
+    colyseus_schema_serializer_t* serializer;
+    const colyseus_schema_vtable_t* state_vtable;
+
+    /* Connection callbacks (stored for async response) */
+    void (*connect_on_success)(void* userdata);
+    void (*connect_on_error)(int code, const char* message, void* userdata);
+    void* connect_userdata;
 
     /* Event callbacks */
     colyseus_room_on_join_fn on_join;
@@ -57,19 +93,40 @@ struct colyseus_room {
     /* Message handlers hash map */
     colyseus_message_handler_t* message_handlers;
 
-    /* Wildcard message handler (for all messages) */
+    /* Wildcard message handlers - default (msgpack reader) */
     colyseus_room_on_message_fn on_message_any;
     void* on_message_any_userdata;
+    colyseus_room_on_message_with_type_fn on_message_any_with_type;
+    void* on_message_any_with_type_userdata;
+
+    /* Wildcard message handlers - encoded (raw msgpack bytes) */
+    colyseus_room_on_message_encoded_fn on_message_any_encoded;
+    void* on_message_any_encoded_userdata;
+    colyseus_room_on_message_with_type_encoded_fn on_message_any_with_type_encoded;
+    void* on_message_any_with_type_encoded_userdata;
+
+    /* Wildcard message handlers - bytes (raw bytes, ROOM_DATA_BYTES) */
+    colyseus_room_on_message_bytes_fn on_message_any_bytes;
+    void* on_message_any_bytes_userdata;
+    colyseus_room_on_message_with_type_bytes_fn on_message_any_with_type_bytes;
+    void* on_message_any_with_type_bytes_userdata;
 };
 
 /* Create and destroy room */
 colyseus_room_t* colyseus_room_create(const char* name, colyseus_transport_factory_fn transport_factory);
 void colyseus_room_free(colyseus_room_t* room);
 
+/* Set state type - must be called before connect for schema serialization */
+void colyseus_room_set_state_type(colyseus_room_t* room, const colyseus_schema_vtable_t* state_vtable);
+
+/* Get current state (returns pointer to schema state, or NULL if not available) */
+void* colyseus_room_get_state(colyseus_room_t* room);
+
 /* Connection */
 void colyseus_room_connect(
     colyseus_room_t* room,
     const char* endpoint,
+    const colyseus_settings_t* settings,
     void (*on_success)(void* userdata),
     void (*on_error)(int code, const char* message, void* userdata),
     void* userdata
@@ -87,20 +144,43 @@ void colyseus_room_set_session_id(colyseus_room_t* room, const char* session_id)
 const char* colyseus_room_get_name(const colyseus_room_t* room);
 bool colyseus_room_has_joined(const colyseus_room_t* room);
 
+const char* colyseus_room_get_reconnection_token(const colyseus_room_t* room);
+
 /* Event handlers */
 void colyseus_room_on_join(colyseus_room_t* room, colyseus_room_on_join_fn callback, void* userdata);
 void colyseus_room_on_state_change(colyseus_room_t* room, colyseus_room_on_state_change_fn callback, void* userdata);
 void colyseus_room_on_error(colyseus_room_t* room, colyseus_room_on_error_fn callback, void* userdata);
 void colyseus_room_on_leave(colyseus_room_t* room, colyseus_room_on_leave_fn callback, void* userdata);
 
-/* Message handlers */
-void colyseus_room_on_message_str(colyseus_room_t* room, const char* type, colyseus_room_on_message_fn callback, void* userdata);
+/* Message handlers - default (msgpack reader, auto-decoded) */
+void colyseus_room_on_message(colyseus_room_t* room, const char* type, colyseus_room_on_message_fn callback, void* userdata);
 void colyseus_room_on_message_int(colyseus_room_t* room, int type, colyseus_room_on_message_fn callback, void* userdata);
 void colyseus_room_on_message_any(colyseus_room_t* room, colyseus_room_on_message_fn callback, void* userdata);
+void colyseus_room_on_message_any_with_type(colyseus_room_t* room, colyseus_room_on_message_with_type_fn callback, void* userdata);
 
-/* Send messages */
-void colyseus_room_send_str(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
-void colyseus_room_send_int(colyseus_room_t* room, int type, const uint8_t* message, size_t length);
+/* Message handlers - encoded (raw msgpack bytes, platform decodes) */
+void colyseus_room_on_message_encoded(colyseus_room_t* room, const char* type, colyseus_room_on_message_encoded_fn callback, void* userdata);
+void colyseus_room_on_message_int_encoded(colyseus_room_t* room, int type, colyseus_room_on_message_encoded_fn callback, void* userdata);
+void colyseus_room_on_message_any_encoded(colyseus_room_t* room, colyseus_room_on_message_encoded_fn callback, void* userdata);
+void colyseus_room_on_message_any_with_type_encoded(colyseus_room_t* room, colyseus_room_on_message_with_type_encoded_fn callback, void* userdata);
+
+/* Message handlers - bytes (raw bytes, ROOM_DATA_BYTES protocol) */
+void colyseus_room_on_message_bytes(colyseus_room_t* room, const char* type, colyseus_room_on_message_bytes_fn callback, void* userdata);
+void colyseus_room_on_message_int_bytes(colyseus_room_t* room, int type, colyseus_room_on_message_bytes_fn callback, void* userdata);
+void colyseus_room_on_message_any_bytes(colyseus_room_t* room, colyseus_room_on_message_bytes_fn callback, void* userdata);
+void colyseus_room_on_message_any_with_type_bytes(colyseus_room_t* room, colyseus_room_on_message_with_type_bytes_fn callback, void* userdata);
+
+/* Send messages (colyseus message - default, encodes automatically) */
+void colyseus_room_send(colyseus_room_t* room, const char* type, colyseus_message_t* data);
+void colyseus_room_send_int(colyseus_room_t* room, int type, colyseus_message_t* data);
+
+/* Send messages (pre-encoded msgpack bytes) */
+void colyseus_room_send_encoded(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
+void colyseus_room_send_int_encoded(colyseus_room_t* room, int type, const uint8_t* message, size_t length);
+
+/* Send raw bytes (ROOM_DATA_BYTES protocol) */
+void colyseus_room_send_bytes(colyseus_room_t* room, const char* type, const uint8_t* data, size_t length);
+void colyseus_room_send_int_bytes(colyseus_room_t* room, int type, const uint8_t* data, size_t length);
 
 #ifdef __cplusplus
 }

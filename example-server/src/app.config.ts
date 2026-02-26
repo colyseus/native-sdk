@@ -1,24 +1,24 @@
-import config from "@colyseus/tools";
-import { monitor } from "@colyseus/monitor";
-import { playground } from "@colyseus/playground";
-import { auth } from "./config/auth.config";
+import {
+    defineServer,
+    defineRoom,
+    monitor,
+    playground,
+    auth,
+} from "colyseus";
 
 /**
  * Import your Room files
  */
 import { MyRoom } from "./rooms/MyRoom";
+import { TestRoom } from "./rooms/TestRoom";
 
-export default config({
-
-    initializeGameServer: (gameServer) => {
-        /**
-         * Define your room handlers:
-         */
-        gameServer.define('my_room', MyRoom);
-
+export const server = defineServer({
+    rooms: {
+        my_room: defineRoom(MyRoom),
+        test_room: defineRoom(TestRoom),
     },
 
-    initializeExpress: (app) => {
+    express: (app) => {
         /**
          * Bind your custom express routes here:
          * Read more: https://expressjs.com/en/starter/basic-routing.html
@@ -48,10 +48,11 @@ export default config({
         app.use("/monitor", monitor());
     },
 
-
     beforeListen: () => {
         /**
          * Before before gameServer.listen() is called.
          */
     }
 });
+
+export default server;

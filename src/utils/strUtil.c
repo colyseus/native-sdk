@@ -3,76 +3,7 @@
 #include "sds.h"
 #include <stdlib.h>
 #include <string.h>
-#include <regex.h>
 #include <stdio.h>
-
-/* Parse URL using regex */
-colyseus_url_parts_t* colyseus_parse_url(const char* url) {
-    /* Regex pattern: (scheme)://(host)(:port)?/(path) */
-    regex_t regex;
-    const char* pattern = "^([^:]+)://([^:/]+)(:([0-9]+))?/(.*)$";
-
-    if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-        return NULL;
-    }
-
-    regmatch_t matches[6];
-    if (regexec(&regex, url, 6, matches, 0) != 0) {
-        regfree(&regex);
-        return NULL;
-    }
-
-    colyseus_url_parts_t* parts = malloc(sizeof(colyseus_url_parts_t));
-    if (!parts) {
-        regfree(&regex);
-        return NULL;
-    }
-
-    memset(parts, 0, sizeof(colyseus_url_parts_t));
-
-    /* Extract scheme */
-    int len = matches[1].rm_eo - matches[1].rm_so;
-    parts->scheme = strndup(url + matches[1].rm_so, len);
-
-    /* Extract host */
-    len = matches[2].rm_eo - matches[2].rm_so;
-    parts->host = strndup(url + matches[2].rm_so, len);
-
-    /* Extract port (if present) */
-    if (matches[4].rm_so != -1) {
-        len = matches[4].rm_eo - matches[4].rm_so;
-        char port_str[16];
-        strncpy(port_str, url + matches[4].rm_so, len);
-        port_str[len] = '\0';
-
-        uint16_t port_num = (uint16_t)strtoul(port_str, NULL, 10);
-        if (port_num > 0) {
-            parts->port = malloc(sizeof(uint16_t));
-            *parts->port = port_num;
-        }
-    }
-
-    /* Extract path and args */
-    len = matches[5].rm_eo - matches[5].rm_so;
-    parts->path_and_args = strndup(url + matches[5].rm_so, len);
-
-    /* Store original URL */
-    parts->url = strdup(url);
-
-    regfree(&regex);
-    return parts;
-}
-
-void colyseus_url_parts_free(colyseus_url_parts_t* parts) {
-    if (!parts) return;
-
-    free(parts->scheme);
-    free(parts->host);
-    free(parts->port);
-    free(parts->path_and_args);
-    free(parts->url);
-    free(parts);
-}
 
 /* Base64 encoding */
 static const char base64_chars[] =
