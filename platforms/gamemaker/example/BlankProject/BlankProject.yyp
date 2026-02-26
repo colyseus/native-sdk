@@ -15,7 +15,7 @@
   "isEcma":false,
   "LibraryEmitters":[],
   "MetaData":{
-    "IDEVersion":"2024.1400.1.921",
+    "IDEVersion":"2024.1400.4.1003",
   },
   "name":"BlankProject",
   "resources":[
@@ -23,6 +23,7 @@
     {"id":{"name":"Networking","path":"objects/Networking/Networking.yy",},},
     {"id":{"name":"Room1","path":"rooms/Room1/Room1.yy",},},
     {"id":{"name":"Sprite1","path":"sprites/Sprite1/Sprite1.yy",},},
+    {"id":{"name":"Colyseus","path":"scripts/Colyseus/Colyseus.yy",},},
   ],
   "resourceType":"GMProject",
   "resourceVersion":"2.0",
