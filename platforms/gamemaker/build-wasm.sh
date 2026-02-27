@@ -91,3 +91,4 @@ echo "=== Build complete ==="
 echo "Output: $OUTPUT_DIR/colyseus_wasm.js"
 echo ""
 echo "Copy this file into your GameMaker project's extension directory."
+cp wasm-out/colyseus_wasm.js example/BlankProject/extensions/Colyseus_SDK/

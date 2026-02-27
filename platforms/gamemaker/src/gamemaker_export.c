@@ -494,6 +494,16 @@ static void on_client_error(int code, const char* message, void* userdata) {
 }
 
 // =============================================================================
+// GameMaker Exported Functions — Module readiness
+// =============================================================================
+
+GM_EXPORT double colyseus_gm_is_ready(void) {
+    // Native builds are always ready (no async WASM init).
+    // On HTML5/WASM, the JS shim overrides this with a check on module init state.
+    return 1.0;
+}
+
+// =============================================================================
 // GameMaker Exported Functions — Client
 // =============================================================================
 
