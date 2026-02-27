@@ -31,7 +31,7 @@ esac
 
 # Slices to build.
 # Each entry: "zig-target  sdk-name  slice-dir-name"
-declare -a SLICES=(
+SLICES=(
   "aarch64-macos                macosx           macos-arm64"
   "x86_64-macos                 macosx           macos-x86_64"
   "aarch64-ios                  iphoneos         ios-arm64"
@@ -46,11 +46,7 @@ mkdir -p "$BUILD_DIR"
 
 echo "=== Building libcolyseus for all slices ==="
 
-declare -a XCFRAMEWORK_ARGS=()
-
-# Track which sdk/slice-groups we've built so we can lipo if needed.
-declare -A SDK_LIBS   # sdk-name -> "lib1 lib2 ..."
-declare -A SDK_HDRS   # sdk-name -> headers dir
+XCFRAMEWORK_ARGS=()
 
 build_slice() {
   local ZIG_TARGET="$1"
