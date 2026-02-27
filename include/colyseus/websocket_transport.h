@@ -4,14 +4,18 @@
 #include "colyseus/transport.h"
 #include <stdint.h>
 #include <stdbool.h>
-#include <wslay/wslay.h>
 
 #include "settings.h"
+
+#ifndef __EMSCRIPTEN__
+#include <wslay/wslay.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#ifndef __EMSCRIPTEN__
     /* WebSocket transport state */
     typedef enum {
         COLYSEUS_WS_DISCONNECTED,
@@ -56,12 +60,13 @@ extern "C" {
         bool use_tls;                /* True for wss:// */
         bool tls_skip_verify;        /* Skip certificate verification */
     } colyseus_ws_transport_data_t;
+#endif /* !__EMSCRIPTEN__ */
 
     /* Create WebSocket transport (implements transport interface) */
     colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transport_events_t* events);
 
     /* Connect with settings (extracts TLS config from settings) */
-    void colyseus_websocket_connect_with_settings(colyseus_transport_t* transport, 
+    void colyseus_websocket_connect_with_settings(colyseus_transport_t* transport,
                                                    const char* url,
                                                    const colyseus_settings_t* settings);
 
