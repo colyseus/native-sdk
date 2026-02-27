@@ -22,7 +22,7 @@ import PackageDescription
 let package = Package(
     name: "Colyseus",
     platforms: [
-        .macOS(.v12),
+        .macOS(.v13),
         .iOS(.v15),
         .tvOS(.v15),
     ],

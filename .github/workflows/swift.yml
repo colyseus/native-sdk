@@ -16,6 +16,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Cleanup Zig cache
+        run: |
+          rm -rf ~/.cache/zig
+
       - name: Install Zig
         uses: mlugg/setup-zig@v2
         with:
@@ -41,8 +45,7 @@ jobs:
 
       - name: Build example (macOS)
         working-directory: platforms/swift/example
-        run: |
-          swift build -c release 2>&1 | tail -5
+        run: swift build -c release
 
       - name: Upload xcframework artifact
         uses: actions/upload-artifact@v4

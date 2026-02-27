@@ -252,6 +252,15 @@ pub fn build(b: *std.Build) void {
     }
 
     b.installArtifact(colyseus);
+    b.installArtifact(mbedtls);
+    b.installArtifact(mbedx509);
+    b.installArtifact(mbedcrypto);
+    b.installArtifact(wslay);
+    b.installArtifact(http_zig);
+    b.installArtifact(syscerts);
+    b.installArtifact(strutil);
+    b.installArtifact(msgpack_builder);
+    b.installArtifact(msgpack_reader);
 
     // Install colyseus public headers so build.sh can copy them into the xcframework.
     const header_pairs = [_][2][]const u8{

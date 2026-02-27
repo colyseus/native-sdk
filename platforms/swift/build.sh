@@ -93,6 +93,14 @@ echo "=== Assembling xcframework ==="
 # tvOS device: single arm64
 # tvOS simulator: single arm64-sim
 
+# Merge all static libs in a slice's lib/ dir into one archive, then lipo.
+merge_slice_libs() {
+  local SLICE_DIR="$1"
+  local OUT_LIB="$2"
+  local ALL_LIBS=("$SLICE_DIR"/lib/*.a)
+  libtool -static -o "$OUT_LIB" "${ALL_LIBS[@]}"
+}
+
 lipo_or_copy() {
   local OUT_LIB="$1"; shift
   local INPUTS=("$@")
@@ -116,33 +124,54 @@ cp "$SCRIPT_DIR/include/module.modulemap" "$HEADERS_DST/"
 
 build_variant() {
   local VARIANT_NAME="$1"; shift
+  local SLICE_DIRS=("$@")
   local LIB_DIR="$BUILD_DIR/libs/$VARIANT_NAME"
   mkdir -p "$LIB_DIR"
   local OUT_LIB="$LIB_DIR/libcolyseus.a"
-  lipo_or_copy "$OUT_LIB" "$@"
+
+  # Merge all sub-libs per slice into one archive, then lipo across arches.
+  local MERGED_LIBS=()
+  local idx=0
+  for SLICE_DIR in "${SLICE_DIRS[@]}"; do
+    local MERGED="$LIB_DIR/merged_${idx}.a"
+    merge_slice_libs "$SLICE_DIR" "$MERGED"
+    MERGED_LIBS+=("$MERGED")
+    idx=$((idx + 1))
+  done
+
+  lipo_or_copy "$OUT_LIB" "${MERGED_LIBS[@]}"
+  rm -f "$LIB_DIR"/merged_*.a
+
   # xcodebuild -create-xcframework expects the PARENT directory containing
   # the headers — it will create the Headers/ subdirectory itself.
   XCFRAMEWORK_ARGS+=("-library" "$OUT_LIB" "-headers" "$HEADERS_DST")
 }
 
 build_variant "macos" \
-  "$ZIG_OUT/macos-arm64/lib/libcolyseus.a" \
-  "$ZIG_OUT/macos-x86_64/lib/libcolyseus.a"
+  "$ZIG_OUT/macos-arm64" \
+  "$ZIG_OUT/macos-x86_64"
 
 build_variant "ios" \
-  "$ZIG_OUT/ios-arm64/lib/libcolyseus.a"
+  "$ZIG_OUT/ios-arm64"
 
 build_variant "ios-simulator" \
-  "$ZIG_OUT/ios-arm64-simulator/lib/libcolyseus.a" \
-  "$ZIG_OUT/ios-x86_64-simulator/lib/libcolyseus.a"
+  "$ZIG_OUT/ios-arm64-simulator" \
+  "$ZIG_OUT/ios-x86_64-simulator"
 
 build_variant "tvos" \
-  "$ZIG_OUT/tvos-arm64/lib/libcolyseus.a"
+  "$ZIG_OUT/tvos-arm64"
 
 build_variant "tvos-simulator" \
-  "$ZIG_OUT/tvos-arm64-simulator/lib/libcolyseus.a"
+  "$ZIG_OUT/tvos-arm64-simulator"
 
 xcodebuild -create-xcframework "${XCFRAMEWORK_ARGS[@]}" -output "$XCF_DIR"
+
+# xcodebuild copies the entire -headers directory as-is, which means any
+# sub-directory named "Headers" inside HEADERS_DST gets nested as
+# xcframework/.../Headers/Headers/. Remove those duplicates.
+for slice in "$XCF_DIR"/*/; do
+  rm -rf "${slice}Headers/Headers"
+done
 
 echo ""
 echo "=== xcframework built: $XCF_DIR ==="
