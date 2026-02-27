@@ -24,7 +24,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Show Zig version
         run: zig version
@@ -55,7 +55,7 @@ jobs:
       - name: Start example server
         working-directory: example-server
         shell: bash
-        run: npx tsx src/index.ts &
+        run: npx tsx src/index.ts > ../server.log 2>&1 &
 
       - name: Wait for server to be ready
         shell: bash
@@ -69,7 +69,12 @@ jobs:
             sleep 1
           done
           echo "Server failed to start"
+          cat server.log
           exit 1
 
       - name: Run tests
         run: zig build test
+
+      - name: Print server logs
+        if: always()
+        run: cat server.log || true
