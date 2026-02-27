@@ -96,6 +96,53 @@ pub fn build(b: *std.Build) void {
     }
 }
 
+// Helper to add Android NDK sysroot paths (headers + libraries)
+fn addAndroidNdkPaths(compile_step: *std.Build.Step.Compile, tgt: std.Target) void {
+    const alloc = compile_step.step.owner.allocator;
+    const ndk = std.process.getEnvVarOwned(alloc, "ANDROID_NDK_HOME") catch return;
+
+    // Detect host platform for NDK prebuilt path
+    const host = comptime if (@import("builtin").os.tag == .macos)
+        "darwin-x86_64"
+    else
+        "linux-x86_64";
+
+    const sysroot = std.fmt.allocPrint(alloc, "{s}/toolchains/llvm/prebuilt/{s}/sysroot", .{ ndk, host }) catch return;
+
+    // Generic sysroot include
+    compile_step.addSystemIncludePath(.{ .cwd_relative = std.fmt.allocPrint(
+        alloc,
+        "{s}/usr/include",
+        .{sysroot},
+    ) catch return });
+
+    // Arch-specific include path
+    const arch_include = switch (tgt.cpu.arch) {
+        .aarch64 => "aarch64-linux-android",
+        .arm => "arm-linux-androideabi",
+        .x86_64 => "x86_64-linux-android",
+        .x86 => "i686-linux-android",
+        else => return,
+    };
+    compile_step.addSystemIncludePath(.{ .cwd_relative = std.fmt.allocPrint(
+        alloc,
+        "{s}/usr/include/{s}",
+        .{ sysroot, arch_include },
+    ) catch return });
+
+    // Library paths (API level 21)
+    compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
+        alloc,
+        "{s}/usr/lib/{s}/21",
+        .{ sysroot, arch_include },
+    ) catch return });
+    compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
+        alloc,
+        "{s}/usr/lib/{s}",
+        .{ sysroot, arch_include },
+    ) catch return });
+}
+
 // Helper to add Apple SDK paths to a compile step (macOS, iOS, tvOS)
 fn addAppleSdkPaths(compile_step: *std.Build.Step.Compile, sdk_path: ?[]const u8) void {
     if (sdk_path) |sdk| {
@@ -127,6 +174,9 @@ fn buildGameMakerExtension(
 ) void {
     const extension_name = getExtensionName(target.result);
 
+    const is_android = target.result.os.tag == .linux and
+        (target.result.abi == .android or target.result.abi == .androideabi);
+
     // Linux and Android need gnu11 for POSIX functions (strdup, etc.)
     const c_std: []const u8 = if (target.result.os.tag == .linux) "-std=gnu11" else "-std=c11";
 
@@ -136,6 +186,8 @@ fn buildGameMakerExtension(
     const gamemaker_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
+        // Android: Zig can't provide libc, use NDK's bionic instead
+        .link_libc = if (is_android) false else null,
     });
 
     const gamemaker = b.addLibrary(.{
@@ -145,11 +197,18 @@ fn buildGameMakerExtension(
         .version = .{ .major = 0, .minor = 1, .patch = 0 },
     });
 
-    gamemaker.linkLibC();
+    if (!is_android) {
+        gamemaker.linkLibC();
+    }
 
     // Add Apple SDK paths for framework resolution (macOS, iOS)
     if (target.result.os.tag == .macos or target.result.os.tag == .ios or target.result.os.tag == .tvos) {
         addAppleSdkPaths(gamemaker, apple_sdk_path);
+    }
+
+    // Add Android NDK sysroot paths
+    if (is_android) {
+        addAndroidNdkPaths(gamemaker, target.result);
     }
 
     // Add include paths
@@ -176,7 +235,6 @@ fn buildGameMakerExtension(
 
     // Link platform-specific system libraries
     if (target.result.os.tag == .linux) {
-        const is_android = target.result.abi == .android or target.result.abi == .androideabi;
         if (!is_android) {
             gamemaker.linkSystemLibrary("pthread");
             gamemaker.linkSystemLibrary("m");
