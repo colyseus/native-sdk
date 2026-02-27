@@ -1,6 +1,7 @@
 #ifdef __EMSCRIPTEN__
 
 #include "colyseus/transport.h"
+#include "colyseus/settings.h"
 #include <emscripten.h>
 #include <stdlib.h>
 #include <string.h>
@@ -565,5 +566,13 @@ static void web_ws_destroy_impl(colyseus_transport_t* transport) {
 }
 
 #endif /* GDEXTENSION_SIDE_MODULE */
+
+/* Web stub: browser handles TLS natively, so settings are ignored */
+void colyseus_websocket_connect_with_settings(colyseus_transport_t* transport,
+                                               const char* url,
+                                               const colyseus_settings_t* settings) {
+    (void)settings;
+    colyseus_transport_connect(transport, url);
+}
 
 #endif /* __EMSCRIPTEN__ */

@@ -10,9 +10,15 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 // Export macro for GameMaker DLL functions
 #ifndef GM_EXPORT
-#ifdef _WIN32
+#ifdef __EMSCRIPTEN__
+#define GM_EXPORT EMSCRIPTEN_KEEPALIVE
+#elif defined(_WIN32)
 #define GM_EXPORT __declspec(dllexport)
 #else
 #define GM_EXPORT __attribute__((visibility("default")))

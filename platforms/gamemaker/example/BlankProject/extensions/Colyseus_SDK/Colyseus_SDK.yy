@@ -18,6 +18,7 @@
   "files":[
     {"$GMExtensionFile":"v1","%Name":"","constants":[],"copyToTargets":3035426178912485614,"filename":"libcolyseus.0.1.0.dylib","final":"","functions":[
         {"$GMExtensionFunction":"","%Name":"colyseus_client_create","argCount":1,"args":[1,],"documentation":"","externalName":"colyseus_gm_client_create","help":"Create Colyseus SDK Client Instance (endpoint: \"http://host:port\" or \"ws://host:port\")","hidden":false,"kind":1,"name":"colyseus_client_create","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
+        {"$GMExtensionFunction":"","%Name":"colyseus_is_ready","argCount":0,"args":[],"documentation":"","externalName":"colyseus_gm_is_ready","help":"Check if the WASM module is initialized (HTML5 only, always returns 1 on native)","hidden":false,"kind":1,"name":"colyseus_is_ready","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
         {"$GMExtensionFunction":"","%Name":"colyseus_client_free","argCount":1,"args":[2,],"documentation":"","externalName":"colyseus_gm_client_free","help":"Free Colyseus SDK Client Instance","hidden":false,"kind":1,"name":"colyseus_client_free","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
         {"$GMExtensionFunction":"","%Name":"colyseus_client_join_or_create","argCount":3,"args":[2,1,1,],"documentation":"","externalName":"colyseus_gm_client_join_or_create","help":"Join or create a room","hidden":false,"kind":1,"name":"colyseus_client_join_or_create","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
         {"$GMExtensionFunction":"","%Name":"colyseus_client_create_room","argCount":3,"args":[2,1,1,],"documentation":"","externalName":"colyseus_gm_client_create_room","help":"Create a room","hidden":false,"kind":1,"name":"colyseus_client_create_room","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
@@ -77,17 +78,13 @@
         {"$GMExtensionFunction":"","%Name":"colyseus_message_iter_value_type","argCount":0,"args":[],"documentation":"","externalName":"colyseus_gm_message_iter_value_type","help":"Get current iterator value type (COLYSEUS_MSG_* constant)","hidden":false,"kind":1,"name":"colyseus_message_iter_value_type","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
         {"$GMExtensionFunction":"","%Name":"colyseus_message_iter_value_string","argCount":0,"args":[],"documentation":"","externalName":"colyseus_gm_message_iter_value_string","help":"Get current iterator value as string","hidden":false,"kind":1,"name":"colyseus_message_iter_value_string","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":1,},
         {"$GMExtensionFunction":"","%Name":"colyseus_message_iter_value_number","argCount":0,"args":[],"documentation":"","externalName":"colyseus_gm_message_iter_value_number","help":"Get current iterator value as number","hidden":false,"kind":1,"name":"colyseus_message_iter_value_number","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
-      ],"init":"","kind":1,"name":"","origname":"","ProxyFiles":[
-        {"$GMProxyFile":"","%Name":"gamemaker_export_html5.js","name":"gamemaker_export_html5.js","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":5,},
-        {"$GMProxyFile":"","%Name":"gamemaker_export_html5.js","name":"gamemaker_export_html5.js","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":34,},
-      ],"resourceType":"GMExtensionFile","resourceVersion":"2.0","uncompress":false,"usesRunnerInterface":false,},
-    {"$GMExtensionFile":"v1","%Name":"","constants":[],"copyToTargets":17179869216,"filename":"gamemaker_export_html5.js","final":"","functions":[],"init":"","kind":5,"name":"","origname":"","ProxyFiles":[],"resourceType":"GMExtensionFile","resourceVersion":"2.0","uncompress":false,"usesRunnerInterface":false,},
-    {"$GMExtensionFile":"v1","%Name":"","constants":[],"copyToTargets":32,"filename":"colyseus.js","final":"","functions":[],"init":"","kind":5,"name":"","origname":"","ProxyFiles":[],"resourceType":"GMExtensionFile","resourceVersion":"2.0","uncompress":false,"usesRunnerInterface":false,},
+      ],"init":"","kind":1,"name":"","origname":"","ProxyFiles":[],"resourceType":"GMExtensionFile","resourceVersion":"2.0","uncompress":false,"usesRunnerInterface":false,},
+    {"$GMExtensionFile":"v1","%Name":"","constants":[],"copyToTargets":32,"filename":"colyseus_wasm.js","final":"","functions":[],"init":"","kind":5,"name":"","origname":"","ProxyFiles":[],"resourceType":"GMExtensionFile","resourceVersion":"2.0","uncompress":false,"usesRunnerInterface":false,},
   ],
   "gradleinject":null,
   "hasConvertedCodeInjection":true,
   "helpfile":"",
-  "HTML5CodeInjection":"<GM_HTML5_PreHead>\n    <script src=\"colyseus.js\"></script>\n</GM_HTML5_PreHead>",
+  "HTML5CodeInjection":"<GM_HTML5_PreHead>\n    <script src=\"colyseus_wasm.js\"></script>\n</GM_HTML5_PreHead>",
   "html5Props":true,
   "IncludedResources":[],
   "installdir":"",

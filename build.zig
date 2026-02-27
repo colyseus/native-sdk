@@ -13,7 +13,8 @@ pub fn build(b: *std.Build) void {
     const is_windows = os_tag == .windows;
 
     // Determine C standard based on platform
-    const c_std = if (os_tag == .linux) "-std=gnu11" else "-std=c11";
+    // Linux and Emscripten need gnu11 for POSIX functions (strdup, strndup, etc.)
+    const c_std = if (os_tag == .linux or is_emscripten) "-std=gnu11" else "-std=c11";
 
     // Build options
     const build_shared = b.option(bool, "shared", "Build shared library") orelse false;
@@ -44,6 +45,32 @@ pub fn build(b: *std.Build) void {
         }
         break :blk null;
     };
+
+    // Emscripten sysroot path (auto-detected from em-config if not specified)
+    // Required when targeting wasm32-emscripten so C sources can find <string.h>, <emscripten.h>, etc.
+    const emscripten_sysroot: ?[]const u8 = b.option([]const u8, "emsdk-sysroot", "Path to Emscripten sysroot (auto-detected from em-config)") orelse blk: {
+        if (!is_emscripten) break :blk null;
+        const result = std.process.Child.run(.{
+            .allocator = b.allocator,
+            .argv = &.{ "em-config", "CACHE" },
+        }) catch break :blk null;
+        defer b.allocator.free(result.stdout);
+        defer b.allocator.free(result.stderr);
+        if (result.term.Exited == 0 and result.stdout.len > 0) {
+            const cache = std.mem.trimRight(u8, result.stdout, "\n\r");
+            break :blk std.fmt.allocPrint(b.allocator, "{s}/sysroot/include", .{cache}) catch null;
+        }
+        break :blk null;
+    };
+
+    // Helper to add Emscripten sysroot include path to a compile step
+    const addEmscriptenSysroot = struct {
+        fn add(compile_step: *std.Build.Step.Compile, sysroot: ?[]const u8) void {
+            if (sysroot) |sr| {
+                compile_step.addSystemIncludePath(.{ .cwd_relative = sr });
+            }
+        }
+    }.add;
 
     // Helper to add Apple SDK paths to a compile step (macOS, iOS, tvOS)
     const addAppleSdkPaths = struct {
@@ -456,6 +483,7 @@ pub fn build(b: *std.Build) void {
 
     colyseus.linkLibC();
     if (!is_emscripten) addAppleSdkPaths(colyseus, apple_sdk_path);
+    if (is_emscripten) addEmscriptenSysroot(colyseus, emscripten_sysroot);
 
     // Add include paths
     colyseus.addIncludePath(b.path("include"));
@@ -508,7 +536,7 @@ pub fn build(b: *std.Build) void {
 
     // C flags
     const base_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", c_std };
-    const web_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", c_std, "-DPLATFORM_WEB" };
+    const web_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", "-Wno-newline-eof", c_std, "-DPLATFORM_WEB" };
 
     // Add common sources
     colyseus.addCSourceFiles(.{
@@ -516,11 +544,13 @@ pub fn build(b: *std.Build) void {
         .flags = if (is_emscripten) &web_flags else &base_flags,
     });
 
-    // Always link mbedTLS (TLS is runtime-enabled via settings)
-    colyseus.addIncludePath(b.path("third_party/mbedtls/include"));
-    colyseus.linkLibrary(mbedtls);
-    colyseus.linkLibrary(mbedx509);
-    colyseus.linkLibrary(mbedcrypto);
+    // Link mbedTLS (native only - browser handles TLS)
+    if (!is_emscripten) {
+        colyseus.addIncludePath(b.path("third_party/mbedtls/include"));
+        colyseus.linkLibrary(mbedtls);
+        colyseus.linkLibrary(mbedx509);
+        colyseus.linkLibrary(mbedcrypto);
+    }
 
     // Add platform-specific network sources
     if (is_emscripten) {
@@ -565,6 +595,13 @@ pub fn build(b: *std.Build) void {
 
     // Install the library
     b.installArtifact(colyseus);
+
+    // Install sub-libraries for emscripten (needed by external emcc linking)
+    if (is_emscripten) {
+        b.installArtifact(strutil_object);
+        b.installArtifact(msgpack_builder_object);
+        b.installArtifact(msgpack_reader_object);
+    }
 
     // Install colyseus headers
     const headers = .{

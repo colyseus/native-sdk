@@ -6,7 +6,9 @@
 #include <stdio.h>
 
 /* Platform-specific threading */
-#ifdef _WIN32
+#ifdef __EMSCRIPTEN__
+    /* No threading on Emscripten – tasks are processed inline */
+#elif defined(_WIN32)
     #include <windows.h>
     typedef DWORD thread_return_t;
     #define THREAD_CALL WINAPI
@@ -16,7 +18,7 @@
     #define THREAD_CALL
 #endif
 
-/* ── HTTP worker thread (single thread, task queue) ────────────── */
+/* ── HTTP worker (threaded on native, inline on Emscripten) ────── */
 
 /* Task node in the queue */
 typedef struct http_task {
@@ -28,6 +30,38 @@ typedef struct http_task {
     void* userdata;
     struct http_task* next;
 } http_task_t;
+
+#ifdef __EMSCRIPTEN__
+/*
+ * Emscripten: no worker thread needed. emscripten_fetch() is async –
+ * calling colyseus_http_post() fires the request and returns immediately.
+ * The browser event loop delivers the response callback later.
+ */
+typedef struct {
+    bool running;
+} http_worker_t;
+
+static http_worker_t* http_worker_create(void) {
+    http_worker_t* w = malloc(sizeof(http_worker_t));
+    if (!w) return NULL;
+    w->running = true;
+    return w;
+}
+
+static void http_worker_enqueue(http_worker_t* w, http_task_t* task) {
+    (void)w;
+    colyseus_http_post(task->http, task->path, task->body,
+                       task->on_success, task->on_error, task->userdata);
+    free(task->path);
+    free(task->body);
+    free(task);
+}
+
+static void http_worker_free(http_worker_t* w) {
+    free(w);
+}
+
+#else /* Native platforms – threaded worker */
 
 /* Worker state – one per client */
 typedef struct {
@@ -207,6 +241,8 @@ static thread_return_t THREAD_CALL http_worker_func(void* arg) {
     return NULL;
 #endif
 }
+
+#endif /* __EMSCRIPTEN__ */
 
 /* ── Matchmaking ──────────────────────────────────────────────── */
 
