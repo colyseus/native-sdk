@@ -1,6 +1,6 @@
 # Colyseus Native SDK
 
-> This repository is under active development. Not currently at a usable state. Contributions are welcome.
+> This project is under active development! We may introduce breaking changes at any time.
 
 Cross-platform Native SDK for [Colyseus](https://colyseus.io/). Aimed to be used for all native targets, such as Godot, Unreal Engine, Game Maker, and more.
 

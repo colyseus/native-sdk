@@ -12,6 +12,10 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Run test suite first (includes integration tests with example-server)
+  test:
+    uses: ./.github/workflows/tests.yml
+
   check-version:
     runs-on: ubuntu-latest
     outputs:
@@ -36,6 +40,7 @@ jobs:
           echo "Version: ${{ steps.version-check.outputs.version }}"
 
   build-macos:
+    needs: test
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -63,6 +68,7 @@ jobs:
           path: platforms/godot/addons/colyseus/bin/*.dylib
 
   build-ios:
+    needs: test
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -604,6 +610,7 @@ jobs:
           path: platforms/godot/addons/colyseus/bin/*ios*.dylib
 
   build-linux:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -631,6 +638,7 @@ jobs:
           path: platforms/godot/addons/colyseus/bin/*.so
 
   build-windows:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -666,6 +674,7 @@ jobs:
           path: platforms/godot/addons/colyseus/bin/*.dll
 
   build-android:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

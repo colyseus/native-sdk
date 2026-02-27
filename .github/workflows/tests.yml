@@ -1,8 +1,9 @@
-name: Zig CI
+name: Test Suite
 
 on:
   push:
   pull_request:
+  workflow_call:
 
 jobs:
   test:
@@ -19,6 +20,11 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Show Zig version
         run: zig version
@@ -42,5 +48,28 @@ jobs:
           ..\vcpkg\bootstrap-vcpkg.bat
           git submodule update --init --recursive
 
+      - name: Install example-server dependencies
+        working-directory: example-server
+        run: npm install
+
+      - name: Start example server
+        working-directory: example-server
+        shell: bash
+        run: npx tsx src/index.ts &
+
+      - name: Wait for server to be ready
+        shell: bash
+        run: |
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:2567 > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 1
+          done
+          echo "Server failed to start"
+          exit 1
+
       - name: Run tests
-        run: zig build test -Dskip-integration
+        run: zig build test

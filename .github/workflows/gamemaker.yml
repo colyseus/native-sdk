@@ -12,6 +12,10 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Run test suite first (includes integration tests with example-server)
+  test:
+    uses: ./.github/workflows/tests.yml
+
   check-version:
     runs-on: ubuntu-latest
     outputs:
@@ -36,6 +40,7 @@ jobs:
           echo "Version: ${{ steps.version-check.outputs.version }}"
 
   build-macos:
+    needs: test
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -63,6 +68,7 @@ jobs:
           path: platforms/gamemaker/zig-out/lib/macos/
 
   build-linux:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -86,6 +92,7 @@ jobs:
           path: platforms/gamemaker/zig-out/lib/linux/
 
   build-windows:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -109,6 +116,7 @@ jobs:
           path: platforms/gamemaker/zig-out/lib/windows/
 
   build-ios:
+    needs: test
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -132,6 +140,7 @@ jobs:
           path: platforms/gamemaker/zig-out/lib/ios/
 
   build-android:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -175,6 +184,7 @@ jobs:
           path: platforms/gamemaker/zig-out/lib/android/
 
   build-wasm:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
