@@ -63,11 +63,64 @@ pub fn build(b: *std.Build) void {
         break :blk null;
     };
 
+    // Android NDK path option (for cross-compiling to Android)
+    // Zig doesn't ship Android Bionic headers, so the NDK sysroot is needed.
+    const is_android = os_tag == .linux and (target.result.abi == .android or target.result.abi == .androideabi);
+    const android_ndk_path: ?[]const u8 = b.option([]const u8, "android-ndk", "Path to Android NDK (e.g., ANDROID_NDK_HOME)") orelse blk: {
+        if (!is_android) break :blk null;
+        break :blk std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME") catch null;
+    };
+
     // Helper to add Emscripten sysroot include path to a compile step
     const addEmscriptenSysroot = struct {
         fn add(compile_step: *std.Build.Step.Compile, sysroot: ?[]const u8) void {
             if (sysroot) |sr| {
                 compile_step.addSystemIncludePath(.{ .cwd_relative = sr });
+            }
+        }
+    }.add;
+
+    // Helper to add Android NDK sysroot paths to a compile step
+    const addAndroidNdkPaths = struct {
+        fn add(compile_step: *std.Build.Step.Compile, ndk_path: ?[]const u8, tgt: std.Target) void {
+            if (ndk_path) |ndk| {
+                const alloc = compile_step.step.owner.allocator;
+
+                // Detect host platform for NDK prebuilt path
+                const host = comptime if (@import("builtin").os.tag == .macos)
+                    "darwin-x86_64"
+                else
+                    "linux-x86_64";
+
+                const sysroot = std.fmt.allocPrint(alloc, "{s}/toolchains/llvm/prebuilt/{s}/sysroot", .{ ndk, host }) catch return;
+
+                // Add generic sysroot include
+                compile_step.addSystemIncludePath(.{ .cwd_relative = std.fmt.allocPrint(
+                    alloc,
+                    "{s}/usr/include",
+                    .{sysroot},
+                ) catch return });
+
+                // Add arch-specific include path
+                const arch_include = switch (tgt.cpu.arch) {
+                    .aarch64 => "aarch64-linux-android",
+                    .arm => "arm-linux-androideabi",
+                    .x86_64 => "x86_64-linux-android",
+                    .x86 => "i686-linux-android",
+                    else => return,
+                };
+                compile_step.addSystemIncludePath(.{ .cwd_relative = std.fmt.allocPrint(
+                    alloc,
+                    "{s}/usr/include/{s}",
+                    .{ sysroot, arch_include },
+                ) catch return });
+
+                // Add library path
+                compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
+                    alloc,
+                    "{s}/usr/lib/{s}/35",
+                    .{ sysroot, arch_include },
+                ) catch return });
             }
         }
     }.add;
@@ -141,6 +194,7 @@ pub fn build(b: *std.Build) void {
 
         wslay.?.linkLibC();
         addAppleSdkPaths(wslay.?, apple_sdk_path);
+        if (is_android) addAndroidNdkPaths(wslay.?, android_ndk_path, target.result);
         wslay.?.addIncludePath(b.path("third_party/wslay/lib/includes"));
         wslay.?.addIncludePath(b.path("third_party/wslay/lib"));
         wslay.?.addConfigHeader(wslay_config_h);
@@ -313,6 +367,7 @@ pub fn build(b: *std.Build) void {
     });
     mbedcrypto.linkLibC();
     addAppleSdkPaths(mbedcrypto, apple_sdk_path);
+    if (is_android) addAndroidNdkPaths(mbedcrypto, android_ndk_path, target.result);
     mbedcrypto.addIncludePath(b.path("third_party/mbedtls/include"));
     mbedcrypto.addIncludePath(b.path("third_party/mbedtls/library"));
     mbedcrypto.addCSourceFiles(.{
@@ -412,6 +467,7 @@ pub fn build(b: *std.Build) void {
     });
     mbedx509.linkLibC();
     addAppleSdkPaths(mbedx509, apple_sdk_path);
+    if (is_android) addAndroidNdkPaths(mbedx509, android_ndk_path, target.result);
     mbedx509.addIncludePath(b.path("third_party/mbedtls/include"));
     mbedx509.addIncludePath(b.path("third_party/mbedtls/library"));
     mbedx509.addCSourceFiles(.{
@@ -436,6 +492,7 @@ pub fn build(b: *std.Build) void {
     });
     mbedtls.linkLibC();
     addAppleSdkPaths(mbedtls, apple_sdk_path);
+    if (is_android) addAndroidNdkPaths(mbedtls, android_ndk_path, target.result);
     mbedtls.addIncludePath(b.path("third_party/mbedtls/include"));
     mbedtls.addIncludePath(b.path("third_party/mbedtls/library"));
     mbedtls.addCSourceFiles(.{
@@ -483,6 +540,7 @@ pub fn build(b: *std.Build) void {
 
     colyseus.linkLibC();
     if (!is_emscripten) addAppleSdkPaths(colyseus, apple_sdk_path);
+    if (is_android) addAndroidNdkPaths(colyseus, android_ndk_path, target.result);
     if (is_emscripten) addEmscriptenSysroot(colyseus, emscripten_sysroot);
 
     // Add include paths
