@@ -197,7 +197,7 @@ pub fn build(b: *std.Build) void {
             .linkage = .static,
         });
 
-        wslay.?.linkLibC();
+        if (!is_android) wslay.?.linkLibC();
         addAppleSdkPaths(wslay.?, apple_sdk_path);
         if (is_android) addAndroidNdkPaths(wslay.?, android_ndk_path, target.result);
         wslay.?.addIncludePath(b.path("third_party/wslay/lib/includes"));
@@ -262,8 +262,9 @@ pub fn build(b: *std.Build) void {
             .root_module = http_zig_module,
             .linkage = .static,
         });
-        http_object.?.linkLibC();
+        if (!is_android) http_object.?.linkLibC();
         addAppleSdkPaths(http_object.?, apple_sdk_path);
+        if (is_android) addAndroidNdkPaths(http_object.?, android_ndk_path, target.result);
     }
 
     // System certificates Zig module (only for native - uses std.crypto.Certificate.Bundle)
@@ -280,8 +281,9 @@ pub fn build(b: *std.Build) void {
             .root_module = system_certs_module,
             .linkage = .static,
         });
-        system_certs_object.?.linkLibC();
+        if (!is_android) system_certs_object.?.linkLibC();
         addAppleSdkPaths(system_certs_object.?, apple_sdk_path);
+        if (is_android) addAndroidNdkPaths(system_certs_object.?, android_ndk_path, target.result);
     }
 
     // String util Zig module (needed for both native and emscripten)
@@ -301,8 +303,9 @@ pub fn build(b: *std.Build) void {
         .root_module = strutil_zig_module,
         .linkage = .static,
     });
-    strutil_object.linkLibC();
+    if (!is_android) strutil_object.linkLibC();
     if (!is_emscripten) addAppleSdkPaths(strutil_object, apple_sdk_path);
+    if (is_android) addAndroidNdkPaths(strutil_object, android_ndk_path, target.result);
 
     // ========================================================================
     // Build msgpack builder module (wraps zig-msgpack for C interop)
@@ -338,8 +341,9 @@ pub fn build(b: *std.Build) void {
         .root_module = msgpack_builder_module,
         .linkage = .static,
     });
-    msgpack_builder_object.linkLibC();
+    if (!is_android) msgpack_builder_object.linkLibC();
     if (!is_emscripten) addAppleSdkPaths(msgpack_builder_object, apple_sdk_path);
+    if (is_android) addAndroidNdkPaths(msgpack_builder_object, android_ndk_path, target.result);
 
     // Msgpack reader module (for decoding msgpack in on_message callbacks)
     const msgpack_reader_module = b.createModule(.{
@@ -358,8 +362,9 @@ pub fn build(b: *std.Build) void {
         .root_module = msgpack_reader_module,
         .linkage = .static,
     });
-    msgpack_reader_object.linkLibC();
+    if (!is_android) msgpack_reader_object.linkLibC();
     if (!is_emscripten) addAppleSdkPaths(msgpack_reader_object, apple_sdk_path);
+    if (is_android) addAndroidNdkPaths(msgpack_reader_object, android_ndk_path, target.result);
 
     // ========================================================================
     // Build mbedTLS from source (v3.6.4 LTS)
@@ -370,7 +375,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
         .linkage = .static,
     });
-    mbedcrypto.linkLibC();
+    if (!is_android) mbedcrypto.linkLibC();
     addAppleSdkPaths(mbedcrypto, apple_sdk_path);
     if (is_android) addAndroidNdkPaths(mbedcrypto, android_ndk_path, target.result);
     mbedcrypto.addIncludePath(b.path("third_party/mbedtls/include"));
@@ -470,7 +475,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
         .linkage = .static,
     });
-    mbedx509.linkLibC();
+    if (!is_android) mbedx509.linkLibC();
     addAppleSdkPaths(mbedx509, apple_sdk_path);
     if (is_android) addAndroidNdkPaths(mbedx509, android_ndk_path, target.result);
     mbedx509.addIncludePath(b.path("third_party/mbedtls/include"));
@@ -495,7 +500,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
         .linkage = .static,
     });
-    mbedtls.linkLibC();
+    if (!is_android) mbedtls.linkLibC();
     addAppleSdkPaths(mbedtls, apple_sdk_path);
     if (is_android) addAndroidNdkPaths(mbedtls, android_ndk_path, target.result);
     mbedtls.addIncludePath(b.path("third_party/mbedtls/include"));
@@ -543,7 +548,7 @@ pub fn build(b: *std.Build) void {
         .version = .{ .major = 0, .minor = 1, .patch = 0 },
     });
 
-    colyseus.linkLibC();
+    if (!is_android) colyseus.linkLibC();
     if (!is_emscripten) addAppleSdkPaths(colyseus, apple_sdk_path);
     if (is_android) addAndroidNdkPaths(colyseus, android_ndk_path, target.result);
     if (is_emscripten) addEmscriptenSysroot(colyseus, emscripten_sysroot);
