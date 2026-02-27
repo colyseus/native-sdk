@@ -141,6 +141,15 @@ fn onRoomSuccess(room: [*c]c.colyseus_room_t, userdata: ?*anyopaque) callconv(.c
 // Helper to reset test state
 // ============================================================================
 
+fn waitForJoin() !void {
+    // Poll for up to 5 seconds (CI can be slow)
+    for (0..100) |_| {
+        if (joined) return;
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+    }
+    return error.TestUnexpectedResult;
+}
+
 fn resetTestState() void {
     test_passed = false;
     test_failed = false;
@@ -187,10 +196,8 @@ test "callbacks: listen to property changes" {
         &room,
     );
 
-    // Wait for connection
-    std.Thread.sleep(100 * std.time.ns_per_ms);
-
-    try testing.expect(joined);
+    // Wait for connection (poll with timeout for CI)
+    try waitForJoin();
     try testing.expect(room != null);
 
     // Get the serializer's decoder
@@ -278,10 +285,8 @@ test "callbacks: onAdd for map collection" {
         &room,
     );
 
-    // Wait for connection
-    std.Thread.sleep(100 * std.time.ns_per_ms);
-
-    try testing.expect(joined);
+    // Wait for connection (poll with timeout for CI)
+    try waitForJoin();
     try testing.expect(room != null);
 
     // Get the decoder
@@ -367,10 +372,8 @@ test "callbacks: onRemove for map collection" {
         &room,
     );
 
-    // Wait for connection
-    std.Thread.sleep(100 * std.time.ns_per_ms);
-
-    try testing.expect(joined);
+    // Wait for connection (poll with timeout for CI)
+    try waitForJoin();
     try testing.expect(room != null);
 
     // Get the decoder
@@ -449,10 +452,8 @@ test "callbacks: nested property listening" {
         &room,
     );
 
-    // Wait for connection
-    std.Thread.sleep(100 * std.time.ns_per_ms);
-
-    try testing.expect(joined);
+    // Wait for connection (poll with timeout for CI)
+    try waitForJoin();
     try testing.expect(room != null);
 
     // Get the decoder
@@ -534,10 +535,8 @@ test "callbacks: remove callback by handle" {
         &room,
     );
 
-    // Wait for connection
-    std.Thread.sleep(100 * std.time.ns_per_ms);
-
-    try testing.expect(joined);
+    // Wait for connection (poll with timeout for CI)
+    try waitForJoin();
     try testing.expect(room != null);
 
     // Get the decoder
