@@ -116,6 +116,32 @@ static GodotCallbackEntry* find_entry_by_handle(ColyseusCallbacksWrapper* wrappe
 // Trampoline functions - Called by native SDK, invoke GDScript Callables
 // ============================================================================
 
+// Helper to defer callable execution to main thread
+static void call_deferred_callable(const Variant* callable, GDExtensionConstVariantPtr* args, int arg_count) {
+    StringName call_deferred_method;
+    constructors.string_name_new_with_latin1_chars(&call_deferred_method, "call_deferred", false);
+    
+    String call_str;
+    constructors.string_new_with_utf8_chars(&call_str, "call");
+    Variant call_variant;
+    constructors.variant_from_string_constructor(&call_variant, &call_str);
+    
+    GDExtensionConstVariantPtr call_args[16];
+    call_args[0] = &call_variant;
+    for (int i = 0; i < arg_count && i < 15; i++) {
+        call_args[i + 1] = args[i];
+    }
+    
+    Variant return_value;
+    GDExtensionCallError error;
+    api.variant_call((GDExtensionVariantPtr)callable, &call_deferred_method, call_args, arg_count + 1, &return_value, &error);
+    
+    destructors.string_name_destructor(&call_deferred_method);
+    destructors.string_destructor(&call_str);
+    destructors.variant_destroy(&call_variant);
+    destructors.variant_destroy(&return_value);
+}
+
 // Helper to convert a native value to Variant based on field type
 static void native_value_to_variant(void* value, int field_type, const colyseus_schema_vtable_t* item_vtable, Variant* out_variant) {
     if (!value) {
@@ -228,19 +254,9 @@ static void property_change_trampoline(void* value, void* previous_value, void* 
     native_value_to_variant(value, entry->field_type, entry->item_vtable, &current_variant);
     native_value_to_variant(previous_value, entry->field_type, entry->item_vtable, &previous_variant);
     
-    // Call the "call" method on the Callable variant
-    StringName call_method;
-    constructors.string_name_new_with_latin1_chars(&call_method, "call", false);
-    
+    // Defer callable execution to main thread
     GDExtensionConstVariantPtr arg_ptrs[2] = { &current_variant, &previous_variant };
-    Variant return_value;
-    GDExtensionCallError error;
-    
-    api.variant_call((GDExtensionVariantPtr)&entry->callable, &call_method, arg_ptrs, 2, &return_value, &error);
-    
-    destructors.string_name_destructor(&call_method);
-    
-    destructors.variant_destroy(&return_value);
+    call_deferred_callable(&entry->callable, arg_ptrs, 2);
     destructors.variant_destroy(&current_variant);
     destructors.variant_destroy(&previous_variant);
 }
@@ -303,19 +319,10 @@ static void item_add_trampoline(void* value, void* key, void* userdata) {
         memset(&key_variant, 0, sizeof(Variant));
     }
     
-    // Call the "call" method on the Callable variant
-    StringName call_method;
-    constructors.string_name_new_with_latin1_chars(&call_method, "call", false);
-    
+    // Defer callable execution to main thread
     GDExtensionConstVariantPtr arg_ptrs[2] = { &value_variant, &key_variant };
-    Variant return_value;
-    GDExtensionCallError error;
+    call_deferred_callable(&entry->callable, arg_ptrs, 2);
     
-    api.variant_call((GDExtensionVariantPtr)&entry->callable, &call_method, arg_ptrs, 2, &return_value, &error);
-    
-    destructors.string_name_destructor(&call_method);
-    
-    destructors.variant_destroy(&return_value);
     destructors.variant_destroy(&value_variant);
     destructors.variant_destroy(&key_variant);
 }
@@ -377,19 +384,10 @@ static void item_remove_trampoline(void* value, void* key, void* userdata) {
         memset(&key_variant, 0, sizeof(Variant));
     }
     
-    // Call the "call" method on the Callable variant
-    StringName call_method;
-    constructors.string_name_new_with_latin1_chars(&call_method, "call", false);
-    
+    // Defer callable execution to main thread
     GDExtensionConstVariantPtr arg_ptrs[2] = { &value_variant, &key_variant };
-    Variant return_value;
-    GDExtensionCallError error;
+    call_deferred_callable(&entry->callable, arg_ptrs, 2);
     
-    api.variant_call((GDExtensionVariantPtr)&entry->callable, &call_method, arg_ptrs, 2, &return_value, &error);
-    
-    destructors.string_name_destructor(&call_method);
-    
-    destructors.variant_destroy(&return_value);
     destructors.variant_destroy(&value_variant);
     destructors.variant_destroy(&key_variant);
 }
