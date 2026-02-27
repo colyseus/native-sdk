@@ -30,36 +30,20 @@ pub fn build(b: *std.Build) void {
         break :blk null;
     };
 
-    // Android NDK path (for cross-compiling to Android)
-    const is_android = target.result.os.tag == .linux and
-        (target.result.abi == .android or target.result.abi == .androideabi);
-    const android_ndk_path: ?[]const u8 = b.option([]const u8, "android-ndk", "Path to Android NDK") orelse blk: {
-        if (!is_android) break :blk null;
-        break :blk std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME") catch null;
-    };
-
     // Get native-sdk dependency (provides pre-built colyseus library)
-    // Pass platform SDK paths through so the dependency can also find headers/frameworks
-    const native_sdk_dep = blk: {
-        if (apple_sdk_path) |sdk| {
-            break :blk b.dependency("native_sdk", .{
-                .target = target,
-                .optimize = optimize,
-                .@"apple-sdk" = @as([]const u8, sdk),
-            });
-        }
-        if (android_ndk_path) |ndk| {
-            break :blk b.dependency("native_sdk", .{
-                .target = target,
-                .optimize = optimize,
-                .@"android-ndk" = @as([]const u8, ndk),
-            });
-        }
-        break :blk b.dependency("native_sdk", .{
+    // Pass apple-sdk path through so the dependency can also find frameworks.
+    // Android NDK is detected via ANDROID_NDK_HOME env var by the root build.zig.
+    const native_sdk_dep = if (apple_sdk_path) |sdk|
+        b.dependency("native_sdk", .{
+            .target = target,
+            .optimize = optimize,
+            .@"apple-sdk" = @as([]const u8, sdk),
+        })
+    else
+        b.dependency("native_sdk", .{
             .target = target,
             .optimize = optimize,
         });
-    };
 
     if (build_all) {
         // Build for all Game Maker platforms
