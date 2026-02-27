@@ -168,8 +168,8 @@ const char* colyseus_room_get_name(const colyseus_room_t* room) {
     return room ? room->name : NULL;
 }
 
-bool colyseus_room_has_joined(const colyseus_room_t* room) {
-    return room ? room->has_joined : false;
+bool colyseus_room_is_connected(const colyseus_room_t* room) {
+    return room ? room->has_joined && colyseus_transport_is_open(room->transport) : false;
 }
 
 const char* colyseus_room_get_reconnection_token(const colyseus_room_t* room) {

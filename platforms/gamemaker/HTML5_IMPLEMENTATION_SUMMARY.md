@@ -42,7 +42,7 @@ A complete JavaScript implementation that mirrors the C API using the official c
 - Room operations: `colyseus_gm_client_join_or_create`, `colyseus_gm_client_join`, `colyseus_gm_client_join_by_id`, `colyseus_gm_client_reconnect`
 - Room actions: `colyseus_gm_room_leave`, `colyseus_gm_room_free`
 - Messaging: `colyseus_gm_room_send`, `colyseus_gm_room_send_bytes`, `colyseus_gm_room_send_int`
-- Room info: `colyseus_gm_room_get_id`, `colyseus_gm_room_get_session_id`, `colyseus_gm_room_get_name`, `colyseus_gm_room_has_joined`
+- Room info: `colyseus_gm_room_get_id`, `colyseus_gm_room_get_session_id`, `colyseus_gm_room_get_name`, `colyseus_gm_room_is_connected`
 - Event polling: `colyseus_gm_poll_event`, `colyseus_gm_event_get_room`, `colyseus_gm_event_get_code`, `colyseus_gm_event_get_message`, `colyseus_gm_event_get_data`, `colyseus_gm_event_get_data_length`
 
 ### 2. HTML5 Setup Guide

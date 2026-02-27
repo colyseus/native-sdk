@@ -131,7 +131,7 @@ See [example.gd](example.gd)
 - `get_id() -> String` - Get the room ID
 - `get_session_id() -> String` - Get the session ID
 - `get_name() -> String` - Get the room name
-- `has_joined() -> bool` - Check if successfully joined
+- `is_connected() -> bool` - Check if connected (joined and WebSocket is open)
 
 #### Signals
 - `joined()` - Emitted when successfully joined the room

@@ -293,7 +293,7 @@ All functions from the native implementation are available in HTML5:
 - `colyseus_room_get_id()`
 - `colyseus_room_get_session_id()`
 - `colyseus_room_get_name()`
-- `colyseus_room_has_joined()`
+- `colyseus_room_is_connected()`
 
 ✅ Event Polling
 - `colyseus_poll_event()`

@@ -225,7 +225,7 @@ draw_text(10, 10, "Connected: " + string(global.connected));
 | `colyseus_room_get_id` | ✅ | ✅ | |
 | `colyseus_room_get_session_id` | ✅ | ✅ | |
 | `colyseus_room_get_name` | ✅ | ✅ | |
-| `colyseus_room_has_joined` | ✅ | ✅ | |
+| `colyseus_room_is_connected` | ✅ | ✅ | |
 | `colyseus_poll_event` | ✅ | ✅ | |
 | `colyseus_event_get_room` | ✅ | ✅ | |
 | `colyseus_event_get_code` | ✅ | ✅ | |

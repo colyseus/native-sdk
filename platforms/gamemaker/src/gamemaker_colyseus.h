@@ -153,11 +153,11 @@ GM_EXPORT const char* colyseus_gm_room_get_session_id(double room_handle);
 GM_EXPORT const char* colyseus_gm_room_get_name(double room_handle);
 
 /**
- * Check if room has joined
+ * Check if room is connected (joined and WebSocket is open)
  * @param room_handle Room handle
- * @return 1.0 if joined, 0.0 otherwise
+ * @return 1.0 if connected, 0.0 otherwise
  */
-GM_EXPORT double colyseus_gm_room_has_joined(double room_handle);
+GM_EXPORT double colyseus_gm_room_is_connected(double room_handle);
 
 // =============================================================================
 // Event Polling Functions

@@ -142,7 +142,7 @@ const char* colyseus_room_get_session_id(const colyseus_room_t* room);
 void colyseus_room_set_session_id(colyseus_room_t* room, const char* session_id);
 
 const char* colyseus_room_get_name(const colyseus_room_t* room);
-bool colyseus_room_has_joined(const colyseus_room_t* room);
+bool colyseus_room_is_connected(const colyseus_room_t* room);
 
 const char* colyseus_room_get_reconnection_token(const colyseus_room_t* room);
 

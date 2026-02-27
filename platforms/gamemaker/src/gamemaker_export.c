@@ -748,10 +748,10 @@ GM_EXPORT const char* colyseus_gm_room_get_name(double room_handle) {
     return "";
 }
 
-GM_EXPORT double colyseus_gm_room_has_joined(double room_handle) {
+GM_EXPORT double colyseus_gm_room_is_connected(double room_handle) {
     colyseus_room_t* room = gm_room_ref_get((int)room_handle);
     if (room) {
-        return colyseus_room_has_joined(room) ? 1.0 : 0.0;
+        return colyseus_room_is_connected(room) ? 1.0 : 0.0;
     }
     return 0.0;
 }

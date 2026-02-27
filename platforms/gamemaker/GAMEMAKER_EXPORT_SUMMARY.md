@@ -58,7 +58,7 @@ typedef enum {
 - `colyseus_gm_room_get_id(room)` - Gets room ID
 - `colyseus_gm_room_get_session_id(room)` - Gets session ID
 - `colyseus_gm_room_get_name(room)` - Gets room name
-- `colyseus_gm_room_has_joined(room)` - Checks if joined
+- `colyseus_gm_room_is_connected(room)` - Checks if connected
 
 #### Event Polling Functions
 - `colyseus_gm_poll_event()` - Polls for next event

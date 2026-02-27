@@ -112,5 +112,5 @@ func _on_room_left(code: int, reason: String):
 	print("Left room [", code, "]: ", reason)
 
 func _exit_tree():
-	if room and room.has_joined():
+	if room and room.is_connected():
 		room.leave()

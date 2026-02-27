@@ -85,7 +85,7 @@ void colyseus_room_send_int(double room_handle, double type, const char* data);
 const char* colyseus_room_get_id(double room_handle);
 const char* colyseus_room_get_session_id(double room_handle);
 const char* colyseus_room_get_name(double room_handle);
-double colyseus_room_has_joined(double room_handle);
+double colyseus_room_is_connected(double room_handle);
 ```
 
 ### Event Polling Functions

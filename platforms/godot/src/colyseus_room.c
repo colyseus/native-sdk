@@ -301,15 +301,15 @@ void gdext_colyseus_room_get_name(void* p_method_userdata, GDExtensionClassInsta
     }
 }
 
-void gdext_colyseus_room_has_joined(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+void gdext_colyseus_room_is_connected(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata;
     (void)p_args; // no arguments
-    
+
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
     if (wrapper && wrapper->native_room && r_ret) {
-        bool has_joined = colyseus_room_has_joined(wrapper->native_room);
+        bool is_connected = colyseus_room_is_connected(wrapper->native_room);
         // For bool, we cast the result directly to the pointer location
-        *(GDExtensionBool*)r_ret = has_joined ? 1 : 0;
+        *(GDExtensionBool*)r_ret = is_connected ? 1 : 0;
     }
 }
 
@@ -319,7 +319,7 @@ void gdext_colyseus_room_has_joined(void* p_method_userdata, GDExtensionClassIns
  * If a GDScript schema class was set via set_state_type(), returns the typed
  * GDScript instance. Otherwise, returns a Dictionary representation.
  */
-// get_state - uses ptrcall signature like other working methods (has_joined, get_id, etc.)
+// get_state - uses ptrcall signature like other working methods (is_connected, get_id, etc.)
 void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata;
     (void)p_args;

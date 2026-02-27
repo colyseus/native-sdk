@@ -124,8 +124,8 @@
         return _callS('colyseus_gm_room_get_name', ['number'], [h]);
     };
 
-    window.colyseus_gm_room_has_joined = function(h) {
-        return _callN('colyseus_gm_room_has_joined', ['number'], [h]);
+    window.colyseus_gm_room_is_connected = function(h) {
+        return _callN('colyseus_gm_room_is_connected', ['number'], [h]);
     };
 
     // =========================================================================

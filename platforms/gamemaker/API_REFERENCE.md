@@ -320,18 +320,18 @@ room_name = external_call(global.colyseus_room_get_name, room);
 
 ---
 
-### colyseus_room_has_joined
+### colyseus_room_is_connected
 
-Checks if the room has been successfully joined.
+Checks if the room is connected (joined and WebSocket is open).
 
 **Signature:**
 ```c
-double colyseus_room_has_joined(double room_handle);
+double colyseus_room_is_connected(double room_handle);
 ```
 
 **GML Usage:**
 ```gml
-has_joined = external_call(global.colyseus_room_has_joined, room);
+is_connected = external_call(global.colyseus_room_is_connected, room);
 ```
 
 **Parameters:**
