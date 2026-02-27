@@ -287,6 +287,9 @@ fn buildMbedcrypto(
     optimize: std.builtin.OptimizeMode,
     sdk_path: ?[]const u8,
 ) *std.Build.Step.Compile {
+    const is_aarch64_sim = target.result.cpu.arch == .aarch64 and
+        target.result.abi == .simulator;
+
     const lib = b.addLibrary(.{
         .name = "mbedcrypto",
         .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
@@ -295,10 +298,21 @@ fn buildMbedcrypto(
     appleLibc(lib, sdk_path);
     lib.addIncludePath(b.path("../../third_party/mbedtls/include"));
     lib.addIncludePath(b.path("../../third_party/mbedtls/library"));
-    lib.addCSourceFiles(.{
-        .files = &MBEDCRYPTO_SOURCES,
-        .flags = &.{ "-Wall", "-std=c11" },
-    });
+
+    if (is_aarch64_sim) {
+        // aarch64-ios-simulator: Zig 0.15's baseline mcpu conflicts with
+        // mbedTLS hardware AES intrinsics. Disable AESCE entirely — the
+        // software AES fallback is sufficient for simulator builds.
+        lib.addCSourceFiles(.{
+            .files = &MBEDCRYPTO_SOURCES_NO_AESCE,
+            .flags = &.{ "-Wall", "-std=c11", "-U__ARM_NEON", "-UMBEDTLS_AESCE_C" },
+        });
+    } else {
+        lib.addCSourceFiles(.{
+            .files = &MBEDCRYPTO_SOURCES,
+            .flags = &.{ "-Wall", "-std=c11" },
+        });
+    }
     return lib;
 }
 
@@ -309,6 +323,9 @@ fn buildMbedx509(
     sdk_path: ?[]const u8,
     mbedcrypto: *std.Build.Step.Compile,
 ) *std.Build.Step.Compile {
+    const is_aarch64_sim = target.result.cpu.arch == .aarch64 and
+        target.result.abi == .simulator;
+
     const lib = b.addLibrary(.{
         .name = "mbedx509",
         .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
@@ -317,6 +334,10 @@ fn buildMbedx509(
     appleLibc(lib, sdk_path);
     lib.addIncludePath(b.path("../../third_party/mbedtls/include"));
     lib.addIncludePath(b.path("../../third_party/mbedtls/library"));
+
+    const sim_flags = &[_][]const u8{ "-Wall", "-std=c11", "-U__ARM_NEON", "-UMBEDTLS_AESCE_C" };
+    const base_flags = &[_][]const u8{ "-Wall", "-std=c11" };
+
     lib.addCSourceFiles(.{
         .files = &.{
             "../../third_party/mbedtls/library/x509.c",
@@ -328,7 +349,7 @@ fn buildMbedx509(
             "../../third_party/mbedtls/library/x509write_crt.c",
             "../../third_party/mbedtls/library/x509write_csr.c",
         },
-        .flags = &.{ "-Wall", "-std=c11" },
+        .flags = if (is_aarch64_sim) sim_flags else base_flags,
     });
     lib.linkLibrary(mbedcrypto);
     return lib;
@@ -342,6 +363,9 @@ fn buildMbedtls(
     mbedx509: *std.Build.Step.Compile,
     mbedcrypto: *std.Build.Step.Compile,
 ) *std.Build.Step.Compile {
+    const is_aarch64_sim = target.result.cpu.arch == .aarch64 and
+        target.result.abi == .simulator;
+
     const lib = b.addLibrary(.{
         .name = "mbedtls",
         .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
@@ -350,6 +374,10 @@ fn buildMbedtls(
     appleLibc(lib, sdk_path);
     lib.addIncludePath(b.path("../../third_party/mbedtls/include"));
     lib.addIncludePath(b.path("../../third_party/mbedtls/library"));
+
+    const sim_flags = &[_][]const u8{ "-Wall", "-std=c11", "-U__ARM_NEON", "-UMBEDTLS_AESCE_C" };
+    const base_flags = &[_][]const u8{ "-Wall", "-std=c11" };
+
     lib.addCSourceFiles(.{
         .files = &.{
             "../../third_party/mbedtls/library/debug.c",
@@ -369,12 +397,100 @@ fn buildMbedtls(
             "../../third_party/mbedtls/library/ssl_tls13_keys.c",
             "../../third_party/mbedtls/library/ssl_tls13_server.c",
         },
-        .flags = &.{ "-Wall", "-std=c11" },
+        .flags = if (is_aarch64_sim) sim_flags else base_flags,
     });
     lib.linkLibrary(mbedx509);
     lib.linkLibrary(mbedcrypto);
     return lib;
 }
+
+const MBEDCRYPTO_SOURCES_NO_AESCE = [_][]const u8{
+    "../../third_party/mbedtls/library/aes.c",
+    // aesce.c excluded — requires crypto CPU features incompatible with
+    // Zig 0.15 aarch64-ios-simulator baseline target
+    "../../third_party/mbedtls/library/aesni.c",
+    "../../third_party/mbedtls/library/aria.c",
+    "../../third_party/mbedtls/library/asn1parse.c",
+    "../../third_party/mbedtls/library/asn1write.c",
+    "../../third_party/mbedtls/library/base64.c",
+    "../../third_party/mbedtls/library/bignum.c",
+    "../../third_party/mbedtls/library/bignum_core.c",
+    "../../third_party/mbedtls/library/bignum_mod.c",
+    "../../third_party/mbedtls/library/bignum_mod_raw.c",
+    "../../third_party/mbedtls/library/block_cipher.c",
+    "../../third_party/mbedtls/library/camellia.c",
+    "../../third_party/mbedtls/library/ccm.c",
+    "../../third_party/mbedtls/library/chacha20.c",
+    "../../third_party/mbedtls/library/chachapoly.c",
+    "../../third_party/mbedtls/library/cipher.c",
+    "../../third_party/mbedtls/library/cipher_wrap.c",
+    "../../third_party/mbedtls/library/cmac.c",
+    "../../third_party/mbedtls/library/constant_time.c",
+    "../../third_party/mbedtls/library/ctr_drbg.c",
+    "../../third_party/mbedtls/library/des.c",
+    "../../third_party/mbedtls/library/dhm.c",
+    "../../third_party/mbedtls/library/ecdh.c",
+    "../../third_party/mbedtls/library/ecdsa.c",
+    "../../third_party/mbedtls/library/ecjpake.c",
+    "../../third_party/mbedtls/library/ecp.c",
+    "../../third_party/mbedtls/library/ecp_curves.c",
+    "../../third_party/mbedtls/library/ecp_curves_new.c",
+    "../../third_party/mbedtls/library/entropy.c",
+    "../../third_party/mbedtls/library/entropy_poll.c",
+    "../../third_party/mbedtls/library/error.c",
+    "../../third_party/mbedtls/library/gcm.c",
+    "../../third_party/mbedtls/library/hkdf.c",
+    "../../third_party/mbedtls/library/hmac_drbg.c",
+    "../../third_party/mbedtls/library/lmots.c",
+    "../../third_party/mbedtls/library/lms.c",
+    "../../third_party/mbedtls/library/md.c",
+    "../../third_party/mbedtls/library/md5.c",
+    "../../third_party/mbedtls/library/memory_buffer_alloc.c",
+    "../../third_party/mbedtls/library/mps_reader.c",
+    "../../third_party/mbedtls/library/mps_trace.c",
+    "../../third_party/mbedtls/library/nist_kw.c",
+    "../../third_party/mbedtls/library/oid.c",
+    "../../third_party/mbedtls/library/padlock.c",
+    "../../third_party/mbedtls/library/pem.c",
+    "../../third_party/mbedtls/library/pk.c",
+    "../../third_party/mbedtls/library/pk_ecc.c",
+    "../../third_party/mbedtls/library/pk_wrap.c",
+    "../../third_party/mbedtls/library/pkcs12.c",
+    "../../third_party/mbedtls/library/pkcs5.c",
+    "../../third_party/mbedtls/library/pkcs7.c",
+    "../../third_party/mbedtls/library/pkparse.c",
+    "../../third_party/mbedtls/library/pkwrite.c",
+    "../../third_party/mbedtls/library/platform.c",
+    "../../third_party/mbedtls/library/platform_util.c",
+    "../../third_party/mbedtls/library/poly1305.c",
+    "../../third_party/mbedtls/library/psa_crypto.c",
+    "../../third_party/mbedtls/library/psa_crypto_aead.c",
+    "../../third_party/mbedtls/library/psa_crypto_cipher.c",
+    "../../third_party/mbedtls/library/psa_crypto_client.c",
+    "../../third_party/mbedtls/library/psa_crypto_driver_wrappers_no_static.c",
+    "../../third_party/mbedtls/library/psa_crypto_ecp.c",
+    "../../third_party/mbedtls/library/psa_crypto_ffdh.c",
+    "../../third_party/mbedtls/library/psa_crypto_hash.c",
+    "../../third_party/mbedtls/library/psa_crypto_mac.c",
+    "../../third_party/mbedtls/library/psa_crypto_pake.c",
+    "../../third_party/mbedtls/library/psa_crypto_rsa.c",
+    "../../third_party/mbedtls/library/psa_crypto_se.c",
+    "../../third_party/mbedtls/library/psa_crypto_slot_management.c",
+    "../../third_party/mbedtls/library/psa_crypto_storage.c",
+    "../../third_party/mbedtls/library/psa_its_file.c",
+    "../../third_party/mbedtls/library/psa_util.c",
+    "../../third_party/mbedtls/library/ripemd160.c",
+    "../../third_party/mbedtls/library/rsa.c",
+    "../../third_party/mbedtls/library/rsa_alt_helpers.c",
+    "../../third_party/mbedtls/library/sha1.c",
+    "../../third_party/mbedtls/library/sha256.c",
+    "../../third_party/mbedtls/library/sha3.c",
+    "../../third_party/mbedtls/library/sha512.c",
+    "../../third_party/mbedtls/library/threading.c",
+    "../../third_party/mbedtls/library/timing.c",
+    "../../third_party/mbedtls/library/version.c",
+    "../../third_party/mbedtls/library/version_features.c",
+};
 
 const MBEDCRYPTO_SOURCES = [_][]const u8{
     "../../third_party/mbedtls/library/aes.c",
