@@ -1,0 +1,52 @@
+name: Swift Platform
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+jobs:
+  build:
+    name: Build xcframework
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Show tool versions
+        run: |
+          zig version
+          swift --version
+          xcodebuild -version
+
+      - name: Build xcframework (all slices)
+        working-directory: platforms/swift
+        run: bash build.sh release
+
+      - name: Verify xcframework structure
+        run: |
+          echo "=== xcframework contents ==="
+          find platforms/swift/build/Colyseus.xcframework -type f | sort
+          echo ""
+          echo "=== Checksum ==="
+          cat platforms/swift/build/Colyseus.xcframework.zip.sha256
+
+      - name: Build example (macOS)
+        working-directory: platforms/swift/example
+        run: |
+          swift build -c release 2>&1 | tail -5
+
+      - name: Upload xcframework artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Colyseus.xcframework
+          path: platforms/swift/build/Colyseus.xcframework.zip
+          retention-days: 30
