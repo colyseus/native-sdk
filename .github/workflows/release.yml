@@ -157,6 +157,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -168,6 +170,58 @@ jobs:
         run: |
           VERSION=$(grep -oP '\.version\s*=\s*"\K[^"]+' build.zig.zon)
           echo "version=v${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Package source code
+        run: |
+          tar -czvf colyseus-source-${{ steps.version.outputs.version }}.tar.gz \
+            --exclude=platforms \
+            --exclude=example-server \
+            --exclude=.git \
+            .
+
+      - name: Package all-targets bundle
+        run: |
+          mkdir -p all-targets/lib
+
+          # Extract each artifact and rename the library to include the target
+          declare -A TARGET_MAP=(
+            ["colyseus-macos-arm64"]="aarch64-macos"
+            ["colyseus-macos-x86_64"]="x86_64-macos"
+            ["colyseus-linux-x86_64"]="x86_64-linux-gnu"
+            ["colyseus-linux-arm64"]="aarch64-linux-gnu"
+            ["colyseus-ios-arm64"]="aarch64-ios"
+            ["colyseus-wasm32"]="wasm32"
+          )
+
+          HEADERS_COPIED=false
+          for artifact_name in "${!TARGET_MAP[@]}"; do
+            target="${TARGET_MAP[$artifact_name]}"
+            archive="artifacts/${artifact_name}/${artifact_name}.tar.gz"
+            if [ -f "$archive" ]; then
+              tmpdir=$(mktemp -d)
+              tar -xzf "$archive" -C "$tmpdir"
+              cp "$tmpdir/lib/libcolyseus.a" "all-targets/lib/libcolyseus.${target}.a"
+              if [ "$HEADERS_COPIED" = false ]; then
+                cp -r "$tmpdir/include" all-targets/
+                HEADERS_COPIED=true
+              fi
+              rm -rf "$tmpdir"
+            fi
+          done
+
+          # Windows (zip, .lib extension)
+          WIN_ARCHIVE="artifacts/colyseus-windows-x86_64/colyseus-windows-x86_64.zip"
+          if [ -f "$WIN_ARCHIVE" ]; then
+            tmpdir=$(mktemp -d)
+            unzip -q "$WIN_ARCHIVE" -d "$tmpdir"
+            cp "$tmpdir/lib/colyseus.lib" "all-targets/lib/colyseus.x86_64-windows.lib"
+            if [ "$HEADERS_COPIED" = false ]; then
+              cp -r "$tmpdir/include" all-targets/
+            fi
+            rm -rf "$tmpdir"
+          fi
+
+          tar -czvf colyseus-all-targets.tar.gz -C all-targets .
 
       - name: List artifacts
         run: find artifacts -type f
@@ -183,6 +237,8 @@ jobs:
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
+            colyseus-source-${{ steps.version.outputs.version }}.tar.gz
+            colyseus-all-targets.tar.gz
           body: |
             ## Pre-built Binaries
             
