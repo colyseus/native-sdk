@@ -1,6 +1,6 @@
 .{
     .name = .colyseus_sdk_gamemaker,
-    .version = "0.1.0",
+    .version = "0.17.0",
     .dependencies = .{
         .native_sdk = .{
             .path = "../..",
