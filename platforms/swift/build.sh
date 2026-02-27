@@ -37,9 +37,8 @@ SLICES=(
   "aarch64-ios                  iphoneos         ios-arm64"
   "aarch64-ios-simulator        iphonesimulator  ios-arm64-simulator"
   "x86_64-ios-simulator         iphonesimulator  ios-x86_64-simulator"
-  # tvOS disabled — Zig 0.15 stdlib has incomplete tvOS aarch64 DWARF support
-  # "aarch64-tvos                 appletvos        tvos-arm64"
-  # "aarch64-tvos-simulator       appletvsimulator tvos-arm64-simulator"
+   "aarch64-tvos                 appletvos        tvos-arm64"
+   "aarch64-tvos-simulator       appletvsimulator tvos-arm64-simulator"
 )
 
 rm -rf "$XCF_DIR" "$ZIG_OUT"
@@ -138,11 +137,11 @@ build_variant "ios-simulator" \
   "$ZIG_OUT/ios-arm64-simulator/lib/libcolyseus.a" \
   "$ZIG_OUT/ios-x86_64-simulator/lib/libcolyseus.a"
 
-#build_variant "tvos" \
-#  "$ZIG_OUT/tvos-arm64/lib/libcolyseus.a"
-#
-#build_variant "tvos-simulator" \
-#  "$ZIG_OUT/tvos-arm64-simulator/lib/libcolyseus.a"
+build_variant "tvos" \
+  "$ZIG_OUT/tvos-arm64/lib/libcolyseus.a"
+
+build_variant "tvos-simulator" \
+  "$ZIG_OUT/tvos-arm64-simulator/lib/libcolyseus.a"
 
 xcodebuild -create-xcframework "${XCFRAMEWORK_ARGS[@]}" -output "$XCF_DIR"
 

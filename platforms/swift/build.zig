@@ -111,6 +111,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("../../src/msgpack/msgpack_builder.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = if (is_tvos) true else null,
+        .unwind_tables = if (is_tvos) .none else null,
     });
     msgpack_builder_mod.addImport("msgpack", msgpack_module);
     const msgpack_builder = b.addLibrary(.{
@@ -124,6 +126,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("../../src/msgpack/msgpack_reader.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = if (is_tvos) true else null,
+        .unwind_tables = if (is_tvos) .none else null,
     });
     msgpack_reader_mod.addImport("msgpack", msgpack_module);
     const msgpack_reader = b.addLibrary(.{
@@ -137,6 +141,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("../../src/utils/strUtil.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = if (is_tvos) true else null,
+        .unwind_tables = if (is_tvos) .none else null,
     });
     const strutil = b.addLibrary(.{
         .name = "strutil_zig",
@@ -149,6 +155,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("../../src/network/http.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = if (is_tvos) true else null,
+        .unwind_tables = if (is_tvos) .none else null,
     });
     http_mod.addIncludePath(b.path("../../include"));
     http_mod.addIncludePath(b.path("../../third_party/uthash/src"));
@@ -163,6 +171,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("../../src/certs/system_certs.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = if (is_tvos) true else null,
+        .unwind_tables = if (is_tvos) .none else null,
     });
     const syscerts = b.addLibrary(.{
         .name = "system_certs_zig",
