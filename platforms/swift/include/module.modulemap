@@ -1,0 +1,4 @@
+module CColyseus {
+    umbrella header "colyseus_swift.h"
+    export *
+}
