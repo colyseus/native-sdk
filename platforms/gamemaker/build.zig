@@ -34,6 +34,25 @@ pub fn build(b: *std.Build) void {
                 .os_tag = .linux,
                 .abi = .gnu,
             }),
+            b.resolveTargetQuery(.{
+                .cpu_arch = .aarch64,
+                .os_tag = .ios,
+            }),
+            b.resolveTargetQuery(.{
+                .cpu_arch = .aarch64,
+                .os_tag = .linux,
+                .abi = .android,
+            }),
+            b.resolveTargetQuery(.{
+                .cpu_arch = .arm,
+                .os_tag = .linux,
+                .abi = .androideabi,
+            }),
+            b.resolveTargetQuery(.{
+                .cpu_arch = .x86_64,
+                .os_tag = .linux,
+                .abi = .android,
+            }),
         };
 
         for (targets) |build_target| {
@@ -94,9 +113,12 @@ fn buildGameMakerExtension(
 
     // Link platform-specific system libraries
     if (target.result.os.tag == .linux) {
-        gamemaker.linkSystemLibrary("pthread");
-        gamemaker.linkSystemLibrary("m");
-    } else if (target.result.os.tag == .macos) {
+        const is_android = target.result.abi == .android or target.result.abi == .androideabi;
+        if (!is_android) {
+            gamemaker.linkSystemLibrary("pthread");
+            gamemaker.linkSystemLibrary("m");
+        }
+    } else if (target.result.os.tag == .macos or target.result.os.tag == .ios) {
         gamemaker.linkSystemLibrary("pthread");
         gamemaker.linkFramework("CoreFoundation");
         gamemaker.linkFramework("Security");
@@ -127,7 +149,18 @@ fn getPlatformInstallPath(target: std.Target) []const u8 {
     return switch (target.os.tag) {
         .windows => if (target.cpu.arch == .x86_64) "lib/windows/x64" else "lib/windows/x86",
         .macos => if (target.cpu.arch == .aarch64) "lib/macos/arm64" else "lib/macos/x64",
-        .linux => if (target.cpu.arch == .x86_64) "lib/linux/x64" else "lib/linux/x86",
+        .ios => "lib/ios/arm64",
+        .linux => {
+            if (target.abi == .android or target.abi == .androideabi) {
+                return switch (target.cpu.arch) {
+                    .aarch64 => "lib/android/arm64",
+                    .arm => "lib/android/arm32",
+                    .x86_64 => "lib/android/x64",
+                    else => "lib/android/unknown",
+                };
+            }
+            return if (target.cpu.arch == .x86_64) "lib/linux/x64" else "lib/linux/x86";
+        },
         else => "lib/unknown",
     };
 }
