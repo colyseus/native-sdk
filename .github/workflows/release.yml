@@ -2,14 +2,12 @@ name: Native SDK Pre-built Binaries
 
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g., v0.15.2)'
-        required: true
-        type: string
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'build.zig'
+    branches:
+      - main
 
 env:
   ZIG_VERSION: '0.15.2'
@@ -189,11 +187,8 @@ jobs:
       - name: Get version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
+          VERSION=$(grep -oP '\.version\s*=\s*"\K[^"]+' build.zig.zon)
+          echo "version=v${VERSION}" >> $GITHUB_OUTPUT
 
       - name: List artifacts
         run: find artifacts -type f
@@ -202,7 +197,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
+          name: Colyseus Native SDK - Static Library ${{ steps.version.outputs.version }}
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           generate_release_notes: true
