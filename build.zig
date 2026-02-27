@@ -13,7 +13,8 @@ pub fn build(b: *std.Build) void {
     const is_windows = os_tag == .windows;
 
     // Determine C standard based on platform
-    const c_std = if (os_tag == .linux) "-std=gnu11" else "-std=c11";
+    // Linux and Emscripten need gnu11 for POSIX functions (strdup, strndup, etc.)
+    const c_std = if (os_tag == .linux or is_emscripten) "-std=gnu11" else "-std=c11";
 
     // Build options
     const build_shared = b.option(bool, "shared", "Build shared library") orelse false;
@@ -45,29 +46,53 @@ pub fn build(b: *std.Build) void {
         break :blk null;
     };
 
-    // Helper to add Apple SDK paths to a compile step (macOS, iOS, tvOS)
-    const addAppleSdkPaths = struct {
-        fn add(compile_step: *std.Build.Step.Compile, sdk_path: ?[]const u8) void {
-            if (sdk_path) |sdk| {
-                const alloc = compile_step.step.owner.allocator;
-                compile_step.addSystemIncludePath(.{ .cwd_relative = std.fmt.allocPrint(
-                    alloc,
-                    "{s}/usr/include",
-                    .{sdk},
-                ) catch return });
-                compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
-                    alloc,
-                    "{s}/usr/lib",
-                    .{sdk},
-                ) catch return });
-                compile_step.addFrameworkPath(.{ .cwd_relative = std.fmt.allocPrint(
-                    alloc,
-                    "{s}/System/Library/Frameworks",
-                    .{sdk},
-                ) catch return });
-            }
+    // Emscripten sysroot path (auto-detected from em-config if not specified)
+    // Required when targeting wasm32-emscripten so C sources can find <string.h>, <emscripten.h>, etc.
+    const emscripten_sysroot: ?[]const u8 = b.option([]const u8, "emsdk-sysroot", "Path to Emscripten sysroot (auto-detected from em-config)") orelse blk: {
+        if (!is_emscripten) break :blk null;
+        const result = std.process.Child.run(.{
+            .allocator = b.allocator,
+            .argv = &.{ "em-config", "CACHE" },
+        }) catch break :blk null;
+        defer b.allocator.free(result.stdout);
+        defer b.allocator.free(result.stderr);
+        if (result.term.Exited == 0 and result.stdout.len > 0) {
+            const cache = std.mem.trimRight(u8, result.stdout, "\n\r");
+            break :blk std.fmt.allocPrint(b.allocator, "{s}/sysroot/include", .{cache}) catch null;
         }
-    }.add;
+        break :blk null;
+    };
+
+    // Android NDK path option (for cross-compiling to Android)
+    // Zig doesn't ship Android Bionic headers, so the NDK sysroot is needed.
+    const is_android = os_tag == .linux and (target.result.abi == .android or target.result.abi == .androideabi);
+    const android_ndk_path: ?[]const u8 = b.option([]const u8, "android-ndk", "Path to Android NDK (e.g., ANDROID_NDK_HOME)") orelse blk: {
+        if (!is_android) break :blk null;
+        break :blk std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME") catch null;
+    };
+
+    // Consolidated helper: configure libc linking and platform sysroot paths.
+    // Android: skip linkLibC (Zig can't provide bionic), use NDK sysroot instead.
+    // Other platforms: linkLibC normally, add Apple/Emscripten paths as needed.
+    const configurePlatformLibc = struct {
+        fn configure(
+            lib: *std.Build.Step.Compile,
+            android: bool,
+            ndk_path: ?[]const u8,
+            tgt: std.Target,
+            sdk_path: ?[]const u8,
+            emscripten: bool,
+            emsdk_sysroot: ?[]const u8,
+        ) void {
+            if (android) {
+                addAndroidNdkPaths(lib, ndk_path, tgt);
+            } else {
+                lib.linkLibC();
+            }
+            if (!emscripten) addAppleSdkPaths(lib, sdk_path);
+            if (emscripten) addEmscriptenSysroot(lib, emsdk_sysroot);
+        }
+    }.configure;
 
     // ========================================================================
     // Build wslay library (not needed for emscripten - uses browser WebSocket)
@@ -112,8 +137,7 @@ pub fn build(b: *std.Build) void {
             .linkage = .static,
         });
 
-        wslay.?.linkLibC();
-        addAppleSdkPaths(wslay.?, apple_sdk_path);
+        configurePlatformLibc(wslay.?, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
         wslay.?.addIncludePath(b.path("third_party/wslay/lib/includes"));
         wslay.?.addIncludePath(b.path("third_party/wslay/lib"));
         wslay.?.addConfigHeader(wslay_config_h);
@@ -176,8 +200,7 @@ pub fn build(b: *std.Build) void {
             .root_module = http_zig_module,
             .linkage = .static,
         });
-        http_object.?.linkLibC();
-        addAppleSdkPaths(http_object.?, apple_sdk_path);
+        configurePlatformLibc(http_object.?, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
     }
 
     // System certificates Zig module (only for native - uses std.crypto.Certificate.Bundle)
@@ -194,8 +217,7 @@ pub fn build(b: *std.Build) void {
             .root_module = system_certs_module,
             .linkage = .static,
         });
-        system_certs_object.?.linkLibC();
-        addAppleSdkPaths(system_certs_object.?, apple_sdk_path);
+        configurePlatformLibc(system_certs_object.?, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
     }
 
     // String util Zig module (needed for both native and emscripten)
@@ -215,8 +237,7 @@ pub fn build(b: *std.Build) void {
         .root_module = strutil_zig_module,
         .linkage = .static,
     });
-    strutil_object.linkLibC();
-    if (!is_emscripten) addAppleSdkPaths(strutil_object, apple_sdk_path);
+    configurePlatformLibc(strutil_object, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
 
     // ========================================================================
     // Build msgpack builder module (wraps zig-msgpack for C interop)
@@ -252,8 +273,7 @@ pub fn build(b: *std.Build) void {
         .root_module = msgpack_builder_module,
         .linkage = .static,
     });
-    msgpack_builder_object.linkLibC();
-    if (!is_emscripten) addAppleSdkPaths(msgpack_builder_object, apple_sdk_path);
+    configurePlatformLibc(msgpack_builder_object, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
 
     // Msgpack reader module (for decoding msgpack in on_message callbacks)
     const msgpack_reader_module = b.createModule(.{
@@ -272,8 +292,7 @@ pub fn build(b: *std.Build) void {
         .root_module = msgpack_reader_module,
         .linkage = .static,
     });
-    msgpack_reader_object.linkLibC();
-    if (!is_emscripten) addAppleSdkPaths(msgpack_reader_object, apple_sdk_path);
+    configurePlatformLibc(msgpack_reader_object, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
 
     // ========================================================================
     // Build mbedTLS from source (v3.6.4 LTS)
@@ -284,8 +303,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
         .linkage = .static,
     });
-    mbedcrypto.linkLibC();
-    addAppleSdkPaths(mbedcrypto, apple_sdk_path);
+    configurePlatformLibc(mbedcrypto, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
     mbedcrypto.addIncludePath(b.path("third_party/mbedtls/include"));
     mbedcrypto.addIncludePath(b.path("third_party/mbedtls/library"));
     mbedcrypto.addCSourceFiles(.{
@@ -383,8 +401,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
         .linkage = .static,
     });
-    mbedx509.linkLibC();
-    addAppleSdkPaths(mbedx509, apple_sdk_path);
+    configurePlatformLibc(mbedx509, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
     mbedx509.addIncludePath(b.path("third_party/mbedtls/include"));
     mbedx509.addIncludePath(b.path("third_party/mbedtls/library"));
     mbedx509.addCSourceFiles(.{
@@ -407,8 +424,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
         .linkage = .static,
     });
-    mbedtls.linkLibC();
-    addAppleSdkPaths(mbedtls, apple_sdk_path);
+    configurePlatformLibc(mbedtls, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
     mbedtls.addIncludePath(b.path("third_party/mbedtls/include"));
     mbedtls.addIncludePath(b.path("third_party/mbedtls/library"));
     mbedtls.addCSourceFiles(.{
@@ -454,8 +470,7 @@ pub fn build(b: *std.Build) void {
         .version = .{ .major = 0, .minor = 1, .patch = 0 },
     });
 
-    colyseus.linkLibC();
-    if (!is_emscripten) addAppleSdkPaths(colyseus, apple_sdk_path);
+    configurePlatformLibc(colyseus, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
 
     // Add include paths
     colyseus.addIncludePath(b.path("include"));
@@ -508,7 +523,7 @@ pub fn build(b: *std.Build) void {
 
     // C flags
     const base_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", c_std };
-    const web_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", c_std, "-DPLATFORM_WEB" };
+    const web_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", "-Wno-newline-eof", c_std, "-DPLATFORM_WEB" };
 
     // Add common sources
     colyseus.addCSourceFiles(.{
@@ -516,11 +531,13 @@ pub fn build(b: *std.Build) void {
         .flags = if (is_emscripten) &web_flags else &base_flags,
     });
 
-    // Always link mbedTLS (TLS is runtime-enabled via settings)
-    colyseus.addIncludePath(b.path("third_party/mbedtls/include"));
-    colyseus.linkLibrary(mbedtls);
-    colyseus.linkLibrary(mbedx509);
-    colyseus.linkLibrary(mbedcrypto);
+    // Link mbedTLS (native only - browser handles TLS)
+    if (!is_emscripten) {
+        colyseus.addIncludePath(b.path("third_party/mbedtls/include"));
+        colyseus.linkLibrary(mbedtls);
+        colyseus.linkLibrary(mbedx509);
+        colyseus.linkLibrary(mbedcrypto);
+    }
 
     // Add platform-specific network sources
     if (is_emscripten) {
@@ -546,7 +563,7 @@ pub fn build(b: *std.Build) void {
     if (wslay) |w| colyseus.linkLibrary(w);
 
     // Link system libraries based on platform
-    if (os_tag == .linux) {
+    if (os_tag == .linux and !is_android) {
         colyseus.linkSystemLibrary("pthread");
         colyseus.linkSystemLibrary("m");
     } else if (os_tag == .macos) {
@@ -565,6 +582,13 @@ pub fn build(b: *std.Build) void {
 
     // Install the library
     b.installArtifact(colyseus);
+
+    // Install sub-libraries for emscripten (needed by external emcc linking)
+    if (is_emscripten) {
+        b.installArtifact(strutil_object);
+        b.installArtifact(msgpack_builder_object);
+        b.installArtifact(msgpack_reader_object);
+    }
 
     // Install colyseus headers
     const headers = .{
@@ -743,5 +767,79 @@ pub fn build(b: *std.Build) void {
         // Also create individual test steps
         const individual_test_step = b.step(test_file.name, test_file.description);
         individual_test_step.dependOn(&run_test.step);
+    }
+}
+
+// ============================================================================
+// Platform sysroot helpers
+// ============================================================================
+
+fn addEmscriptenSysroot(compile_step: *std.Build.Step.Compile, sysroot: ?[]const u8) void {
+    if (sysroot) |sr| {
+        compile_step.addSystemIncludePath(.{ .cwd_relative = sr });
+    }
+}
+
+fn addAndroidNdkPaths(compile_step: *std.Build.Step.Compile, ndk_path: ?[]const u8, tgt: std.Target) void {
+    if (ndk_path) |ndk| {
+        const alloc = compile_step.step.owner.allocator;
+
+        const host = comptime if (@import("builtin").os.tag == .macos)
+            "darwin-x86_64"
+        else
+            "linux-x86_64";
+
+        const sysroot = std.fmt.allocPrint(alloc, "{s}/toolchains/llvm/prebuilt/{s}/sysroot", .{ ndk, host }) catch return;
+
+        compile_step.addSystemIncludePath(.{ .cwd_relative = std.fmt.allocPrint(
+            alloc,
+            "{s}/usr/include",
+            .{sysroot},
+        ) catch return });
+
+        const arch_include = switch (tgt.cpu.arch) {
+            .aarch64 => "aarch64-linux-android",
+            .arm => "arm-linux-androideabi",
+            .x86_64 => "x86_64-linux-android",
+            .x86 => "i686-linux-android",
+            else => return,
+        };
+        compile_step.addSystemIncludePath(.{ .cwd_relative = std.fmt.allocPrint(
+            alloc,
+            "{s}/usr/include/{s}",
+            .{ sysroot, arch_include },
+        ) catch return });
+
+        compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
+            alloc,
+            "{s}/usr/lib/{s}/21",
+            .{ sysroot, arch_include },
+        ) catch return });
+        compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
+            alloc,
+            "{s}/usr/lib/{s}",
+            .{ sysroot, arch_include },
+        ) catch return });
+    }
+}
+
+fn addAppleSdkPaths(compile_step: *std.Build.Step.Compile, sdk_path: ?[]const u8) void {
+    if (sdk_path) |sdk| {
+        const alloc = compile_step.step.owner.allocator;
+        compile_step.addSystemIncludePath(.{ .cwd_relative = std.fmt.allocPrint(
+            alloc,
+            "{s}/usr/include",
+            .{sdk},
+        ) catch return });
+        compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
+            alloc,
+            "{s}/usr/lib",
+            .{sdk},
+        ) catch return });
+        compile_step.addFrameworkPath(.{ .cwd_relative = std.fmt.allocPrint(
+            alloc,
+            "{s}/System/Library/Frameworks",
+            .{sdk},
+        ) catch return });
     }
 }

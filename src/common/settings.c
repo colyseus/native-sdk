@@ -52,7 +52,6 @@ void colyseus_settings_set_port(colyseus_settings_t* settings, const char* port)
 
 void colyseus_settings_set_secure(colyseus_settings_t* settings, bool secure) {
     settings->use_secure_protocol = secure;
-    settings->server_port = strdup("443");
 }
 
 void colyseus_settings_set_ca_certificates(colyseus_settings_t* settings,

@@ -1,0 +1,292 @@
+name: GameMaker Extension Build
+
+on:
+  push:
+    paths:
+      - 'platforms/gamemaker/**'
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'platforms/gamemaker/**'
+  workflow_dispatch:
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version-check.outputs.changed || 'true' }}
+      version: ${{ steps.version-check.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check version changes
+        uses: EndBug/version-check@v2
+        id: version-check
+        with:
+          file-name: platforms/gamemaker/version.json
+          diff-search: true
+
+      - name: Log version info
+        run: |
+          echo "Version changed: ${{ steps.version-check.outputs.changed }}"
+          echo "Version: ${{ steps.version-check.outputs.version }}"
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build macOS arm64
+        working-directory: platforms/gamemaker
+        run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
+
+      - name: Build macOS x86_64
+        working-directory: platforms/gamemaker
+        run: zig build -Dtarget=x86_64-macos -Doptimize=ReleaseSafe
+
+      - name: Upload macOS binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-macos
+          path: platforms/gamemaker/zig-out/lib/macos/
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build Linux x86_64
+        working-directory: platforms/gamemaker
+        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe
+
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux
+          path: platforms/gamemaker/zig-out/lib/linux/
+
+  build-windows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build Windows x86_64
+        working-directory: platforms/gamemaker
+        run: zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-windows
+          path: platforms/gamemaker/zig-out/lib/windows/
+
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build iOS arm64
+        working-directory: platforms/gamemaker
+        run: zig build -Dtarget=aarch64-ios -Doptimize=ReleaseSafe
+
+      - name: Upload iOS binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-ios
+          path: platforms/gamemaker/zig-out/lib/ios/
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+
+      - name: Build Android arm64
+        working-directory: platforms/gamemaker
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=aarch64-linux-android -Doptimize=ReleaseSafe
+
+      - name: Build Android arm32
+        working-directory: platforms/gamemaker
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=ReleaseSafe
+
+      - name: Build Android x86_64
+        working-directory: platforms/gamemaker
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: zig build -Dtarget=x86_64-linux-android -Doptimize=ReleaseSafe
+
+      - name: Upload Android binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-android
+          path: platforms/gamemaker/zig-out/lib/android/
+
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Setup emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: '4.0.23'
+
+      - name: Verify emcc
+        run: emcc --version
+
+      - name: Build WASM
+        working-directory: platforms/gamemaker
+        run: |
+          chmod +x build-wasm.sh
+          ./build-wasm.sh ReleaseSmall
+
+      - name: Upload WASM binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-wasm
+          path: platforms/gamemaker/wasm-out/colyseus_wasm.js
+
+  release:
+    needs: [check-version, build-macos, build-ios, build-linux, build-windows, build-android, build-wasm]
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create extension directory
+        run: mkdir -p extension/Colyseus_SDK
+
+      - name: Download macOS binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-macos
+          path: extension/Colyseus_SDK/macos
+
+      - name: Download iOS binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-ios
+          path: extension/Colyseus_SDK/ios
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-linux
+          path: extension/Colyseus_SDK/linux
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-windows
+          path: extension/Colyseus_SDK/windows
+
+      - name: Download Android binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-android
+          path: extension/Colyseus_SDK/android
+
+      - name: Download WASM binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-wasm
+          path: extension/Colyseus_SDK
+
+      - name: Copy extension files
+        run: |
+          cp platforms/gamemaker/example/BlankProject/extensions/Colyseus_SDK/Colyseus_SDK.yy extension/Colyseus_SDK/
+          cp -r platforms/gamemaker/example/BlankProject/scripts extension/
+
+      - name: List all files
+        run: find extension/ -type f | sort
+
+      - name: Create release zip
+        run: zip -r colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip extension
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: gamemaker-v${{ needs.check-version.outputs.version }}
+          name: GameMaker SDK v${{ needs.check-version.outputs.version }}
+          body: |
+            ## Colyseus GameMaker SDK v${{ needs.check-version.outputs.version }}
+
+            ### Installation
+            1. Download the `colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip` file
+            2. Extract and import the extension into your GameMaker project
+            3. See the README for setup instructions
+
+            ### Supported Platforms
+            - Windows (x86_64)
+            - macOS (arm64, x86_64)
+            - iOS (arm64)
+            - Linux (x86_64)
+            - Android (arm64, arm32, x86_64)
+            - HTML5 (WASM)
+          files: colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip
+          draft: false
+          prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}

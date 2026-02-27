@@ -249,24 +249,13 @@ fn httpRequestImpl(
 
     const body_slice = if (body_cstr != null) cStrToSlice(body_cstr) else null;
 
-    const result = client.fetch(.{
+    const result = try client.fetch(.{
         .location = .{ .url = url },
         .method = method,
         .payload = body_slice,
         .extra_headers = owned_headers.headers,
         .response_writer = &response_writer.writer,
-    }) catch |err| {
-        if (on_error) |callback| {
-            const msg = sliceToCStr(allocator, @errorName(err)) catch return err;
-            var error_response = colyseus_http_error_t{
-                .code = 0,
-                .message = msg,
-            };
-            callback(&error_response, userdata);
-            freeString(allocator, msg);
-        }
-        return err;
-    };
+    });
 
     const status_code: c_int = @intFromEnum(result.status);
     const response_body = response_writer.written();

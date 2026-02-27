@@ -1,0 +1,11 @@
+.{
+    .name = .colyseus_sdk_gamemaker,
+    .version = "0.1.0",
+    .dependencies = .{
+        .native_sdk = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{""},
+    .fingerprint = 0x4087140ecb8b97e2,
+}
