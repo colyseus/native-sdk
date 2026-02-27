@@ -186,8 +186,9 @@ fn buildGameMakerExtension(
     const gamemaker_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
-        // Android: Zig can't provide libc, use NDK's bionic instead
-        .link_libc = if (is_android) false else null,
+        // Android: Zig can't provide bionic libc, use NDK sysroot instead.
+        // Other platforms: link libc normally.
+        .link_libc = !is_android,
     });
 
     const gamemaker = b.addLibrary(.{
@@ -196,10 +197,6 @@ fn buildGameMakerExtension(
         .linkage = .dynamic,
         .version = .{ .major = 0, .minor = 1, .patch = 0 },
     });
-
-    if (!is_android) {
-        gamemaker.linkLibC();
-    }
 
     // Add Apple SDK paths for framework resolution (macOS, iOS)
     if (target.result.os.tag == .macos or target.result.os.tag == .ios or target.result.os.tag == .tvos) {
