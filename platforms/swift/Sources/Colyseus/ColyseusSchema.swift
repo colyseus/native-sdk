@@ -72,41 +72,47 @@ enum SchemaWalker {
 
     private static func decodeArray(_ arr: UnsafeMutablePointer<colyseus_array_schema_t>?) -> [Any] {
         guard let arr = arr else { return [] }
-        var result = [Any]()
-        colyseus_array_schema_foreach(
-            arr,
-            { _, value, userdata in
-                guard let value = value, let userdata = userdata else { return }
-                let list = userdata.assumingMemoryBound(to: [Any].self)
-                if arr.pointee.has_schema_child {
-                    list.pointee.append(SchemaWalker.walk(value))
-                } else {
-                    list.pointee.append(SchemaWalker.primitiveFromPtr(value, arr.pointee.child_primitive_type))
-                }
-            },
-            &result
-        )
-        return result
+        typealias Ctx = (list: [Any], hasSchema: Bool, primitiveType: UnsafePointer<CChar>?)
+        var ctx: Ctx = (list: [], hasSchema: arr.pointee.has_schema_child, primitiveType: arr.pointee.child_primitive_type)
+        withUnsafeMutablePointer(to: &ctx) { ctxPtr in
+            colyseus_array_schema_foreach(
+                arr,
+                { _, value, userdata in
+                    guard let value = value, let userdata = userdata else { return }
+                    let ctx = userdata.assumingMemoryBound(to: Ctx.self)
+                    if ctx.pointee.hasSchema {
+                        ctx.pointee.list.append(SchemaWalker.walk(value))
+                    } else {
+                        ctx.pointee.list.append(SchemaWalker.primitiveFromPtr(value, ctx.pointee.primitiveType))
+                    }
+                },
+                ctxPtr
+            )
+        }
+        return ctx.list
     }
 
     private static func decodeMap(_ map: UnsafeMutablePointer<colyseus_map_schema_t>?) -> SchemaState {
         guard let map = map else { return [:] }
-        var result = SchemaState()
-        colyseus_map_schema_foreach(
-            map,
-            { key, value, userdata in
-                guard let key = key, let value = value, let userdata = userdata else { return }
-                let dict = userdata.assumingMemoryBound(to: SchemaState.self)
-                let k = String(cString: key)
-                if map.pointee.has_schema_child {
-                    dict.pointee[k] = SchemaWalker.walk(value)
-                } else {
-                    dict.pointee[k] = SchemaWalker.primitiveFromPtr(value, map.pointee.child_primitive_type)
-                }
-            },
-            &result
-        )
-        return result
+        typealias Ctx = (dict: SchemaState, hasSchema: Bool, primitiveType: UnsafePointer<CChar>?)
+        var ctx: Ctx = (dict: [:], hasSchema: map.pointee.has_schema_child, primitiveType: map.pointee.child_primitive_type)
+        withUnsafeMutablePointer(to: &ctx) { ctxPtr in
+            colyseus_map_schema_foreach(
+                map,
+                { key, value, userdata in
+                    guard let key = key, let value = value, let userdata = userdata else { return }
+                    let ctx = userdata.assumingMemoryBound(to: Ctx.self)
+                    let k = String(cString: key)
+                    if ctx.pointee.hasSchema {
+                        ctx.pointee.dict[k] = SchemaWalker.walk(value)
+                    } else {
+                        ctx.pointee.dict[k] = SchemaWalker.primitiveFromPtr(value, ctx.pointee.primitiveType)
+                    }
+                },
+                ctxPtr
+            )
+        }
+        return ctx.dict
     }
 
     // Decode a raw void* primitive value using the type string stored in the collection.
