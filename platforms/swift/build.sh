@@ -120,10 +120,9 @@ build_variant() {
   mkdir -p "$LIB_DIR"
   local OUT_LIB="$LIB_DIR/libcolyseus.a"
   lipo_or_copy "$OUT_LIB" "$@"
-  # xcframework needs headers alongside each library.
-  local HDR_DIR="$LIB_DIR/Headers"
-  cp -R "$HEADERS_DST" "$HDR_DIR"
-  XCFRAMEWORK_ARGS+=("-library" "$OUT_LIB" "-headers" "$HDR_DIR")
+  # xcodebuild -create-xcframework expects the PARENT directory containing
+  # the headers — it will create the Headers/ subdirectory itself.
+  XCFRAMEWORK_ARGS+=("-library" "$OUT_LIB" "-headers" "$HEADERS_DST")
 }
 
 build_variant "macos" \

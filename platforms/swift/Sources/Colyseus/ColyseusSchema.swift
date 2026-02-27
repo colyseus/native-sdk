@@ -113,7 +113,7 @@ enum SchemaWalker {
     private static func primitiveFromPtr(_ ptr: UnsafeMutableRawPointer, _ typeStr: UnsafePointer<CChar>?) -> Any {
         let t = typeStr.map { String(cString: $0) } ?? "number"
         switch t {
-        case "string":  return ptr.assumingMemoryBound(to: CChar.self).map { String(cString: $0) } as Any? ?? ""
+        case "string":  return String(cString: ptr.assumingMemoryBound(to: CChar.self))
         case "boolean": return ptr.load(as: Bool.self)
         case "int8":    return Int(ptr.load(as: Int8.self))
         case "uint8":   return Int(ptr.load(as: UInt8.self))

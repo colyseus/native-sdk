@@ -71,7 +71,7 @@ public final class MessageReader {
     public var stringValue: String? {
         var len = 0
         guard let ptr = colyseus_message_reader_get_str(raw, &len) else { return nil }
-        return String(bytes: UnsafeBufferPointer(start: ptr, count: len), encoding: .utf8)
+        return String(bytes: UnsafeRawBufferPointer(start: ptr, count: len), encoding: .utf8)
     }
 
     public var binaryValue: Data? {
@@ -96,7 +96,7 @@ public final class MessageReader {
         var ptr: UnsafePointer<CChar>? = nil
         var len = 0
         guard colyseus_message_reader_map_get_str(raw, key, &ptr, &len), let p = ptr else { return nil }
-        return String(bytes: UnsafeBufferPointer(start: p, count: len), encoding: .utf8)
+        return String(bytes: UnsafeRawBufferPointer(start: p, count: len), encoding: .utf8)
     }
 
     public func mapInt(forKey key: String)   -> Int64?  { var v: Int64  = 0; return colyseus_message_reader_map_get_int(raw, key, &v)   ? v : nil }
