@@ -1,11 +1,11 @@
 /// Create Event — initialize client and join room
-client = colyseus_client_create("localhost:2567", 0);
-room = colyseus_client_join_or_create(client, "my_room", "{}");
+client = colyseus_client_create("http://localhost:2567");
+colyseus_room = colyseus_client_join_or_create(client, "my_room", "{}");
 callbacks = -1;
 
 // --- Room event handlers ---
 
-colyseus_on_join(room, function(_room) {
+colyseus_on_join(colyseus_room, function(_room) {
     show_debug_message("Joined room: " + colyseus_room_get_id(_room));
 
     // Send a message to the server
@@ -41,7 +41,7 @@ colyseus_on_join(room, function(_room) {
     });
 });
 
-colyseus_on_state_change(room, function(_room) {
+colyseus_on_state_change(colyseus_room, function(_room) {
     var state = colyseus_room_get_state(_room);
     if (state != 0) {
         var host = colyseus_schema_get_ref(state, "host");
@@ -51,11 +51,11 @@ colyseus_on_state_change(room, function(_room) {
     }
 });
 
-colyseus_on_error(room, function(code, msg) {
+colyseus_on_error(colyseus_room, function(code, msg) {
     show_debug_message("Room error [" + string(code) + "]: " + msg);
 });
 
-colyseus_on_leave(room, function(code, reason) {
+colyseus_on_leave(colyseus_room, function(code, reason) {
     show_debug_message("Left room [" + string(code) + "]: " + reason);
 });
 

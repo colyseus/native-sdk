@@ -491,35 +491,55 @@ static void on_client_error(int code, const char* message, void* userdata) {
 // GameMaker Exported Functions — Client
 // =============================================================================
 
-GM_EXPORT double colyseus_gm_client_create(const char* endpoint, double use_secure) {
+GM_EXPORT double colyseus_gm_client_create(const char* endpoint) {
     colyseus_settings_t* settings = colyseus_settings_create();
     if (!settings) {
         return 0.0;
     }
 
-    // Parse endpoint into address and port
-    char* endpoint_copy = strdup(endpoint);
-    char* colon = strchr(endpoint_copy, ':');
+    // Parse endpoint URL: "http://host:port", "ws://host:port", etc.
+    const char* url = endpoint;
+    bool secure = false;
+
+    // Detect and strip protocol prefix
+    if (strncmp(url, "https://", 8) == 0 || strncmp(url, "wss://", 6) == 0) {
+        secure = true;
+        url = strchr(url, '/') + 2;  // skip "://"
+    } else if (strncmp(url, "http://", 7) == 0 || strncmp(url, "ws://", 5) == 0) {
+        secure = false;
+        url = strchr(url, '/') + 2;  // skip "://"
+    }
+
+    // Now url points to "host:port" or "host"
+    char* host_port = strdup(url);
+
+    // Strip trailing slash if present
+    size_t len = strlen(host_port);
+    if (len > 0 && host_port[len - 1] == '/') {
+        host_port[len - 1] = '\0';
+    }
+
+    // Split host and port (find LAST colon to handle IPv6)
+    char* colon = strrchr(host_port, ':');
+
+    colyseus_settings_set_secure(settings, secure);
 
     if (colon) {
         *colon = '\0';
-        colyseus_settings_set_address(settings, endpoint_copy);
+        colyseus_settings_set_address(settings, host_port);
         colyseus_settings_set_port(settings, colon + 1);
     } else {
-        colyseus_settings_set_address(settings, endpoint_copy);
-        colyseus_settings_set_port(settings, use_secure > 0.5 ? "443" : "80");
+        colyseus_settings_set_address(settings, host_port);
+        colyseus_settings_set_port(settings, secure ? "443" : "80");
     }
 
-    colyseus_settings_set_secure(settings, use_secure > 0.5);
-    free(endpoint_copy);
+    free(host_port);
 
     colyseus_client_t* client = colyseus_client_create(settings);
     if (!client) {
         colyseus_settings_free(settings);
         return 0.0;
     }
-
-    printf("Creating client: %s\n", endpoint);
 
     return (double)(uintptr_t)client;
 }

@@ -17,7 +17,7 @@
   "extensionVersion":"0.17.0",
   "files":[
     {"$GMExtensionFile":"v1","%Name":"","constants":[],"copyToTargets":3035426178912485614,"filename":"libcolyseus.0.1.0.dylib","final":"","functions":[
-        {"$GMExtensionFunction":"","%Name":"colyseus_client_create","argCount":2,"args":[1,2,],"documentation":"","externalName":"colyseus_gm_client_create","help":"Create Colyseus SDK Client Instance","hidden":false,"kind":1,"name":"colyseus_client_create","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
+        {"$GMExtensionFunction":"","%Name":"colyseus_client_create","argCount":1,"args":[1,],"documentation":"","externalName":"colyseus_gm_client_create","help":"Create Colyseus SDK Client Instance (endpoint: \"http://host:port\" or \"ws://host:port\")","hidden":false,"kind":1,"name":"colyseus_client_create","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
         {"$GMExtensionFunction":"","%Name":"colyseus_client_free","argCount":1,"args":[2,],"documentation":"","externalName":"colyseus_gm_client_free","help":"Free Colyseus SDK Client Instance","hidden":false,"kind":1,"name":"colyseus_client_free","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
         {"$GMExtensionFunction":"","%Name":"colyseus_client_join_or_create","argCount":3,"args":[2,1,1,],"documentation":"","externalName":"colyseus_gm_client_join_or_create","help":"Join or create a room","hidden":false,"kind":1,"name":"colyseus_client_join_or_create","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
         {"$GMExtensionFunction":"","%Name":"colyseus_client_create_room","argCount":3,"args":[2,1,1,],"documentation":"","externalName":"colyseus_gm_client_create_room","help":"Create a room","hidden":false,"kind":1,"name":"colyseus_client_create_room","resourceType":"GMExtensionFunction","resourceVersion":"2.0","returnType":2,},
@@ -106,7 +106,7 @@
   "name":"Colyseus_SDK",
   "options":[
     {"$GMExtensionOption":"","%Name":"__extOptLabel","defaultValue":"Server","description":"","displayName":"","exportToINI":false,"extensionId":null,"guid":"e7335a15-82b1-4f91-b322-70ca935292fd","hidden":false,"listItems":[],"name":"__extOptLabel","optType":5,"resourceType":"GMExtensionOption","resourceVersion":"2.0",},
-    {"$GMExtensionOption":"","%Name":"endpoint","defaultValue":"ws://127.0.0.1:2567","description":"Colyseus Server Endpoint","displayName":"Endpoint","exportToINI":false,"extensionId":null,"guid":"ad388ecd-211f-41cb-8de3-340874cda5e1","hidden":false,"listItems":[],"name":"endpoint","optType":2,"resourceType":"GMExtensionOption","resourceVersion":"2.0",},
+    {"$GMExtensionOption":"","%Name":"endpoint","defaultValue":"http://127.0.0.1:2567","description":"Colyseus Server Endpoint","displayName":"Endpoint","exportToINI":false,"extensionId":null,"guid":"ad388ecd-211f-41cb-8de3-340874cda5e1","hidden":false,"listItems":[],"name":"endpoint","optType":2,"resourceType":"GMExtensionOption","resourceVersion":"2.0",},
   ],
   "optionsFile":"options.json",
   "packageId":"",

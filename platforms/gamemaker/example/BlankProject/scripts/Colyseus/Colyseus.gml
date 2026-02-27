@@ -234,6 +234,16 @@ function colyseus_process() {
                 }
                 break;
 
+            case COLYSEUS_EVENT_CLIENT_ERROR:
+                show_debug_message("Colyseus client error [" + string(colyseus_event_get_code()) + "]: " + colyseus_event_get_message());
+                if (_entry != undefined && variable_struct_exists(_entry, "on_error")) {
+                    _entry.on_error(
+                        colyseus_event_get_code(),
+                        colyseus_event_get_message()
+                    );
+                }
+                break;
+
             case COLYSEUS_EVENT_ROOM_LEAVE:
                 if (_entry != undefined && variable_struct_exists(_entry, "on_leave")) {
                     _entry.on_leave(
