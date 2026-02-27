@@ -16,7 +16,7 @@ let package = Package(
         .executableTarget(
             name: "ColyseusExample",
             dependencies: [
-                .product(name: "Colyseus", package: "Colyseus"),
+                .product(name: "Colyseus", package: "colyseus"),
             ],
             path: "ColyseusExample"
         ),
