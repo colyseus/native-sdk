@@ -152,21 +152,15 @@ jobs:
 
       - name: Build Android arm64
         working-directory: platforms/gamemaker
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=aarch64-linux-android -Doptimize=ReleaseSafe
+        run: zig build -Dtarget=aarch64-linux-android -Doptimize=ReleaseSafe -Dandroid-ndk=${{ steps.setup-ndk.outputs.ndk-path }}
 
       - name: Build Android arm32
         working-directory: platforms/gamemaker
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=ReleaseSafe
+        run: zig build -Dtarget=arm-linux-androideabi -Doptimize=ReleaseSafe -Dandroid-ndk=${{ steps.setup-ndk.outputs.ndk-path }}
 
       - name: Build Android x86_64
         working-directory: platforms/gamemaker
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: zig build -Dtarget=x86_64-linux-android -Doptimize=ReleaseSafe
+        run: zig build -Dtarget=x86_64-linux-android -Doptimize=ReleaseSafe -Dandroid-ndk=${{ steps.setup-ndk.outputs.ndk-path }}
 
       - name: Upload Android binaries
         uses: actions/upload-artifact@v4
