@@ -115,10 +115,15 @@ pub fn build(b: *std.Build) void {
                     .{ sysroot, arch_include },
                 ) catch return });
 
-                // Add library path
+                // Add library paths (try API level 21 first, then base dir)
                 compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
                     alloc,
-                    "{s}/usr/lib/{s}/35",
+                    "{s}/usr/lib/{s}/21",
+                    .{ sysroot, arch_include },
+                ) catch return });
+                compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
+                    alloc,
+                    "{s}/usr/lib/{s}",
                     .{ sysroot, arch_include },
                 ) catch return });
             }
@@ -634,7 +639,7 @@ pub fn build(b: *std.Build) void {
     if (wslay) |w| colyseus.linkLibrary(w);
 
     // Link system libraries based on platform
-    if (os_tag == .linux) {
+    if (os_tag == .linux and !is_android) {
         colyseus.linkSystemLibrary("pthread");
         colyseus.linkSystemLibrary("m");
     } else if (os_tag == .macos) {
