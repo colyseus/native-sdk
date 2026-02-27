@@ -145,9 +145,26 @@ fn waitForJoin() !void {
     // Poll for up to 5 seconds (CI can be slow)
     for (0..100) |_| {
         if (joined) return;
+        if (test_failed) return error.TestUnexpectedResult;
         std.Thread.sleep(50 * std.time.ns_per_ms);
     }
     return error.TestUnexpectedResult;
+}
+
+fn cleanupRoom(room: *?[*c]c.colyseus_room_t) void {
+    if (room.*) |r| {
+        c.colyseus_room_leave(r, true);
+        std.Thread.sleep(500 * std.time.ns_per_ms);
+
+        if (callbacks) |cb| {
+            c.colyseus_callbacks_free(cb);
+            callbacks = null;
+        }
+        c.colyseus_room_free(r);
+        room.* = null;
+    }
+    // Give the server time to fully dispose the room before the next test
+    std.Thread.sleep(1000 * std.time.ns_per_ms);
 }
 
 fn resetTestState() void {
@@ -186,6 +203,7 @@ test "callbacks: listen to property changes" {
     }
 
     var room: ?[*c]c.colyseus_room_t = null;
+    defer cleanupRoom(&room);
 
     c.colyseus_client_join_or_create(
         client,
@@ -246,16 +264,6 @@ test "callbacks: listen to property changes" {
 
     // Wait for more state changes
     std.Thread.sleep(200 * std.time.ns_per_ms);
-
-    // Clean up - callbacks MUST be freed before room (callbacks holds decoder reference)
-    c.colyseus_room_leave(room.?, true);
-    std.Thread.sleep(200 * std.time.ns_per_ms);
-
-    if (callbacks) |cb| {
-        c.colyseus_callbacks_free(cb);
-        callbacks = null;
-    }
-    c.colyseus_room_free(room.?);
 }
 
 test "callbacks: onAdd for map collection" {
@@ -275,6 +283,7 @@ test "callbacks: onAdd for map collection" {
     }
 
     var room: ?[*c]c.colyseus_room_t = null;
+    defer cleanupRoom(&room);
 
     c.colyseus_client_join_or_create(
         client,
@@ -331,18 +340,6 @@ test "callbacks: onAdd for map collection" {
 
     // Should have received another onAdd callback for the bot
     try testing.expect(on_add_callback_count >= 2);
-
-    // Clean up - callbacks MUST be freed before room (callbacks holds decoder reference)
-    c.colyseus_room_leave(room.?, true);
-    std.Thread.sleep(500 * std.time.ns_per_ms);
-
-    if (callbacks) |cb| {
-        c.colyseus_callbacks_free(cb);
-        callbacks = null;
-    }
-
-    c.colyseus_room_free(room.?);
-    std.Thread.sleep(100 * std.time.ns_per_ms);
 }
 
 test "callbacks: onRemove for map collection" {
@@ -362,6 +359,7 @@ test "callbacks: onRemove for map collection" {
     }
 
     var room: ?[*c]c.colyseus_room_t = null;
+    defer cleanupRoom(&room);
 
     c.colyseus_client_join_or_create(
         client,
@@ -413,16 +411,6 @@ test "callbacks: onRemove for map collection" {
 
     // Should have received onRemove callback
     try testing.expect(on_remove_callback_count >= 1);
-
-    // Clean up - callbacks MUST be freed before room (callbacks holds decoder reference)
-    c.colyseus_room_leave(room.?, true);
-    std.Thread.sleep(200 * std.time.ns_per_ms);
-
-    if (callbacks) |cb| {
-        c.colyseus_callbacks_free(cb);
-        callbacks = null;
-    }
-    c.colyseus_room_free(room.?);
 }
 
 test "callbacks: nested property listening" {
@@ -442,6 +430,7 @@ test "callbacks: nested property listening" {
     }
 
     var room: ?[*c]c.colyseus_room_t = null;
+    defer cleanupRoom(&room);
 
     c.colyseus_client_join_or_create(
         client,
@@ -496,16 +485,6 @@ test "callbacks: nested property listening" {
     // but the bot moves automatically
     // The nested_listen_count might be 0 if bots don't trigger callbacks correctly
     // This depends on the simulation interval
-
-    // Clean up - callbacks MUST be freed before room (callbacks holds decoder reference)
-    c.colyseus_room_leave(room.?, true);
-    std.Thread.sleep(200 * std.time.ns_per_ms);
-
-    if (callbacks) |cb| {
-        c.colyseus_callbacks_free(cb);
-        callbacks = null;
-    }
-    c.colyseus_room_free(room.?);
 }
 
 test "callbacks: remove callback by handle" {
@@ -525,6 +504,7 @@ test "callbacks: remove callback by handle" {
     }
 
     var room: ?[*c]c.colyseus_room_t = null;
+    defer cleanupRoom(&room);
 
     c.colyseus_client_join_or_create(
         client,
@@ -574,14 +554,4 @@ test "callbacks: remove callback by handle" {
 
     // Count should not have changed since callback was removed
     try testing.expect(on_add_callback_count == count_before);
-
-    // Clean up - callbacks MUST be freed before room (callbacks holds decoder reference)
-    c.colyseus_room_leave(room.?, true);
-    std.Thread.sleep(200 * std.time.ns_per_ms);
-
-    if (callbacks) |cb| {
-        c.colyseus_callbacks_free(cb);
-        callbacks = null;
-    }
-    c.colyseus_room_free(room.?);
 }
