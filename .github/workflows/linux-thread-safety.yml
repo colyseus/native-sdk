@@ -118,122 +118,11 @@ jobs:
           mkdir -p /tmp/colyseus_thread_test/addons
           cp -r platforms/godot/addons/colyseus /tmp/colyseus_thread_test/addons/colyseus
 
-          # Write project.godot with no leading whitespace
-          python3 - << 'PYEOF'
-          import os, textwrap
+          echo 'OyBFbmdpbmUgY29uZmlndXJhdGlvbiBmaWxlLgpbY29uZmlndXJhdGlvbl0KY29uZmlnX3ZlcnNpb249NQoKW2FwcGxpY2F0aW9uXQpjb25maWcvbmFtZT0iQ29seXNldXNUaHJlYWRUZXN0IgpydW4vbWFpbl9zY2VuZT0icmVzOi8vdGhyZWFkX3Rlc3QudHNjbiIKY29uZmlnL2ZlYXR1cmVzPVBhY2tlZFN0cmluZ0FycmF5KCI0LjMiLCAiRm9yd2FyZCBQbHVzIikKCltnZGV4dGVuc2lvbl0Kc2luZ2xldG9ucz1QYWNrZWRTdHJpbmdBcnJheSgicmVzOi8vYWRkb25zL2NvbHlzZXVzL2NvbHlzZXVzLmdkZXh0ZW5zaW9uIikK' | base64 -d > /tmp/colyseus_thread_test/project.godot
 
-          base = "/tmp/colyseus_thread_test"
+          echo 'W2dkX3NjZW5lIGxvYWRfc3RlcHM9MiBmb3JtYXQ9MyB1aWQ9InVpZDovL2NvbHlzZXVzX3RocmVhZF90ZXN0Il0KW2V4dF9yZXNvdXJjZSB0eXBlPSJTY3JpcHQiIHBhdGg9InJlczovL3RocmVhZF90ZXN0LmdkIiBpZD0iMSJdCltub2RlIG5hbWU9IlRocmVhZFRlc3QiIHR5cGU9Ik5vZGUiXQpzY3JpcHQgPSBFeHRSZXNvdXJjZSgiMSIpCg==' | base64 -d > /tmp/colyseus_thread_test/thread_test.tscn
 
-          project_godot = textwrap.dedent("""\
-          ; Engine configuration file.
-          [configuration]
-          config_version=5
-          
-          [application]
-          config/name="ColyseusThreadTest"
-          run/main_scene="res://thread_test.tscn"
-          config/features=PackedStringArray("4.3", "Forward Plus")
-          
-          [gdextension]
-          singletons=PackedStringArray("res://addons/colyseus/colyseus.gdextension")
-          """)
-
-          thread_test_tscn = textwrap.dedent("""\
-          [gd_scene load_steps=2 format=3 uid="uid://colyseus_thread_test"]
-          [ext_resource type="Script" path="res://thread_test.gd" id="1"]
-          [node name="ThreadTest" type="Node"]
-          script = ExtResource("1")
-          """)
-
-          thread_test_gd = textwrap.dedent("""\
-          extends Node
-
-          const TIMEOUT_SEC := 15.0
-          const SERVER_URL := "ws://localhost:2567"
-
-          var _client: ColyseusClient
-          var _room: ColyseusRoom
-          var _joined := false
-          var _state_changed_count := 0
-          var _message_count := 0
-          var _elapsed := 0.0
-          var _done := false
-
-          func _ready() -> void:
-              print("[thread_test] starting - Godot ", Engine.get_version_info())
-              _client = ColyseusClient.new()
-              _client.set_endpoint(SERVER_URL)
-              _room = _client.join_or_create("my_room")
-              if _room == null:
-                  _fail("join_or_create returned null")
-                  return
-              _room.joined.connect(_on_joined)
-              _room.state_changed.connect(_on_state_changed)
-              _room.message_received.connect(_on_message)
-              _room.error.connect(_on_error)
-              _room.left.connect(_on_left)
-
-          func _process(delta: float) -> void:
-              if _done:
-                  return
-              _elapsed += delta
-              if _elapsed >= TIMEOUT_SEC:
-                  _fail("timed out after %s s (joined=%s, state_changes=%d, messages=%d)" % [
-                      TIMEOUT_SEC, _joined, _state_changed_count, _message_count])
-
-          func _on_joined() -> void:
-              _joined = true
-              print("[thread_test] joined room: ", _room.get_id(),
-                    " session: ", _room.get_session_id())
-              for i in range(3):
-                  _room.send_message("ping", {"seq": i})
-
-          func _on_state_changed() -> void:
-              _state_changed_count += 1
-              print("[thread_test] state_changed #", _state_changed_count)
-              var state = _room.get_state()
-              print("[thread_test] state snapshot: ", state)
-              if _state_changed_count >= 1 and _joined:
-                  _pass()
-
-          func _on_message(type: String, data: Variant) -> void:
-              _message_count += 1
-              print("[thread_test] message_received type=", type, " data=", data)
-              if _joined and _message_count >= 1:
-                  _pass()
-
-          func _on_error(code: int, message: String) -> void:
-              print("[thread_test] room error code=", code, " msg=", message)
-              if not _joined:
-                  _pass()
-
-          func _on_left(code: int, reason: String) -> void:
-              print("[thread_test] left code=", code, " reason=", reason)
-
-          func _pass() -> void:
-              if _done:
-                  return
-              _done = true
-              print("[thread_test] PASS - callbacks delivered safely on main thread")
-              get_tree().quit(0)
-
-          func _fail(reason: String) -> void:
-              if _done:
-                  return
-              _done = true
-              printerr("[thread_test] FAIL - ", reason)
-              get_tree().quit(1)
-          """)
-
-          with open(os.path.join(base, "project.godot"), "w") as f:
-              f.write(project_godot)
-          with open(os.path.join(base, "thread_test.tscn"), "w") as f:
-              f.write(thread_test_tscn)
-          with open(os.path.join(base, "thread_test.gd"), "w") as f:
-              f.write(thread_test_gd)
-
-          print("Files written OK")
-          PYEOF
+          echo 'ZXh0ZW5kcyBOb2RlCgpjb25zdCBUSU1FT1VUX1NFQyA6PSAxNS4wCmNvbnN0IFNFUlZFUl9VUkwgOj0gIndzOi8vbG9jYWxob3N0OjI1NjciCgp2YXIgX2NsaWVudDogQ29seXNldXNDbGllbnQKdmFyIF9yb29tOiBDb2x5c2V1c1Jvb20KdmFyIF9qb2luZWQgOj0gZmFsc2UKdmFyIF9zdGF0ZV9jaGFuZ2VkX2NvdW50IDo9IDAKdmFyIF9tZXNzYWdlX2NvdW50IDo9IDAKdmFyIF9lbGFwc2VkIDo9IDAuMAp2YXIgX2RvbmUgOj0gZmFsc2UKCmZ1bmMgX3JlYWR5KCkgLT4gdm9pZDoKICAgIHByaW50KCJbdGhyZWFkX3Rlc3RdIHN0YXJ0aW5nIC0gR29kb3QgIiwgRW5naW5lLmdldF92ZXJzaW9uX2luZm8oKSkKICAgIF9jbGllbnQgPSBDb2x5c2V1c0NsaWVudC5uZXcoKQogICAgX2NsaWVudC5zZXRfZW5kcG9pbnQoU0VSVkVSX1VSTCkKICAgIF9yb29tID0gX2NsaWVudC5qb2luX29yX2NyZWF0ZSgibXlfcm9vbSIpCiAgICBpZiBfcm9vbSA9PSBudWxsOgogICAgICAgIF9mYWlsKCJqb2luX29yX2NyZWF0ZSByZXR1cm5lZCBudWxsIikKICAgICAgICByZXR1cm4KICAgIF9yb29tLmpvaW5lZC5jb25uZWN0KF9vbl9qb2luZWQpCiAgICBfcm9vbS5zdGF0ZV9jaGFuZ2VkLmNvbm5lY3QoX29uX3N0YXRlX2NoYW5nZWQpCiAgICBfcm9vbS5tZXNzYWdlX3JlY2VpdmVkLmNvbm5lY3QoX29uX21lc3NhZ2UpCiAgICBfcm9vbS5lcnJvci5jb25uZWN0KF9vbl9lcnJvcikKICAgIF9yb29tLmxlZnQuY29ubmVjdChfb25fbGVmdCkKCmZ1bmMgX3Byb2Nlc3MoZGVsdGE6IGZsb2F0KSAtPiB2b2lkOgogICAgaWYgX2RvbmU6CiAgICAgICAgcmV0dXJuCiAgICBfZWxhcHNlZCArPSBkZWx0YQogICAgaWYgX2VsYXBzZWQgPj0gVElNRU9VVF9TRUM6CiAgICAgICAgX2ZhaWwoInRpbWVkIG91dCBhZnRlciAlcyBzIChqb2luZWQ9JXMsIHN0YXRlX2NoYW5nZXM9JWQsIG1lc3NhZ2VzPSVkKSIgJSBbCiAgICAgICAgICAgIFRJTUVPVVRfU0VDLCBfam9pbmVkLCBfc3RhdGVfY2hhbmdlZF9jb3VudCwgX21lc3NhZ2VfY291bnRdKQoKZnVuYyBfb25fam9pbmVkKCkgLT4gdm9pZDoKICAgIF9qb2luZWQgPSB0cnVlCiAgICBwcmludCgiW3RocmVhZF90ZXN0XSBqb2luZWQgcm9vbTogIiwgX3Jvb20uZ2V0X2lkKCksCiAgICAgICAgICAiIHNlc3Npb246ICIsIF9yb29tLmdldF9zZXNzaW9uX2lkKCkpCiAgICBmb3IgaSBpbiByYW5nZSgzKToKICAgICAgICBfcm9vbS5zZW5kX21lc3NhZ2UoInBpbmciLCB7InNlcSI6IGl9KQoKZnVuYyBfb25fc3RhdGVfY2hhbmdlZCgpIC0+IHZvaWQ6CiAgICBfc3RhdGVfY2hhbmdlZF9jb3VudCArPSAxCiAgICBwcmludCgiW3RocmVhZF90ZXN0XSBzdGF0ZV9jaGFuZ2VkICMiLCBfc3RhdGVfY2hhbmdlZF9jb3VudCkKICAgIHZhciBzdGF0ZSA9IF9yb29tLmdldF9zdGF0ZSgpCiAgICBwcmludCgiW3RocmVhZF90ZXN0XSBzdGF0ZSBzbmFwc2hvdDogIiwgc3RhdGUpCiAgICBpZiBfc3RhdGVfY2hhbmdlZF9jb3VudCA+PSAxIGFuZCBfam9pbmVkOgogICAgICAgIF9wYXNzKCkKCmZ1bmMgX29uX21lc3NhZ2UodHlwZTogU3RyaW5nLCBkYXRhOiBWYXJpYW50KSAtPiB2b2lkOgogICAgX21lc3NhZ2VfY291bnQgKz0gMQogICAgcHJpbnQoIlt0aHJlYWRfdGVzdF0gbWVzc2FnZV9yZWNlaXZlZCB0eXBlPSIsIHR5cGUsICIgZGF0YT0iLCBkYXRhKQogICAgaWYgX2pvaW5lZCBhbmQgX21lc3NhZ2VfY291bnQgPj0gMToKICAgICAgICBfcGFzcygpCgpmdW5jIF9vbl9lcnJvcihjb2RlOiBpbnQsIG1lc3NhZ2U6IFN0cmluZykgLT4gdm9pZDoKICAgIHByaW50KCJbdGhyZWFkX3Rlc3RdIHJvb20gZXJyb3IgY29kZT0iLCBjb2RlLCAiIG1zZz0iLCBtZXNzYWdlKQogICAgaWYgbm90IF9qb2luZWQ6CiAgICAgICAgX3Bhc3MoKQoKZnVuYyBfb25fbGVmdChjb2RlOiBpbnQsIHJlYXNvbjogU3RyaW5nKSAtPiB2b2lkOgogICAgcHJpbnQoIlt0aHJlYWRfdGVzdF0gbGVmdCBjb2RlPSIsIGNvZGUsICIgcmVhc29uPSIsIHJlYXNvbikKCmZ1bmMgX3Bhc3MoKSAtPiB2b2lkOgogICAgaWYgX2RvbmU6CiAgICAgICAgcmV0dXJuCiAgICBfZG9uZSA9IHRydWUKICAgIHByaW50KCJbdGhyZWFkX3Rlc3RdIFBBU1MgLSBjYWxsYmFja3MgZGVsaXZlcmVkIHNhZmVseSBvbiBtYWluIHRocmVhZCIpCiAgICBnZXRfdHJlZSgpLnF1aXQoMCkKCmZ1bmMgX2ZhaWwocmVhc29uOiBTdHJpbmcpIC0+IHZvaWQ6CiAgICBpZiBfZG9uZToKICAgICAgICByZXR1cm4KICAgIF9kb25lID0gdHJ1ZQogICAgcHJpbnRlcnIoIlt0aHJlYWRfdGVzdF0gRkFJTCAtICIsIHJlYXNvbikKICAgIGdldF90cmVlKCkucXVpdCgxKQo=' | base64 -d > /tmp/colyseus_thread_test/thread_test.gd
 
       - name: Verify test project files
         run: |
@@ -257,7 +146,6 @@ jobs:
 
           echo "Godot exit code: $EXIT_CODE"
 
-          # Fail immediately if the extension never loaded
           PARSE_ERRORS=$(grep -c "Parse Error\|not declared in the current scope\|Could not find type" \
             /tmp/godot_output.txt || true)
           if [ "$PARSE_ERRORS" -gt 0 ]; then
@@ -266,8 +154,7 @@ jobs:
             grep -n "Parse Error\|not declared\|Could not find type" /tmp/godot_output.txt || true
             echo "================================"
             echo "The GDExtension .so was not loaded by Godot."
-            echo "Check: ldd output above for missing shared libs, and that"
-            echo "colyseus.gdextension contains the linux.debug.x86_64 entry."
+            echo "Check: ldd output above for missing shared libs."
             exit 3
           fi
 
@@ -297,8 +184,8 @@ jobs:
             echo "with call_deferred() inside the GDExtension source."
             echo ""
             echo "Files to fix:"
-            echo "  platforms/godot/src/colyseus_client.c  – emit_signal()"
-            echo "  platforms/godot/src/colyseus_callbacks.c – call_deferred_callable()"
+            echo "  platforms/godot/src/colyseus_client.c  - emit_signal()"
+            echo "  platforms/godot/src/colyseus_callbacks.c - call_deferred_callable()"
             exit 2
           fi
 
