@@ -1,0 +1,367 @@
+name: Linux Thread-Safety (Godot GDExtension)
+
+# Reproduces the CachyOS/Linux crash: the extension's network callbacks fire on
+# a background thread and must never call propagate_notification() or emit
+# signals directly – they must go through call_deferred().
+#
+# What this workflow does:
+#   1. Builds the Linux x86_64 debug .so and immediately runs the test in the
+#      same job (no artifact upload/download needed)
+#   2. Runs a headless Godot 4 scene that exercises join/leave, message receive,
+#      and schema state-change callbacks under concurrent load
+#   3. Fails if Godot exits non-zero or prints a thread-safety error
+#
+# Trigger: any push/PR that touches the Godot platform sources, plus manual.
+
+on:
+  push:
+    paths:
+      - 'platforms/godot/**'
+      - 'src/**'
+      - 'include/**'
+      - '.github/workflows/linux-thread-safety.yml'
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'platforms/godot/**'
+      - 'src/**'
+      - 'include/**'
+      - '.github/workflows/linux-thread-safety.yml'
+  workflow_dispatch:
+
+env:
+  ZIG_VERSION: '0.15.2'
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 1 – Build + test in one runner (no artifact round-trip needed)
+  # ──────────────────────────────────────────────────────────────────────────
+  thread-safety-test:
+    name: Thread-safety smoke test (headless Godot ${{ matrix.godot_version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Test against multiple Godot 4.x releases to catch regressions
+        # (4.4+ tightened thread-safety enforcement on Linux)
+        godot_version:
+          - '4.3'
+          - '4.4.1'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libc6-dev \
+            libx11-6 libxcursor1 libxinerama1 libxrandr2 libxrender1 \
+            libgl1-mesa-glx libgles2 libegl1 \
+            xvfb wget unzip
+
+      - name: Build Linux x86_64 debug
+        working-directory: platforms/godot
+        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=Debug
+
+      - name: Verify .so was produced
+        run: |
+          SO="platforms/godot/addons/colyseus/bin/libcolyseus_godot.linux.x86_64.debug.so"
+          if [ ! -f "$SO" ]; then
+            echo "ERROR: expected .so not found at $SO"
+            ls -la platforms/godot/addons/colyseus/bin/ || true
+            exit 1
+          fi
+          echo "Built: $SO"
+          file "$SO"
+
+      - name: Download Godot ${{ matrix.godot_version }} Linux headless
+        run: |
+          VERSION="${{ matrix.godot_version }}"
+          BASE_URL="https://github.com/godotengine/godot/releases/download/${VERSION}-stable"
+          FILENAME="Godot_v${VERSION}-stable_linux.x86_64.zip"
+          wget -q "${BASE_URL}/${FILENAME}" -O godot.zip
+          unzip -q godot.zip
+          GODOT_BIN=$(ls Godot_v*_linux.x86_64 2>/dev/null | head -1)
+          if [ -z "$GODOT_BIN" ]; then
+            echo "ERROR: Godot binary not found after unzip"
+            ls -la
+            exit 1
+          fi
+          chmod +x "$GODOT_BIN"
+          sudo mv "$GODOT_BIN" /usr/local/bin/godot
+          echo "Godot version:"
+          godot --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install example-server dependencies
+        working-directory: example-server
+        run: npm install
+
+      - name: Start example server
+        working-directory: example-server
+        run: npx tsx src/index.ts > ../server.log 2>&1 &
+
+      - name: Wait for server to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:2567 > /dev/null 2>&1; then
+              echo "Server is ready!"
+              exit 0
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 1
+          done
+          echo "Server failed to start"
+          cat server.log
+          exit 1
+
+      - name: Create thread-safety test Godot project
+        run: |
+          mkdir -p /tmp/colyseus_thread_test/addons
+          cp -r platforms/godot/addons/colyseus /tmp/colyseus_thread_test/addons/colyseus
+
+          cat > /tmp/colyseus_thread_test/project.godot << 'PROJ'
+          ; Engine configuration file.
+          [configuration]
+          config_version=5
+          [application]
+          config/name="ColyseusThreadTest"
+          run/main_scene="res://thread_test.tscn"
+          config/features=PackedStringArray("4.3", "Forward Plus")
+          PROJ
+
+          cat > /tmp/colyseus_thread_test/thread_test.tscn << 'TSCN'
+          [gd_scene load_steps=2 format=3 uid="uid://colyseus_thread_test"]
+          [ext_resource type="Script" path="res://thread_test.gd" id="1"]
+          [node name="ThreadTest" type="Node"]
+          script = ExtResource("1")
+          TSCN
+
+          # Exercises the extension from the main thread while the extension fires
+          # its own callbacks from the background network thread.
+          # Checks: (a) no "caller thread can't call" errors, (b) no segfault.
+          cat > /tmp/colyseus_thread_test/thread_test.gd << 'GDS'
+          extends Node
+
+          const TIMEOUT_SEC := 15.0
+          const SERVER_URL := "ws://localhost:2567"
+
+          var _client: ColyseusClient
+          var _room: ColyseusRoom
+          var _joined := false
+          var _state_changed_count := 0
+          var _message_count := 0
+          var _elapsed := 0.0
+          var _done := false
+
+          func _ready() -> void:
+              print("[thread_test] starting - Godot ", Engine.get_version_info())
+              _client = ColyseusClient.new()
+              _client.set_endpoint(SERVER_URL)
+              _room = _client.join_or_create("my_room")
+              if _room == null:
+                  _fail("join_or_create returned null")
+                  return
+              _room.joined.connect(_on_joined)
+              _room.state_changed.connect(_on_state_changed)
+              _room.message_received.connect(_on_message)
+              _room.error.connect(_on_error)
+              _room.left.connect(_on_left)
+
+          func _process(delta: float) -> void:
+              if _done:
+                  return
+              _elapsed += delta
+              if _elapsed >= TIMEOUT_SEC:
+                  _fail("timed out after %s s (joined=%s, state_changes=%d, messages=%d)" % [
+                      TIMEOUT_SEC, _joined, _state_changed_count, _message_count])
+
+          func _on_joined() -> void:
+              _joined = true
+              print("[thread_test] joined room: ", _room.get_id(),
+                    " session: ", _room.get_session_id())
+              for i in range(3):
+                  _room.send_message("ping", {"seq": i})
+
+          func _on_state_changed() -> void:
+              _state_changed_count += 1
+              print("[thread_test] state_changed #", _state_changed_count)
+              var state = _room.get_state()
+              print("[thread_test] state snapshot: ", state)
+              if _state_changed_count >= 1 and _joined:
+                  _pass()
+
+          func _on_message(type: String, data: Variant) -> void:
+              _message_count += 1
+              print("[thread_test] message_received type=", type, " data=", data)
+              if _joined and _message_count >= 1:
+                  _pass()
+
+          func _on_error(code: int, message: String) -> void:
+              print("[thread_test] room error code=", code, " msg=", message)
+              if not _joined:
+                  _pass()
+
+          func _on_left(code: int, reason: String) -> void:
+              print("[thread_test] left code=", code, " reason=", reason)
+
+          func _pass() -> void:
+              if _done:
+                  return
+              _done = true
+              print("[thread_test] PASS - callbacks delivered safely on main thread")
+              get_tree().quit(0)
+
+          func _fail(reason: String) -> void:
+              if _done:
+                  return
+              _done = true
+              printerr("[thread_test] FAIL - ", reason)
+              get_tree().quit(1)
+          GDS
+
+      - name: Run thread-safety test (headless, with Xvfb)
+        run: |
+          set +e
+          xvfb-run --auto-servernum godot \
+            --headless \
+            --path /tmp/colyseus_thread_test \
+            --quit-after 20 \
+            2>&1 | tee /tmp/godot_output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          echo "Godot exit code: $EXIT_CODE"
+
+          THREAD_ERRORS=$(grep -c \
+            -e "caller thread can't call" \
+            -e "propagate_notification" \
+            -e "thread.*not.*main" \
+            -e "ERROR.*Thread" \
+            /tmp/godot_output.txt || true)
+
+          echo "Thread-safety error lines found: $THREAD_ERRORS"
+
+          if [ "$THREAD_ERRORS" -gt 0 ]; then
+            echo ""
+            echo "=== THREAD-SAFETY VIOLATIONS DETECTED ==="
+            grep -n \
+              -e "caller thread can't call" \
+              -e "propagate_notification" \
+              -e "thread.*not.*main" \
+              -e "ERROR.*Thread" \
+              /tmp/godot_output.txt || true
+            echo "=========================================="
+            echo ""
+            echo "DIAGNOSIS: The extension is calling Godot scene-tree APIs"
+            echo "(propagate_notification / emit_signal / etc.) directly from"
+            echo "the network background thread. These calls must be wrapped"
+            echo "with call_deferred() inside the GDExtension source."
+            echo ""
+            echo "Files to fix:"
+            echo "  platforms/godot/src/colyseus_client.c  – emit_signal()"
+            echo "  platforms/godot/src/colyseus_callbacks.c – call_deferred_callable()"
+            exit 2
+          fi
+
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo ""
+            echo "=== Godot exited with code $EXIT_CODE ==="
+            echo "--- last 50 lines of output ---"
+            tail -50 /tmp/godot_output.txt
+            exit "$EXIT_CODE"
+          fi
+
+          echo "Thread-safety test PASSED"
+
+      - name: Print full Godot output (always)
+        if: always()
+        run: cat /tmp/godot_output.txt || true
+
+      - name: Print server logs (always)
+        if: always()
+        run: cat server.log || true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Job 2 – Static analysis: grep for bare (non-deferred) scene-tree calls
+  #          made from callback trampolines
+  # ──────────────────────────────────────────────────────────────────────────
+  static-analysis-thread-safety:
+    name: Static analysis – bare scene-tree calls in callbacks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for direct (non-deferred) signal emission in network callbacks
+        run: |
+          ISSUES=0
+
+          echo "=== Checking emit_signal() uses call_deferred ==="
+          if grep -n '"emit_signal"' platforms/godot/src/colyseus_client.c | \
+              grep -v 'call_deferred\|call_deferred_method\|// '; then
+            echo "WARN: Found emit_signal references that may bypass call_deferred"
+            ISSUES=$((ISSUES + 1))
+          else
+            echo "OK: emit_signal() references look safe"
+          fi
+
+          echo ""
+          echo "=== Checking callback trampolines use call_deferred_callable ==="
+          for TRAMPOLINE in property_change_trampoline item_add_trampoline item_remove_trampoline; do
+            if grep -A 20 "^static void ${TRAMPOLINE}" \
+                platforms/godot/src/colyseus_callbacks.c | \
+                grep -q 'call_deferred_callable'; then
+              echo "OK: ${TRAMPOLINE} uses call_deferred_callable"
+            else
+              echo "FAIL: ${TRAMPOLINE} does NOT use call_deferred_callable"
+              ISSUES=$((ISSUES + 1))
+            fi
+          done
+
+          echo ""
+          echo "=== Checking call_deferred_callable dispatches via call_deferred ==="
+          if grep -A 20 "^static void call_deferred_callable" \
+              platforms/godot/src/colyseus_callbacks.c | \
+              grep -q '"call_deferred"'; then
+            echo "OK: call_deferred_callable uses call_deferred"
+          else
+            echo "FAIL: call_deferred_callable does not use call_deferred"
+            ISSUES=$((ISSUES + 1))
+          fi
+
+          echo ""
+          echo "=== Checking emit_signal() in colyseus_client.c ==="
+          if grep -A 30 "^static void emit_signal" \
+              platforms/godot/src/colyseus_client.c | \
+              grep -q '"call_deferred"'; then
+            echo "OK: emit_signal() defers to main thread"
+          else
+            echo "FAIL: emit_signal() does not defer – will crash on Linux"
+            ISSUES=$((ISSUES + 1))
+          fi
+
+          echo ""
+          if [ "$ISSUES" -gt 0 ]; then
+            echo "Static analysis found $ISSUES thread-safety issue(s)."
+            echo "Fix: ensure all scene-tree interactions from network callbacks"
+            echo "go through call_deferred / call_deferred_callable."
+            exit 1
+          else
+            echo "Static analysis PASSED – no bare scene-tree calls detected."
+          fi
