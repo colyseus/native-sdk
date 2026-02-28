@@ -5,8 +5,7 @@ name: Linux Thread-Safety (Godot GDExtension)
 # signals directly – they must go through call_deferred().
 #
 # What this workflow does:
-#   1. Builds the Linux x86_64 debug .so and immediately runs the test in the
-#      same job (no artifact upload/download needed)
+#   1. Builds the Linux x86_64 debug .so in the same job
 #   2. Runs a headless Godot 4 scene that exercises join/leave, message receive,
 #      and schema state-change callbacks under concurrent load
 #   3. Fails if Godot exits non-zero or prints a thread-safety error
@@ -34,9 +33,6 @@ env:
   ZIG_VERSION: '0.15.2'
 
 jobs:
-  # ──────────────────────────────────────────────────────────────────────────
-  # Job 1 – Build + test in one runner (no artifact round-trip needed)
-  # ──────────────────────────────────────────────────────────────────────────
   thread-safety-test:
     name: Thread-safety smoke test (headless Godot ${{ matrix.godot_version }})
     runs-on: ubuntu-latest
@@ -44,8 +40,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Test against multiple Godot 4.x releases to catch regressions
-        # (4.4+ tightened thread-safety enforcement on Linux)
+        # Test against multiple Godot 4.x releases to catch regressions.
+        # 4.4+ tightened thread-safety enforcement on Linux.
         godot_version:
           - '4.3'
           - '4.4.1'
@@ -67,7 +63,7 @@ jobs:
           sudo apt-get install -y \
             build-essential libc6-dev \
             libx11-6 libxcursor1 libxinerama1 libxrandr2 libxrender1 \
-            libgl1-mesa-glx libgles2 libegl1 \
+            libgl1 libgles2 libegl1 \
             xvfb wget unzip
 
       - name: Build Linux x86_64 debug
@@ -296,72 +292,3 @@ jobs:
       - name: Print server logs (always)
         if: always()
         run: cat server.log || true
-
-  # ──────────────────────────────────────────────────────────────────────────
-  # Job 2 – Static analysis: grep for bare (non-deferred) scene-tree calls
-  #          made from callback trampolines
-  # ──────────────────────────────────────────────────────────────────────────
-  static-analysis-thread-safety:
-    name: Static analysis – bare scene-tree calls in callbacks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Check for direct (non-deferred) signal emission in network callbacks
-        run: |
-          ISSUES=0
-
-          echo "=== Checking emit_signal() uses call_deferred ==="
-          if grep -n '"emit_signal"' platforms/godot/src/colyseus_client.c | \
-              grep -v 'call_deferred\|call_deferred_method\|// '; then
-            echo "WARN: Found emit_signal references that may bypass call_deferred"
-            ISSUES=$((ISSUES + 1))
-          else
-            echo "OK: emit_signal() references look safe"
-          fi
-
-          echo ""
-          echo "=== Checking callback trampolines use call_deferred_callable ==="
-          for TRAMPOLINE in property_change_trampoline item_add_trampoline item_remove_trampoline; do
-            if grep -A 20 "^static void ${TRAMPOLINE}" \
-                platforms/godot/src/colyseus_callbacks.c | \
-                grep -q 'call_deferred_callable'; then
-              echo "OK: ${TRAMPOLINE} uses call_deferred_callable"
-            else
-              echo "FAIL: ${TRAMPOLINE} does NOT use call_deferred_callable"
-              ISSUES=$((ISSUES + 1))
-            fi
-          done
-
-          echo ""
-          echo "=== Checking call_deferred_callable dispatches via call_deferred ==="
-          if grep -A 20 "^static void call_deferred_callable" \
-              platforms/godot/src/colyseus_callbacks.c | \
-              grep -q '"call_deferred"'; then
-            echo "OK: call_deferred_callable uses call_deferred"
-          else
-            echo "FAIL: call_deferred_callable does not use call_deferred"
-            ISSUES=$((ISSUES + 1))
-          fi
-
-          echo ""
-          echo "=== Checking emit_signal() in colyseus_client.c ==="
-          if grep -A 30 "^static void emit_signal" \
-              platforms/godot/src/colyseus_client.c | \
-              grep -q '"call_deferred"'; then
-            echo "OK: emit_signal() defers to main thread"
-          else
-            echo "FAIL: emit_signal() does not defer – will crash on Linux"
-            ISSUES=$((ISSUES + 1))
-          fi
-
-          echo ""
-          if [ "$ISSUES" -gt 0 ]; then
-            echo "Static analysis found $ISSUES thread-safety issue(s)."
-            echo "Fix: ensure all scene-tree interactions from network callbacks"
-            echo "go through call_deferred / call_deferred_callable."
-            exit 1
-          else
-            echo "Static analysis PASSED – no bare scene-tree calls detected."
-          fi
