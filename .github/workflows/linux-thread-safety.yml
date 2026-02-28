@@ -118,204 +118,186 @@ jobs:
           mkdir -p /tmp/colyseus_thread_test/addons
           cp -r platforms/godot/addons/colyseus /tmp/colyseus_thread_test/addons/colyseus
 
-          # Write project.godot with no leading whitespace
-          python3 - << 'PYEOF'
-          import os, textwrap
+          cat > /tmp/colyseus_thread_test/project.godot << 'EOF'
+  ; Engine configuration file.
+  [configuration]
+  config_version=5
+  
+  [application]
+  config/name="ColyseusThreadTest"
+  run/main_scene="res://thread_test.tscn"
+  config/features=PackedStringArray("4.3", "Forward Plus")
+  
+  [gdextension]
+  singletons=PackedStringArray("res://addons/colyseus/colyseus.gdextension")
+  EOF
+  
+  cat > /tmp/colyseus_thread_test/thread_test.tscn << 'EOF'
+  [gd_scene load_steps=2 format=3 uid="uid://colyseus_thread_test"]
+  [ext_resource type="Script" path="res://thread_test.gd" id="1"]
+  [node name="ThreadTest" type="Node"]
+  script = ExtResource("1")
+  EOF
+  
+  cat > /tmp/colyseus_thread_test/thread_test.gd << 'EOF'
+  extends Node
+  
+  const TIMEOUT_SEC := 15.0
+  const SERVER_URL := "ws://localhost:2567"
 
-          base = "/tmp/colyseus_thread_test"
+var _client: ColyseusClient
+var _room: ColyseusRoom
+  var _joined := false
+  var _state_changed_count := 0
+  var _message_count := 0
+  var _elapsed := 0.0
+  var _done := false
 
-          project_godot = textwrap.dedent("""\
-          ; Engine configuration file.
-          [configuration]
-          config_version=5
-          
-          [application]
-          config/name="ColyseusThreadTest"
-          run/main_scene="res://thread_test.tscn"
-          config/features=PackedStringArray("4.3", "Forward Plus")
-          
-          [gdextension]
-          singletons=PackedStringArray("res://addons/colyseus/colyseus.gdextension")
-          """)
+func _ready() -> void:
+  print("[thread_test] starting - Godot ", Engine.get_version_info())
+  _client = ColyseusClient.new()
+  _client.set_endpoint(SERVER_URL)
+  _room = _client.join_or_create("my_room")
+  if _room == null:
+    _fail("join_or_create returned null")
+    return
+  _room.joined.connect(_on_joined)
+  _room.state_changed.connect(_on_state_changed)
+  _room.message_received.connect(_on_message)
+  _room.error.connect(_on_error)
+  _room.left.connect(_on_left)
 
-          thread_test_tscn = textwrap.dedent("""\
-          [gd_scene load_steps=2 format=3 uid="uid://colyseus_thread_test"]
-          [ext_resource type="Script" path="res://thread_test.gd" id="1"]
-          [node name="ThreadTest" type="Node"]
-          script = ExtResource("1")
-          """)
+func _process(delta: float) -> void:
+                       if _done:
+                         return
+                       _elapsed += delta
+                       if _elapsed >= TIMEOUT_SEC:
+                         _fail("timed out after %s s (joined=%s, state_changes=%d, messages=%d)" % [
+                         TIMEOUT_SEC, _joined, _state_changed_count, _message_count])
 
-          thread_test_gd = textwrap.dedent("""\
-          extends Node
+func _on_joined() -> void:
+  _joined = true
+  print("[thread_test] joined room: ", _room.get_id(),
+          " session: ", _room.get_session_id())
+    for i in range(3):
+        _room.send_message("ping", {"seq": i})
 
-          const TIMEOUT_SEC := 15.0
-          const SERVER_URL := "ws://localhost:2567"
+func _on_state_changed() -> void:
+  _state_changed_count += 1
+  print("[thread_test] state_changed #", _state_changed_count)
+  var state = _room.get_state()
+  print("[thread_test] state snapshot: ", state)
+    if _state_changed_count >= 1 and _joined:
+        _pass()
 
-          var _client: ColyseusClient
-          var _room: ColyseusRoom
-          var _joined := false
-          var _state_changed_count := 0
-          var _message_count := 0
-          var _elapsed := 0.0
-          var _done := false
+func _on_message(type: String, data: Variant) -> void:
+    _message_count += 1
+    print("[thread_test] message_received type=", type, " data=", data)
+  if _joined and _message_count >= 1:
+    _pass()
 
-          func _ready() -> void:
-              print("[thread_test] starting - Godot ", Engine.get_version_info())
-              _client = ColyseusClient.new()
-              _client.set_endpoint(SERVER_URL)
-              _room = _client.join_or_create("my_room")
-              if _room == null:
-                  _fail("join_or_create returned null")
-                  return
-              _room.joined.connect(_on_joined)
-              _room.state_changed.connect(_on_state_changed)
-              _room.message_received.connect(_on_message)
-              _room.error.connect(_on_error)
-              _room.left.connect(_on_left)
+func _on_error(code: int, message: String) -> void:
+                                     print("[thread_test] room error code=", code, " msg=", message)
+                                     if not _joined:
+                                       _pass()
 
-          func _process(delta: float) -> void:
-              if _done:
-                  return
-              _elapsed += delta
-              if _elapsed >= TIMEOUT_SEC:
-                  _fail("timed out after %s s (joined=%s, state_changes=%d, messages=%d)" % [
-                      TIMEOUT_SEC, _joined, _state_changed_count, _message_count])
+func _on_left(code: int, reason: String) -> void:
+                                   print("[thread_test] left code=", code, " reason=", reason)
 
-          func _on_joined() -> void:
-              _joined = true
-              print("[thread_test] joined room: ", _room.get_id(),
-                    " session: ", _room.get_session_id())
-              for i in range(3):
-                  _room.send_message("ping", {"seq": i})
+func _pass() -> void:
+  if _done:
+    return
+  _done = true
+  print("[thread_test] PASS - callbacks delivered safely on main thread")
+  get_tree().quit(0)
 
-          func _on_state_changed() -> void:
-              _state_changed_count += 1
-              print("[thread_test] state_changed #", _state_changed_count)
-              var state = _room.get_state()
-              print("[thread_test] state snapshot: ", state)
-              if _state_changed_count >= 1 and _joined:
-                  _pass()
+func _fail(reason: String) -> void:
+                     if _done:
+                       return
+                     _done = true
+                     printerr("[thread_test] FAIL - ", reason)
+                     get_tree().quit(1)
+  EOF
 
-          func _on_message(type: String, data: Variant) -> void:
-              _message_count += 1
-              print("[thread_test] message_received type=", type, " data=", data)
-              if _joined and _message_count >= 1:
-                  _pass()
+- name: Verify test project files
+  run: |
+    echo "=== project structure ==="
+    find /tmp/colyseus_thread_test -type f | sort
+    echo "=== project.godot ==="
+    cat /tmp/colyseus_thread_test/project.godot
+    echo "=== .so present ==="
+    ls -lh /tmp/colyseus_thread_test/addons/colyseus/bin/*.so || echo "NO .so FOUND"
 
-          func _on_error(code: int, message: String) -> void:
-              print("[thread_test] room error code=", code, " msg=", message)
-              if not _joined:
-                  _pass()
+- name: Run thread-safety test (headless, with Xvfb)
+  run: |
+    set +e
+    xvfb-run --auto-servernum godot \
+      --headless \
+      --path /tmp/colyseus_thread_test \
+      --quit-after 20 \
+      2>&1 | tee /tmp/godot_output.txt
+    EXIT_CODE=${PIPESTATUS[0]}
+    set -e
+    
+    echo "Godot exit code: $EXIT_CODE"
+    
+    PARSE_ERRORS=$(grep -c "Parse Error\|not declared in the current scope\|Could not find type" \
+      /tmp/godot_output.txt || true)
+    if [ "$PARSE_ERRORS" -gt 0 ]; then
+      echo ""
+      echo "=== EXTENSION FAILED TO LOAD ==="
+      grep -n "Parse Error\|not declared\|Could not find type" /tmp/godot_output.txt || true
+      echo "================================"
+      echo "The GDExtension .so was not loaded by Godot."
+      echo "Check: ldd output above for missing shared libs."
+      exit 3
+    fi
+    
+    THREAD_ERRORS=$(grep -c \
+      -e "caller thread can't call" \
+      -e "propagate_notification" \
+      -e "thread.*not.*main" \
+      -e "ERROR.*Thread" \
+      /tmp/godot_output.txt || true)
+    
+    echo "Thread-safety error lines found: $THREAD_ERRORS"
+    
+    if [ "$THREAD_ERRORS" -gt 0 ]; then
+      echo ""
+      echo "=== THREAD-SAFETY VIOLATIONS DETECTED ==="
+      grep -n \
+        -e "caller thread can't call" \
+        -e "propagate_notification" \
+        -e "thread.*not.*main" \
+        -e "ERROR.*Thread" \
+        /tmp/godot_output.txt || true
+      echo "=========================================="
+      echo ""
+      echo "DIAGNOSIS: The extension is calling Godot scene-tree APIs"
+      echo "(propagate_notification / emit_signal / etc.) directly from"
+      echo "the network background thread. These calls must be wrapped"
+      echo "with call_deferred() inside the GDExtension source."
+      echo ""
+      echo "Files to fix:"
+      echo "  platforms/godot/src/colyseus_client.c  - emit_signal()"
+      echo "  platforms/godot/src/colyseus_callbacks.c - call_deferred_callable()"
+      exit 2
+    fi
+    
+    if [ "$EXIT_CODE" -ne 0 ]; then
+      echo ""
+      echo "=== Godot exited with code $EXIT_CODE ==="
+      echo "--- last 50 lines of output ---"
+      tail -50 /tmp/godot_output.txt
+      exit "$EXIT_CODE"
+    fi
+    
+    echo "Thread-safety test PASSED"
 
-          func _on_left(code: int, reason: String) -> void:
-              print("[thread_test] left code=", code, " reason=", reason)
+- name: Print full Godot output (always)
+  if: always()
+  run: cat /tmp/godot_output.txt || true
 
-          func _pass() -> void:
-              if _done:
-                  return
-              _done = true
-              print("[thread_test] PASS - callbacks delivered safely on main thread")
-              get_tree().quit(0)
-
-          func _fail(reason: String) -> void:
-              if _done:
-                  return
-              _done = true
-              printerr("[thread_test] FAIL - ", reason)
-              get_tree().quit(1)
-          """)
-
-          with open(os.path.join(base, "project.godot"), "w") as f:
-              f.write(project_godot)
-          with open(os.path.join(base, "thread_test.tscn"), "w") as f:
-              f.write(thread_test_tscn)
-          with open(os.path.join(base, "thread_test.gd"), "w") as f:
-              f.write(thread_test_gd)
-
-          print("Files written OK")
-          PYEOF
-
-      - name: Verify test project files
-        run: |
-          echo "=== project structure ==="
-          find /tmp/colyseus_thread_test -type f | sort
-          echo "=== project.godot ==="
-          cat /tmp/colyseus_thread_test/project.godot
-          echo "=== .so present ==="
-          ls -lh /tmp/colyseus_thread_test/addons/colyseus/bin/*.so || echo "NO .so FOUND"
-
-      - name: Run thread-safety test (headless, with Xvfb)
-        run: |
-          set +e
-          xvfb-run --auto-servernum godot \
-            --headless \
-            --path /tmp/colyseus_thread_test \
-            --quit-after 20 \
-            2>&1 | tee /tmp/godot_output.txt
-          EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-
-          echo "Godot exit code: $EXIT_CODE"
-
-          # Fail immediately if the extension never loaded
-          PARSE_ERRORS=$(grep -c "Parse Error\|not declared in the current scope\|Could not find type" \
-            /tmp/godot_output.txt || true)
-          if [ "$PARSE_ERRORS" -gt 0 ]; then
-            echo ""
-            echo "=== EXTENSION FAILED TO LOAD ==="
-            grep -n "Parse Error\|not declared\|Could not find type" /tmp/godot_output.txt || true
-            echo "================================"
-            echo "The GDExtension .so was not loaded by Godot."
-            echo "Check: ldd output above for missing shared libs, and that"
-            echo "colyseus.gdextension contains the linux.debug.x86_64 entry."
-            exit 3
-          fi
-
-          THREAD_ERRORS=$(grep -c \
-            -e "caller thread can't call" \
-            -e "propagate_notification" \
-            -e "thread.*not.*main" \
-            -e "ERROR.*Thread" \
-            /tmp/godot_output.txt || true)
-
-          echo "Thread-safety error lines found: $THREAD_ERRORS"
-
-          if [ "$THREAD_ERRORS" -gt 0 ]; then
-            echo ""
-            echo "=== THREAD-SAFETY VIOLATIONS DETECTED ==="
-            grep -n \
-              -e "caller thread can't call" \
-              -e "propagate_notification" \
-              -e "thread.*not.*main" \
-              -e "ERROR.*Thread" \
-              /tmp/godot_output.txt || true
-            echo "=========================================="
-            echo ""
-            echo "DIAGNOSIS: The extension is calling Godot scene-tree APIs"
-            echo "(propagate_notification / emit_signal / etc.) directly from"
-            echo "the network background thread. These calls must be wrapped"
-            echo "with call_deferred() inside the GDExtension source."
-            echo ""
-            echo "Files to fix:"
-            echo "  platforms/godot/src/colyseus_client.c  – emit_signal()"
-            echo "  platforms/godot/src/colyseus_callbacks.c – call_deferred_callable()"
-            exit 2
-          fi
-
-          if [ "$EXIT_CODE" -ne 0 ]; then
-            echo ""
-            echo "=== Godot exited with code $EXIT_CODE ==="
-            echo "--- last 50 lines of output ---"
-            tail -50 /tmp/godot_output.txt
-            exit "$EXIT_CODE"
-          fi
-
-          echo "Thread-safety test PASSED"
-
-      - name: Print full Godot output (always)
-        if: always()
-        run: cat /tmp/godot_output.txt || true
-
-      - name: Print server logs (always)
-        if: always()
-        run: cat server.log || true
+- name: Print server logs (always)
+  if: always()
+  run: cat server.log || true
