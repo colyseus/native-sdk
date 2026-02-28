@@ -128,10 +128,14 @@ jobs:
           ; Engine configuration file.
           [configuration]
           config_version=5
+          
           [application]
           config/name="ColyseusThreadTest"
           run/main_scene="res://thread_test.tscn"
           config/features=PackedStringArray("4.3", "Forward Plus")
+          
+          [gdextension]
+          singletons=PackedStringArray("res://addons/colyseus/colyseus.gdextension")
           """)
 
           thread_test_tscn = textwrap.dedent("""\
