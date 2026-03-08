@@ -280,6 +280,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/msgpack/msgpack_reader.zig"),
         .target = target,
         .optimize = optimize,
+        // Workaround for Zig 0.15 archiver bug: odd-sized objects produce
+        // malformed .a files (missing trailing pad byte). Stripping debug
+        // info avoids the odd size that triggers the lld error.
+        .strip = true,
         .stack_check = if (is_emscripten) false else null,
         .pic = if (is_emscripten) true else null,
         .omit_frame_pointer = if (is_emscripten) true else null,
