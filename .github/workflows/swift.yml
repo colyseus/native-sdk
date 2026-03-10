@@ -52,4 +52,3 @@ jobs:
         with:
           name: Colyseus.xcframework
           path: platforms/swift/build/Colyseus.xcframework.zip
-          retention-days: 30
