@@ -3,14 +3,14 @@ name: Godot Extension Build
 on:
   push:
     paths:
-      - 'platforms/godot/**'
+      - 'platforms/swift/**'
     branches:
       - main
   pull_request:
     paths:
-      - 'platforms/godot/**'
+      - 'platforms/swift/**'
   workflow_dispatch:
-
+  workflow_call:
 jobs:
   # Run test suite first (includes integration tests with example-server)
   test:
