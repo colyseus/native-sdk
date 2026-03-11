@@ -228,54 +228,92 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Create extension directory
-        run: mkdir -p extension/Colyseus_SDK
+        run: mkdir -p Colyseus_SDK/extensions/Colyseus_SDK
 
       - name: Download macOS binaries
         uses: actions/download-artifact@v4
         with:
           name: binaries-macos
-          path: extension/Colyseus_SDK/macos
+          path: Colyseus_SDK/extensions/Colyseus_SDK/macos
 
       - name: Download iOS binaries
         uses: actions/download-artifact@v4
         with:
           name: binaries-ios
-          path: extension/Colyseus_SDK/ios
+          path: Colyseus_SDK/extensions/Colyseus_SDK/ios
 
       - name: Download Linux binaries
         uses: actions/download-artifact@v4
         with:
           name: binaries-linux
-          path: extension/Colyseus_SDK/linux
+          path: Colyseus_SDK/extensions/Colyseus_SDK/linux
 
       - name: Download Windows binaries
         uses: actions/download-artifact@v4
         with:
           name: binaries-windows
-          path: extension/Colyseus_SDK/windows
+          path: Colyseus_SDK/extensions/Colyseus_SDK/windows
 
       - name: Download Android binaries
         uses: actions/download-artifact@v4
         with:
           name: binaries-android
-          path: extension/Colyseus_SDK/android
+          path: Colyseus_SDK/extensions/Colyseus_SDK/android
 
       - name: Download WASM binaries
         uses: actions/download-artifact@v4
         with:
           name: binaries-wasm
-          path: extension/Colyseus_SDK
+          path: Colyseus_SDK/extensions/Colyseus_SDK
 
-      - name: Copy extension files
+      - name: Copy extension files and fix parent references
         run: |
-          cp platforms/gamemaker/example/BlankProject/extensions/Colyseus_SDK/Colyseus_SDK.yy extension/Colyseus_SDK/
-          cp -r platforms/gamemaker/example/BlankProject/scripts extension/
+          # Copy .yy files and scripts
+          cp platforms/gamemaker/example/BlankProject/extensions/Colyseus_SDK/Colyseus_SDK.yy Colyseus_SDK/extensions/Colyseus_SDK/
+          cp -r platforms/gamemaker/example/BlankProject/scripts Colyseus_SDK/
+
+          # Fix parent references to point to our minimal project instead of BlankProject
+          jq '.parent = {"name":"Colyseus_SDK","path":"Colyseus_SDK.yyp"}' \
+            Colyseus_SDK/extensions/Colyseus_SDK/Colyseus_SDK.yy > tmp.yy && mv tmp.yy Colyseus_SDK/extensions/Colyseus_SDK/Colyseus_SDK.yy
+          jq '.parent = {"name":"Colyseus_SDK","path":"Colyseus_SDK.yyp"}' \
+            Colyseus_SDK/scripts/Colyseus/Colyseus.yy > tmp.yy && mv tmp.yy Colyseus_SDK/scripts/Colyseus/Colyseus.yy
+
+          # Create minimal .yyp project file so GameMaker can resolve parent references
+          cat > Colyseus_SDK/Colyseus_SDK.yyp << 'EOFYYP'
+          {
+            "$GMProject":"v1",
+            "%Name":"Colyseus_SDK",
+            "AudioGroups":[
+              {"$GMAudioGroup":"v1","%Name":"audiogroup_default","exportDir":"","name":"audiogroup_default","resourceType":"GMAudioGroup","resourceVersion":"2.0","targets":-1}
+            ],
+            "configs":{"children":[],"name":"Default"},
+            "defaultScriptType":0,
+            "Folders":[],
+            "ForcedPrefabProjectReferences":[],
+            "IncludedFiles":[],
+            "isEcma":false,
+            "LibraryEmitters":[],
+            "MetaData":{"IDEVersion":"2024.1400.4.1003"},
+            "name":"Colyseus_SDK",
+            "resources":[
+              {"id":{"name":"Colyseus_SDK","path":"extensions/Colyseus_SDK/Colyseus_SDK.yy"}},
+              {"id":{"name":"Colyseus","path":"scripts/Colyseus/Colyseus.yy"}}
+            ],
+            "resourceType":"GMProject",
+            "resourceVersion":"2.0",
+            "RoomOrderNodes":[],
+            "templateType":"game",
+            "TextureGroups":[
+              {"$GMTextureGroup":"","%Name":"Default","autocrop":true,"border":2,"compressFormat":"bz2","customOptions":"","directory":"","groupParent":null,"isScaled":true,"loadType":"default","mipsToGenerate":0,"name":"Default","resourceType":"GMTextureGroup","resourceVersion":"2.0","targets":-1}
+            ]
+          }
+          EOFYYP
 
       - name: List all files
-        run: find extension/ -type f | sort
+        run: find Colyseus_SDK/ -type f | sort
 
       - name: Create release zip
-        run: zip -r colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip extension
+        run: zip -r colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip Colyseus_SDK
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -287,8 +325,11 @@ jobs:
 
             ### Installation
             1. Download the `colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip` file
-            2. Extract and import the extension into your GameMaker project
-            3. See the README for setup instructions
+            2. Extract the ZIP - you'll get a `Colyseus_SDK` folder (a minimal GameMaker project)
+            3. In your GameMaker project, go to **Tools → Import Local Package**
+            4. Browse to the extracted `Colyseus_SDK` folder and select `Colyseus_SDK.yyp`
+            5. Select all resources and click **Import**
+            6. See the README for setup instructions
 
             ### Supported Platforms
             - Windows (x86_64)
