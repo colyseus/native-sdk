@@ -100,8 +100,17 @@ function __colyseus_get_room_entry(_room_ref) {
 // =============================================================================
 
 /// Listen for property changes: handler(value, previous_value)
-function colyseus_listen(_callbacks, _instance, _property, _handler) {
-    var _handle = colyseus_callbacks_listen(_callbacks, _instance, _property);
+/// Usage: colyseus_listen(callbacks, "field", handler)          — listens on root state
+///        colyseus_listen(callbacks, instance, "field", handler) — listens on a child instance
+function colyseus_listen(_callbacks, _instance_or_property, _property_or_handler, _handler) {
+    if (is_string(_instance_or_property)) {
+        // Root shorthand: colyseus_listen(callbacks, "field", handler)
+        _handler = _property_or_handler;
+        var _handle = colyseus_callbacks_listen(_callbacks, 0, _instance_or_property);
+    } else {
+        // Full form: colyseus_listen(callbacks, instance, "field", handler)
+        var _handle = colyseus_callbacks_listen(_callbacks, _instance_or_property, _property_or_handler);
+    }
     if (_handle >= 0) {
         global.__colyseus_schema_handlers[_handle] = _handler;
     }
@@ -109,8 +118,15 @@ function colyseus_listen(_callbacks, _instance, _property, _handler) {
 }
 
 /// Listen for items added to a collection: handler(instance_handle, key)
-function colyseus_on_add(_callbacks, _instance, _property, _handler) {
-    var _handle = colyseus_callbacks_on_add(_callbacks, _instance, _property);
+/// Usage: colyseus_on_add(callbacks, "field", handler)          — listens on root state
+///        colyseus_on_add(callbacks, instance, "field", handler) — listens on a child instance
+function colyseus_on_add(_callbacks, _instance_or_property, _property_or_handler, _handler) {
+    if (is_string(_instance_or_property)) {
+        _handler = _property_or_handler;
+        var _handle = colyseus_callbacks_on_add(_callbacks, 0, _instance_or_property);
+    } else {
+        var _handle = colyseus_callbacks_on_add(_callbacks, _instance_or_property, _property_or_handler);
+    }
     if (_handle >= 0) {
         global.__colyseus_schema_handlers[_handle] = _handler;
     }
@@ -118,8 +134,15 @@ function colyseus_on_add(_callbacks, _instance, _property, _handler) {
 }
 
 /// Listen for items removed from a collection: handler(instance_handle, key)
-function colyseus_on_remove(_callbacks, _instance, _property, _handler) {
-    var _handle = colyseus_callbacks_on_remove(_callbacks, _instance, _property);
+/// Usage: colyseus_on_remove(callbacks, "field", handler)          — listens on root state
+///        colyseus_on_remove(callbacks, instance, "field", handler) — listens on a child instance
+function colyseus_on_remove(_callbacks, _instance_or_property, _property_or_handler, _handler) {
+    if (is_string(_instance_or_property)) {
+        _handler = _property_or_handler;
+        var _handle = colyseus_callbacks_on_remove(_callbacks, 0, _instance_or_property);
+    } else {
+        var _handle = colyseus_callbacks_on_remove(_callbacks, _instance_or_property, _property_or_handler);
+    }
     if (_handle >= 0) {
         global.__colyseus_schema_handlers[_handle] = _handler;
     }
