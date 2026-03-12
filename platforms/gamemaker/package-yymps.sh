@@ -95,7 +95,6 @@ copy_if_exists "$ZIG_OUT/windows/x64/colyseus.pdb" "$STAGE/$EXT_DIR/windows/x64/
 # Android
 for arch in arm64 arm32 x64; do
     copy_if_exists "$ZIG_OUT/android/$arch/libcolyseus.so" "$STAGE/$EXT_DIR/android/$arch/libcolyseus.so"
-    done
 done
 
 # WASM
