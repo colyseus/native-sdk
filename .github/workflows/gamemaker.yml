@@ -237,13 +237,18 @@ jobs:
       - name: Arrange artifacts into expected directory structure
         working-directory: platforms/gamemaker
         run: |
-          # download-artifact creates binaries-<platform>/ subdirs; move contents to zig-out/lib/
+          # download-artifact creates binaries-<platform>/ subdirs
+          # Restore platform prefix: binaries-macos/* → zig-out/lib/macos/*
           for dir in zig-out/lib/binaries-*/; do
-            cp -r "$dir"* zig-out/lib/ 2>/dev/null || true
+            platform=$(basename "$dir" | sed 's/binaries-//')
+            if [ "$platform" = "wasm" ]; then
+              mkdir -p wasm-out
+              cp "$dir"colyseus_wasm.js wasm-out/ 2>/dev/null || true
+            else
+              mkdir -p "zig-out/lib/$platform"
+              cp -r "$dir"* "zig-out/lib/$platform/" 2>/dev/null || true
+            fi
           done
-          # WASM artifact is a single file — move it to wasm-out/
-          mkdir -p wasm-out
-          mv zig-out/lib/colyseus_wasm.js wasm-out/ 2>/dev/null || true
           # Clean up artifact wrapper dirs
           rm -rf zig-out/lib/binaries-*
 
