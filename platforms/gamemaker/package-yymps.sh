@@ -46,11 +46,24 @@ fix_trailing_commas() {
     perl -0777 -pe '1 while s/,(\s*[\]\}])/$1/g' "$1"
 }
 
-# Copy Colyseus_SDK.yy — fix parent references and version
+# Copy Colyseus_SDK.yy — fix parent references, version, and split per-platform file entries
+# The source .yy has a single native file entry (macOS dylib) targeting all platforms.
+# Split it into per-platform entries so each platform loads the correct binary.
+# copyToTargets values (VM + YYC bits):
+#   macOS:   2251799813685252  (bits 2 + 51)
+#   Windows: 1125899906842626  (bits 1 + 50)
+#   Linux:   4503599627370504  (bits 3 + 52)
 fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   --arg ver "$VERSION" --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" '
   .parent = { "name": $name, "path": $path } |
-  .extensionVersion = $ver
+  .extensionVersion = $ver |
+  .files as $orig_files |
+  .files = [
+    ($orig_files[0] | .filename = "libcolyseus.dylib" | .copyToTargets = 2251799813685252),
+    ($orig_files[0] | .filename = "colyseus.dll" | .copyToTargets = 1125899906842626),
+    ($orig_files[0] | .filename = "libcolyseus.so" | .copyToTargets = 4503599627370504),
+    $orig_files[1]
+  ]
 ' > "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
 
 # Copy Colyseus.gml + Colyseus.yy — fix parent references
@@ -85,10 +98,12 @@ done
 # iOS
 copy_if_exists "$ZIG_OUT/ios/arm64/libcolyseus.dylib" "$STAGE/$EXT_DIR/ios/arm64/libcolyseus.dylib"
 
-# Linux
+# Linux (root file for GameMaker to load + arch subdir)
+copy_if_exists "$ZIG_OUT/linux/x64/libcolyseus.so" "$STAGE/$EXT_DIR/libcolyseus.so"
 copy_if_exists "$ZIG_OUT/linux/x64/libcolyseus.so" "$STAGE/$EXT_DIR/linux/x64/libcolyseus.so"
 
-# Windows
+# Windows (root file for GameMaker to load + arch subdir)
+copy_if_exists "$ZIG_OUT/windows/x64/colyseus.dll" "$STAGE/$EXT_DIR/colyseus.dll"
 copy_if_exists "$ZIG_OUT/windows/x64/colyseus.dll" "$STAGE/$EXT_DIR/windows/x64/colyseus.dll"
 copy_if_exists "$ZIG_OUT/windows/x64/colyseus.pdb" "$STAGE/$EXT_DIR/windows/x64/colyseus.pdb"
 
