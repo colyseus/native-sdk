@@ -1253,6 +1253,30 @@ GM_EXPORT void colyseus_gm_room_send_message(double room_handle, const char* typ
 }
 
 // =============================================================================
+// Raw value message creators (for sending non-map/non-struct values)
+// =============================================================================
+
+GM_EXPORT double colyseus_gm_message_create_bool(double value) {
+    colyseus_message_t* msg = colyseus_message_bool_create(value > 0.5);
+    return (double)(uintptr_t)msg;
+}
+
+GM_EXPORT double colyseus_gm_message_create_number(double value) {
+    colyseus_message_t* msg = colyseus_message_float_create(value);
+    return (double)(uintptr_t)msg;
+}
+
+GM_EXPORT double colyseus_gm_message_create_int(double value) {
+    colyseus_message_t* msg = colyseus_message_int_create((int64_t)value);
+    return (double)(uintptr_t)msg;
+}
+
+GM_EXPORT double colyseus_gm_message_create_string(const char* value) {
+    colyseus_message_t* msg = colyseus_message_str_create(value ? value : "");
+    return (double)(uintptr_t)msg;
+}
+
+// =============================================================================
 // Message Reader — read fields from received messages
 // =============================================================================
 

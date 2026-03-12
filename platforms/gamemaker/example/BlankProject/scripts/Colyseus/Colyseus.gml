@@ -173,19 +173,42 @@ function colyseus_schema_get(_instance, _field) {
 // Message sending helper
 // =============================================================================
 
-/// Send a struct as a message to the room. Values must be strings or numbers.
-/// Example: colyseus_send(room, "move", { x: 10, y: 20 });
+/// Send a value as a message to the room.
+/// Supports: structs (sent as map), booleans, numbers, and strings.
+/// Examples:
+///   colyseus_send(room, "move", { x: 10, y: 20 });
+///   colyseus_send(room, "shoot", true);
+///   colyseus_send(room, "target", 90);
+///   colyseus_send(room, "name", "player1");
 function colyseus_send(_room_ref, _type, _data) {
-    var _msg = colyseus_message_create_map();
-    var _keys = variable_struct_get_names(_data);
-    for (var _i = 0; _i < array_length(_keys); _i++) {
-        var _key = _keys[_i];
-        var _val = variable_struct_get(_data, _key);
-        if (is_string(_val)) {
-            colyseus_message_put_str(_msg, _key, _val);
-        } else {
-            colyseus_message_put_number(_msg, _key, _val);
+    var _msg;
+    if (is_struct(_data)) {
+        _msg = colyseus_message_create_map();
+        var _keys = variable_struct_get_names(_data);
+        for (var _i = 0; _i < array_length(_keys); _i++) {
+            var _key = _keys[_i];
+            var _val = variable_struct_get(_data, _key);
+            if (is_string(_val)) {
+                colyseus_message_put_str(_msg, _key, _val);
+            } else if (is_bool(_val)) {
+                colyseus_message_put_bool(_msg, _key, _val);
+            } else {
+                colyseus_message_put_number(_msg, _key, _val);
+            }
         }
+    } else if (is_bool(_data)) {
+        _msg = colyseus_message_create_bool(_data);
+    } else if (is_string(_data)) {
+        _msg = colyseus_message_create_string(_data);
+    } else if (is_numeric(_data)) {
+        if (_data == floor(_data)) {
+            _msg = colyseus_message_create_int(_data);
+        } else {
+            _msg = colyseus_message_create_number(_data);
+        }
+    } else {
+        show_debug_message("colyseus_send: unsupported data type for message '" + _type + "'");
+        return;
     }
     colyseus_room_send_message(_room_ref, _type, _msg);
 }
