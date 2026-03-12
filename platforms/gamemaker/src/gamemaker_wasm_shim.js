@@ -280,6 +280,23 @@
         _callV('colyseus_gm_message_free', ['number'], [h]);
     };
 
+    // Raw value message creators
+    window.colyseus_gm_message_create_bool = function(val) {
+        return _callN('colyseus_gm_message_create_bool', ['number'], [val]);
+    };
+
+    window.colyseus_gm_message_create_number = function(val) {
+        return _callN('colyseus_gm_message_create_number', ['number'], [val]);
+    };
+
+    window.colyseus_gm_message_create_int = function(val) {
+        return _callN('colyseus_gm_message_create_int', ['number'], [val]);
+    };
+
+    window.colyseus_gm_message_create_string = function(val) {
+        return _callN('colyseus_gm_message_create_string', ['string'], [val]);
+    };
+
     window.colyseus_gm_room_send_message = function(room, type, msg) {
         _callV('colyseus_gm_room_send_message', ['number', 'string', 'number'], [room, type, msg]);
     };
