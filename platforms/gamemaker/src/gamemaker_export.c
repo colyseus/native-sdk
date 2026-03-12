@@ -423,6 +423,7 @@ static void gm_item_add_trampoline(void* value, void* key, void* userdata) {
         // MAP keys are char*, ARRAY keys are int*
         if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
             event.schema.key_index = *(int*)key;
+            snprintf(event.schema.key_string, sizeof(event.schema.key_string), "%d", *(int*)key);
         } else {
             strncpy(event.schema.key_string, (const char*)key,
                     sizeof(event.schema.key_string) - 1);
@@ -449,6 +450,7 @@ static void gm_item_remove_trampoline(void* value, void* key, void* userdata) {
     if (key) {
         if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
             event.schema.key_index = *(int*)key;
+            snprintf(event.schema.key_string, sizeof(event.schema.key_string), "%d", *(int*)key);
         } else {
             strncpy(event.schema.key_string, (const char*)key,
                     sizeof(event.schema.key_string) - 1);
