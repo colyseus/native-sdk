@@ -263,12 +263,25 @@ storage_result_t secure_storage_remove(const char* key) {
  * ======================================================================== */
 #elif defined(PLATFORM_LINUX)
 
-/* libsecret types and function pointers */
+/* libsecret types and function pointers
+ * Must match the real SecretSchema layout exactly, including the 32-element
+ * attributes array and reserved fields. libsecret's _secret_schema_ref_if_nonstatic
+ * checks the 'reserved' field to decide if the schema is heap-allocated;
+ * if our struct is too small, it reads garbage and crashes. */
 typedef struct { const char* name; int type; } SecretSchemaAttribute;
 typedef struct {
     const char* name;
     int flags;
-    SecretSchemaAttribute attributes[8];
+    SecretSchemaAttribute attributes[32];
+    /* private */
+    int reserved;
+    void* reserved1;
+    void* reserved2;
+    void* reserved3;
+    void* reserved4;
+    void* reserved5;
+    void* reserved6;
+    void* reserved7;
 } SecretSchema;
 
 typedef int (*secret_password_store_sync_fn)(const SecretSchema*, const char*, const char*,
