@@ -266,6 +266,23 @@ jobs:
           name: binaries-wasm
           path: Colyseus_SDK/extensions/Colyseus_SDK
 
+      - name: Flatten binaries with GameMaker proxy naming conventions
+        run: |
+          EXT=Colyseus_SDK/extensions/Colyseus_SDK
+
+          # Main native library (macOS arm64 - referenced in .yy as libcolyseus.0.1.0.dylib)
+          cp $EXT/macos/arm64/libcolyseus.0.1.0.dylib $EXT/libcolyseus.0.1.0.dylib
+
+          # Proxy files (GameMaker auto-detects platform from naming convention)
+          cp $EXT/windows/x64/colyseus.dll $EXT/colyseus_x64.dll
+          cp $EXT/linux/x64/libcolyseus.so $EXT/libcolyseus_linux.so
+          cp $EXT/android/arm64/libcolyseus.so $EXT/libcolyseus_arm64.so
+          cp $EXT/android/arm32/libcolyseus.so $EXT/libcolyseus_armeabi-v7a.so
+          cp $EXT/ios/arm64/libcolyseus.0.1.0.dylib $EXT/libcolyseus_ios.dylib
+
+          # Clean up platform subdirectories
+          rm -rf $EXT/macos $EXT/windows $EXT/linux $EXT/android $EXT/ios
+
       - name: Copy extension files and fix parent references
         run: |
           # Copy .yy files and scripts
@@ -324,12 +341,11 @@ jobs:
             ## Colyseus GameMaker SDK v${{ needs.check-version.outputs.version }}
 
             ### Installation
-            1. Download the `colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip` file
-            2. Extract the ZIP - you'll get a `Colyseus_SDK` folder (a minimal GameMaker project)
-            3. In your GameMaker project, go to **Tools → Import Local Package**
-            4. Browse to the extracted `Colyseus_SDK` folder and select `Colyseus_SDK.yyp`
-            5. Select all resources and click **Import**
-            6. See the README for setup instructions
+            1. Download and extract `colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip`
+            2. Open the extracted `Colyseus_SDK/Colyseus_SDK.yyp` in GameMaker
+            3. Go to **Tools → Create Local Package**, select all resources, and save the `.yymps` file
+            4. Open your own project, go to **Tools → Import Local Package**
+            5. Select the `.yymps` file you just created, select all resources, and click **Import**
 
             ### Supported Platforms
             - Windows (x86_64)
