@@ -12,6 +12,10 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#else
+#include <pthread.h>
 #endif
 
 // Export macro for GameMaker DLL functions
@@ -74,7 +78,7 @@ typedef struct {
     };
 } gm_event_t;
 
-// Event queue (circular buffer)
+// Event queue (circular buffer, thread-safe)
 typedef struct {
     gm_event_t events[MAX_EVENT_QUEUE_SIZE];
     int head;
@@ -114,6 +118,15 @@ static gm_room_ref_t g_room_refs[MAX_ROOM_REFS] = {0};
 
 // Global event queue
 static gm_event_queue_t g_event_queue = {0};
+
+// Event queue mutex (background WS thread pushes, main GML thread pops)
+#ifdef __EMSCRIPTEN__
+    /* No mutex needed — single-threaded */
+#elif defined(_WIN32)
+static SRWLOCK g_event_queue_lock = SRWLOCK_INIT;
+#else
+static pthread_mutex_t g_event_queue_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 // Current event (for event accessors)
 static gm_event_t g_current_event = {0};
@@ -219,10 +232,32 @@ static void gm_room_ref_release(int ref) {
 }
 
 // =============================================================================
-// Event queue functions
+// Event queue functions (thread-safe via mutex)
 // =============================================================================
 
+static void event_queue_lock(void) {
+#ifdef __EMSCRIPTEN__
+    /* no-op */
+#elif defined(_WIN32)
+    AcquireSRWLockExclusive(&g_event_queue_lock);
+#else
+    pthread_mutex_lock(&g_event_queue_lock);
+#endif
+}
+
+static void event_queue_unlock(void) {
+#ifdef __EMSCRIPTEN__
+    /* no-op */
+#elif defined(_WIN32)
+    ReleaseSRWLockExclusive(&g_event_queue_lock);
+#else
+    pthread_mutex_unlock(&g_event_queue_lock);
+#endif
+}
+
 static void event_queue_push(const gm_event_t* event) {
+    event_queue_lock();
+
     if (g_event_queue.count >= MAX_EVENT_QUEUE_SIZE) {
         // Queue is full, drop oldest event
         g_event_queue.head = (g_event_queue.head + 1) % MAX_EVENT_QUEUE_SIZE;
@@ -232,16 +267,23 @@ static void event_queue_push(const gm_event_t* event) {
     g_event_queue.events[g_event_queue.tail] = *event;
     g_event_queue.tail = (g_event_queue.tail + 1) % MAX_EVENT_QUEUE_SIZE;
     g_event_queue.count++;
+
+    event_queue_unlock();
 }
 
 static int event_queue_pop(gm_event_t* event) {
+    event_queue_lock();
+
     if (g_event_queue.count == 0) {
+        event_queue_unlock();
         return 0;  // Queue is empty
     }
 
     *event = g_event_queue.events[g_event_queue.head];
     g_event_queue.head = (g_event_queue.head + 1) % MAX_EVENT_QUEUE_SIZE;
     g_event_queue.count--;
+
+    event_queue_unlock();
     return 1;
 }
 
@@ -578,8 +620,6 @@ GM_EXPORT double colyseus_gm_client_join_or_create(double client_handle, const c
 
     const char* options = (options_json && strlen(options_json) > 0) ? options_json : "{}";
 
-    printf("Joining room: %s\n", room_name);
-
     colyseus_client_join_or_create(
         client,
         room_name,
@@ -796,6 +836,25 @@ GM_EXPORT const char* colyseus_gm_schema_get_string(double instance_handle, cons
     return buffer;
 }
 
+GM_EXPORT double colyseus_gm_schema_get_field_type(double instance_handle, const char* field_name) {
+    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    if (!schema || !field_name) return -1.0;
+
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        colyseus_dynamic_schema_t* dyn = (colyseus_dynamic_schema_t*)schema;
+        colyseus_dynamic_value_t* val = colyseus_dynamic_schema_get_by_name(dyn, field_name);
+        if (val) return (double)val->type;
+    } else {
+        for (int i = 0; i < schema->__vtable->field_count; i++) {
+            if (schema->__vtable->fields[i].name &&
+                strcmp(schema->__vtable->fields[i].name, field_name) == 0) {
+                return (double)schema->__vtable->fields[i].type;
+            }
+        }
+    }
+    return -1.0;
+}
+
 GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const char* field_name) {
     colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
     if (!schema || !field_name) return 0.0;
@@ -817,6 +876,9 @@ GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const cha
             case COLYSEUS_FIELD_UINT32:  return (double)val->data.u32;
             case COLYSEUS_FIELD_INT64:   return (double)val->data.i64;
             case COLYSEUS_FIELD_UINT64:  return (double)val->data.u64;
+            case COLYSEUS_FIELD_REF:     return val->data.ref ? (double)(uintptr_t)val->data.ref : 0.0;
+            case COLYSEUS_FIELD_ARRAY:   return val->data.array ? (double)(uintptr_t)val->data.array : 0.0;
+            case COLYSEUS_FIELD_MAP:     return val->data.map ? (double)(uintptr_t)val->data.map : 0.0;
             default: return 0.0;
         }
     } else {
@@ -837,6 +899,12 @@ GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const cha
                     case COLYSEUS_FIELD_UINT32:  return (double)*(uint32_t*)ptr;
                     case COLYSEUS_FIELD_INT64:   return (double)*(int64_t*)ptr;
                     case COLYSEUS_FIELD_UINT64:  return (double)*(uint64_t*)ptr;
+                    case COLYSEUS_FIELD_REF:
+                    case COLYSEUS_FIELD_ARRAY:
+                    case COLYSEUS_FIELD_MAP: {
+                        void* ref = *(void**)ptr;
+                        return ref ? (double)(uintptr_t)ref : 0.0;
+                    }
                     default: return 0.0;
                 }
             }
@@ -845,27 +913,39 @@ GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const cha
     return 0.0;
 }
 
-GM_EXPORT double colyseus_gm_schema_get_ref(double instance_handle, const char* field_name) {
-    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
-    if (!schema || !field_name) return 0.0;
+// Unified schema_get: returns the field type (or -1). Stores the result internally.
+// For string fields, call colyseus_gm_schema_get_result_string() to retrieve.
+// For number/ref/array/map fields, call colyseus_gm_schema_get_result_number().
+static struct {
+    double number;
+    char string[4096];
+} gm_schema_get_result = {0};
 
-    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
-        colyseus_dynamic_schema_t* dyn = (colyseus_dynamic_schema_t*)schema;
-        colyseus_dynamic_value_t* val = colyseus_dynamic_schema_get_by_name(dyn, field_name);
-        if (val && val->type == COLYSEUS_FIELD_REF && val->data.ref) {
-            return (double)(uintptr_t)val->data.ref;
-        }
+GM_EXPORT double colyseus_gm_schema_get(double instance_handle, const char* field_name) {
+    gm_schema_get_result.number = 0.0;
+    gm_schema_get_result.string[0] = '\0';
+
+    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    if (!schema || !field_name) return -1.0;
+
+    double type = colyseus_gm_schema_get_field_type(instance_handle, field_name);
+    if (type < 0) return -1.0;
+
+    if ((int)type == COLYSEUS_FIELD_STRING) {
+        const char* s = colyseus_gm_schema_get_string(instance_handle, field_name);
+        if (s) strncpy(gm_schema_get_result.string, s, sizeof(gm_schema_get_result.string) - 1);
     } else {
-        for (int i = 0; i < schema->__vtable->field_count; i++) {
-            if (schema->__vtable->fields[i].name &&
-                strcmp(schema->__vtable->fields[i].name, field_name) == 0 &&
-                schema->__vtable->fields[i].type == COLYSEUS_FIELD_REF) {
-                void* ref = *(void**)((char*)schema + schema->__vtable->fields[i].offset);
-                return (double)(uintptr_t)ref;
-            }
-        }
+        gm_schema_get_result.number = colyseus_gm_schema_get_number(instance_handle, field_name);
     }
-    return 0.0;
+    return type;
+}
+
+GM_EXPORT const char* colyseus_gm_schema_get_result_string(void) {
+    return gm_schema_get_result.string;
+}
+
+GM_EXPORT double colyseus_gm_schema_get_result_number(void) {
+    return gm_schema_get_result.number;
 }
 
 GM_EXPORT double colyseus_gm_map_get(double instance_handle, const char* field_name, const char* key) {
@@ -1003,7 +1083,7 @@ GM_EXPORT double colyseus_gm_callbacks_on_add(double callbacks_handle, double in
         property,
         gm_item_add_trampoline,
         entry,
-        false  // not immediate
+        true  // immediate — fire for items already in collection
     );
 
     return (double)entry->index;
@@ -1067,6 +1147,7 @@ GM_EXPORT double colyseus_gm_poll_event(void) {
     if (event_queue_pop(&g_current_event)) {
         return (double)g_current_event.type;
     }
+
     memset(&g_current_event, 0, sizeof(g_current_event));
     return 0.0;
 }
@@ -1190,14 +1271,21 @@ GM_EXPORT double colyseus_gm_message_get_type(void) {
 }
 
 GM_EXPORT const char* colyseus_gm_message_read_string(const char* key) {
+    static char buf[4096];
+    buf[0] = '\0';
     gm_ensure_message_reader();
-    if (!g_current_message_reader || !key) return "";
+    if (!g_current_message_reader || !key) return buf;
     const char* value = NULL;
     size_t len = 0;
     if (colyseus_message_reader_map_get_str(g_current_message_reader, key, &value, &len)) {
-        return value ? value : "";
+        if (value && len > 0) {
+            if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+            memcpy(buf, value, len);
+            buf[len] = '\0';
+            return buf;
+        }
     }
-    return "";
+    return buf;
 }
 
 GM_EXPORT double colyseus_gm_message_read_number(const char* key) {
@@ -1229,11 +1317,18 @@ GM_EXPORT double colyseus_gm_message_read_bool(const char* key) {
 }
 
 GM_EXPORT const char* colyseus_gm_message_read_string_value(void) {
+    static char buf[4096];
+    buf[0] = '\0';
     gm_ensure_message_reader();
-    if (!g_current_message_reader) return "";
+    if (!g_current_message_reader) return buf;
     size_t len = 0;
     const char* value = colyseus_message_reader_get_str(g_current_message_reader, &len);
-    return value ? value : "";
+    if (value && len > 0) {
+        if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+        memcpy(buf, value, len);
+        buf[len] = '\0';
+    }
+    return buf;
 }
 
 GM_EXPORT double colyseus_gm_message_read_number_value(void) {
@@ -1296,10 +1391,17 @@ GM_EXPORT double colyseus_gm_message_iter_next(void) {
 }
 
 GM_EXPORT const char* colyseus_gm_message_iter_key(void) {
-    if (!g_current_iter_key) return "";
+    static char buf[1024];
+    buf[0] = '\0';
+    if (!g_current_iter_key) return buf;
     size_t len = 0;
     const char* key = colyseus_message_reader_get_str(g_current_iter_key, &len);
-    return key ? key : "";
+    if (key && len > 0) {
+        if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+        memcpy(buf, key, len);
+        buf[len] = '\0';
+    }
+    return buf;
 }
 
 GM_EXPORT double colyseus_gm_message_iter_value_type(void) {
@@ -1308,10 +1410,17 @@ GM_EXPORT double colyseus_gm_message_iter_value_type(void) {
 }
 
 GM_EXPORT const char* colyseus_gm_message_iter_value_string(void) {
-    if (!g_current_iter_value) return "";
+    static char buf[4096];
+    buf[0] = '\0';
+    if (!g_current_iter_value) return buf;
     size_t len = 0;
     const char* str = colyseus_message_reader_get_str(g_current_iter_value, &len);
-    return str ? str : "";
+    if (str && len > 0) {
+        if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+        memcpy(buf, str, len);
+        buf[len] = '\0';
+    }
+    return buf;
 }
 
 GM_EXPORT double colyseus_gm_message_iter_value_number(void) {

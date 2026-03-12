@@ -195,7 +195,6 @@ fn buildGameMakerExtension(
         .name = extension_name,
         .root_module = gamemaker_module,
         .linkage = .dynamic,
-        .version = .{ .major = 0, .minor = 1, .patch = 0 },
     });
 
     // Add Apple SDK paths for framework resolution (macOS, iOS)

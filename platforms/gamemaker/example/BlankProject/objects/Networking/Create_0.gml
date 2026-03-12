@@ -44,7 +44,7 @@ colyseus_on_state_change(colyseus_room, function(_room) {
         show_debug_message("State changed");
         show_debug_message("Room session id: " + colyseus_room_get_session_id(_room));
 
-        var host = colyseus_schema_get_ref(state, "host");
+        var host = colyseus_schema_get(state, "host");
         var my_player = colyseus_map_get(state, "players", colyseus_room_get_session_id(_room));
         var is_host = (host == my_player);
         show_debug_message("Is host: " + string(is_host));

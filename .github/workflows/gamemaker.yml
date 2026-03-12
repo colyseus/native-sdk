@@ -227,110 +227,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create extension directory
-        run: mkdir -p Colyseus_SDK/extensions/Colyseus_SDK
-
-      - name: Download macOS binaries
+      - name: Download all build artifacts into zig-out/lib
         uses: actions/download-artifact@v4
         with:
-          name: binaries-macos
-          path: Colyseus_SDK/extensions/Colyseus_SDK/macos
+          pattern: binaries-*
+          path: platforms/gamemaker/zig-out/lib
+          merge-multiple: false
 
-      - name: Download iOS binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-ios
-          path: Colyseus_SDK/extensions/Colyseus_SDK/ios
-
-      - name: Download Linux binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-linux
-          path: Colyseus_SDK/extensions/Colyseus_SDK/linux
-
-      - name: Download Windows binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-windows
-          path: Colyseus_SDK/extensions/Colyseus_SDK/windows
-
-      - name: Download Android binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-android
-          path: Colyseus_SDK/extensions/Colyseus_SDK/android
-
-      - name: Download WASM binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-wasm
-          path: Colyseus_SDK/extensions/Colyseus_SDK
-
-      - name: Flatten binaries with GameMaker proxy naming conventions
+      - name: Arrange artifacts into expected directory structure
+        working-directory: platforms/gamemaker
         run: |
-          EXT=Colyseus_SDK/extensions/Colyseus_SDK
+          # download-artifact creates binaries-<platform>/ subdirs; move contents to zig-out/lib/
+          for dir in zig-out/lib/binaries-*/; do
+            cp -r "$dir"* zig-out/lib/ 2>/dev/null || true
+          done
+          # WASM artifact is a single file — move it to wasm-out/
+          mkdir -p wasm-out
+          mv zig-out/lib/colyseus_wasm.js wasm-out/ 2>/dev/null || true
+          # Clean up artifact wrapper dirs
+          rm -rf zig-out/lib/binaries-*
 
-          # Main native library (macOS arm64 - referenced in .yy as libcolyseus.0.1.0.dylib)
-          cp $EXT/macos/arm64/libcolyseus.0.1.0.dylib $EXT/libcolyseus.0.1.0.dylib
-
-          # Proxy files (GameMaker auto-detects platform from naming convention)
-          cp $EXT/windows/x64/colyseus.dll $EXT/colyseus_x64.dll
-          cp $EXT/linux/x64/libcolyseus.so $EXT/libcolyseus_linux.so
-          cp $EXT/android/arm64/libcolyseus.so $EXT/libcolyseus_arm64.so
-          cp $EXT/android/arm32/libcolyseus.so $EXT/libcolyseus_armeabi-v7a.so
-          cp $EXT/ios/arm64/libcolyseus.0.1.0.dylib $EXT/libcolyseus_ios.dylib
-
-          # Clean up platform subdirectories
-          rm -rf $EXT/macos $EXT/windows $EXT/linux $EXT/android $EXT/ios
-
-      - name: Copy extension files and fix parent references
+      - name: Package .yymps
+        working-directory: platforms/gamemaker
         run: |
-          # Copy .yy files and scripts
-          cp platforms/gamemaker/example/BlankProject/extensions/Colyseus_SDK/Colyseus_SDK.yy Colyseus_SDK/extensions/Colyseus_SDK/
-          cp -r platforms/gamemaker/example/BlankProject/scripts Colyseus_SDK/
-
-          # Fix parent references to point to our minimal project instead of BlankProject
-          jq '.parent = {"name":"Colyseus_SDK","path":"Colyseus_SDK.yyp"}' \
-            Colyseus_SDK/extensions/Colyseus_SDK/Colyseus_SDK.yy > tmp.yy && mv tmp.yy Colyseus_SDK/extensions/Colyseus_SDK/Colyseus_SDK.yy
-          jq '.parent = {"name":"Colyseus_SDK","path":"Colyseus_SDK.yyp"}' \
-            Colyseus_SDK/scripts/Colyseus/Colyseus.yy > tmp.yy && mv tmp.yy Colyseus_SDK/scripts/Colyseus/Colyseus.yy
-
-          # Create minimal .yyp project file so GameMaker can resolve parent references
-          cat > Colyseus_SDK/Colyseus_SDK.yyp << 'EOFYYP'
-          {
-            "$GMProject":"v1",
-            "%Name":"Colyseus_SDK",
-            "AudioGroups":[
-              {"$GMAudioGroup":"v1","%Name":"audiogroup_default","exportDir":"","name":"audiogroup_default","resourceType":"GMAudioGroup","resourceVersion":"2.0","targets":-1}
-            ],
-            "configs":{"children":[],"name":"Default"},
-            "defaultScriptType":0,
-            "Folders":[],
-            "ForcedPrefabProjectReferences":[],
-            "IncludedFiles":[],
-            "isEcma":false,
-            "LibraryEmitters":[],
-            "MetaData":{"IDEVersion":"2024.1400.4.1003"},
-            "name":"Colyseus_SDK",
-            "resources":[
-              {"id":{"name":"Colyseus_SDK","path":"extensions/Colyseus_SDK/Colyseus_SDK.yy"}},
-              {"id":{"name":"Colyseus","path":"scripts/Colyseus/Colyseus.yy"}}
-            ],
-            "resourceType":"GMProject",
-            "resourceVersion":"2.0",
-            "RoomOrderNodes":[],
-            "templateType":"game",
-            "TextureGroups":[
-              {"$GMTextureGroup":"","%Name":"Default","autocrop":true,"border":2,"compressFormat":"bz2","customOptions":"","directory":"","groupParent":null,"isScaled":true,"loadType":"default","mipsToGenerate":0,"name":"Default","resourceType":"GMTextureGroup","resourceVersion":"2.0","targets":-1}
-            ]
-          }
-          EOFYYP
-
-      - name: List all files
-        run: find Colyseus_SDK/ -type f | sort
-
-      - name: Create release zip
-        run: zip -r colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip Colyseus_SDK
+          chmod +x package-yymps.sh
+          ./package-yymps.sh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -341,11 +262,9 @@ jobs:
             ## Colyseus GameMaker SDK v${{ needs.check-version.outputs.version }}
 
             ### Installation
-            1. Download and extract `colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip`
-            2. Open the extracted `Colyseus_SDK/Colyseus_SDK.yyp` in GameMaker
-            3. Go to **Tools → Create Local Package**, select all resources, and save the `.yymps` file
-            4. Open your own project, go to **Tools → Import Local Package**
-            5. Select the `.yymps` file you just created, select all resources, and click **Import**
+            1. Download `colyseus-gamemaker-${{ needs.check-version.outputs.version }}.yymps`
+            2. In GameMaker, go to **Tools → Import Local Package**
+            3. Select the `.yymps` file, select all resources, and click **Import**
 
             ### Supported Platforms
             - Windows (x86_64)
@@ -354,6 +273,6 @@ jobs:
             - Linux (x86_64)
             - Android (arm64, arm32, x86_64)
             - HTML5 (WASM)
-          files: colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip
+          files: platforms/gamemaker/package-out/colyseus-gamemaker-${{ needs.check-version.outputs.version }}.yymps
           draft: false
           prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}

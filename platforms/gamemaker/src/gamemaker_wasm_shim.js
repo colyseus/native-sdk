@@ -35,17 +35,20 @@
 
     function _callN(name, argTypes, args) {
         if (!_mod) { return 0; }
-        return _mod.ccall(name, 'number', argTypes, args);
+        try { return _mod.ccall(name, 'number', argTypes, args); }
+        catch(e) { console.error("[Colyseus WASM] ccall error (" + name + "):", e); return 0; }
     }
 
     function _callS(name, argTypes, args) {
         if (!_mod) { return ""; }
-        return _mod.ccall(name, 'string', argTypes, args);
+        try { return _mod.ccall(name, 'string', argTypes, args); }
+        catch(e) { console.error("[Colyseus WASM] ccall error (" + name + "):", e); return ""; }
     }
 
     function _callV(name, argTypes, args) {
         if (!_mod) { return; }
-        _mod.ccall(name, null, argTypes, args);
+        try { _mod.ccall(name, null, argTypes, args); }
+        catch(e) { console.error("[Colyseus WASM] ccall error (" + name + "):", e); }
     }
 
     // =========================================================================
@@ -144,8 +147,20 @@
         return _callN('colyseus_gm_schema_get_number', ['number', 'string'], [inst, field]);
     };
 
-    window.colyseus_gm_schema_get_ref = function(inst, field) {
-        return _callN('colyseus_gm_schema_get_ref', ['number', 'string'], [inst, field]);
+    window.colyseus_gm_schema_get_field_type = function(inst, field) {
+        return _callN('colyseus_gm_schema_get_field_type', ['number', 'string'], [inst, field]);
+    };
+
+    window.colyseus_gm_schema_get = function(inst, field) {
+        return _callN('colyseus_gm_schema_get', ['number', 'string'], [inst, field]);
+    };
+
+    window.colyseus_gm_schema_get_result_string = function() {
+        return _callS('colyseus_gm_schema_get_result_string', [], []);
+    };
+
+    window.colyseus_gm_schema_get_result_number = function() {
+        return _callN('colyseus_gm_schema_get_result_number', [], []);
     };
 
     window.colyseus_gm_map_get = function(inst, field, key) {

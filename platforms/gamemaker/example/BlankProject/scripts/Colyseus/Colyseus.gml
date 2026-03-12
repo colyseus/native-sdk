@@ -127,6 +127,26 @@ function colyseus_on_remove(_callbacks, _instance, _property, _handler) {
 }
 
 // =============================================================================
+// Schema field access — unified getter
+// =============================================================================
+
+/// Get a field value from a schema instance, auto-dispatching by type.
+/// Returns: string for string fields, number for numeric/bool fields,
+///          instance handle (real) for ref/array/map fields, undefined if unknown.
+/// @param {Real} _instance  Schema instance handle
+/// @param {String} _field   Field name
+function colyseus_schema_get(_instance, _field) {
+    var _type = __colyseus_schema_get(_instance, _field);
+    if (_type == COLYSEUS_TYPE_STRING) {
+        return __colyseus_schema_get_result_string();
+    } else if (_type < 0) {
+        return undefined;
+    } else {
+        return __colyseus_schema_get_result_number();
+    }
+}
+
+// =============================================================================
 // Message sending helper
 // =============================================================================
 

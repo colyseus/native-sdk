@@ -4,6 +4,8 @@ zig-cache/
 .zig-cache/
 
 # Build outputs
+wasm-out/
+package-out/
 lib/
 *.dylib
 *.so
