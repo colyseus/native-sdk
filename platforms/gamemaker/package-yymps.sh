@@ -49,7 +49,11 @@ fix_trailing_commas() {
 # Copy Colyseus_SDK.yy — fix parent references, version, and split per-platform file entries
 # The source .yy has a single native file entry (macOS dylib) targeting all platforms.
 # Split it into per-platform entries so each platform loads the correct binary.
-# copyToTargets values (VM + YYC bits):
+#
+# IMPORTANT: jq 1.6 (Ubuntu CI) uses double-precision floats which corrupt 64-bit integers
+# like copyToTargets (3026418979657744622 → 3026418979657744384, losing platform bits).
+# We use -1 (all platforms) for the extension-level copyToTargets to avoid this.
+# Per-file copyToTargets values are within safe integer range (< 2^53):
 #   macOS:   2251799813685252  (bits 2 + 51)
 #   Windows: 1125899906842626  (bits 1 + 50)
 #   Linux:   4503599627370504  (bits 3 + 52)
@@ -57,6 +61,7 @@ fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   --arg ver "$VERSION" --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" '
   .parent = { "name": $name, "path": $path } |
   .extensionVersion = $ver |
+  .copyToTargets = -1 |
   .files as $orig_files |
   .files = [
     ($orig_files[0] | .filename = "libcolyseus.dylib" | .copyToTargets = 2251799813685252),
