@@ -52,11 +52,9 @@ fix_trailing_commas() {
 #
 # IMPORTANT: jq 1.6 (Ubuntu CI) uses double-precision floats which corrupt 64-bit integers
 # like copyToTargets (3026418979657744622 → 3026418979657744384, losing platform bits).
-# We use -1 (all platforms) for the extension-level copyToTargets to avoid this.
-# Per-file copyToTargets values are within safe integer range (< 2^53):
-#   macOS:   2251799813685252  (bits 2 + 51)
-#   Windows: 1125899906842626  (bits 1 + 50)
-#   Linux:   4503599627370504  (bits 3 + 52)
+# We use -1 (all platforms) for copyToTargets to avoid this. GameMaker will attempt to load
+# all native files on each platform — the wrong-format ones fail silently and the correct
+# one succeeds.
 fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   --arg ver "$VERSION" --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" '
   .parent = { "name": $name, "path": $path } |
@@ -64,10 +62,10 @@ fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   .copyToTargets = -1 |
   .files as $orig_files |
   .files = [
-    ($orig_files[0] | .filename = "libcolyseus.dylib" | .copyToTargets = 2251799813685252),
-    ($orig_files[0] | .filename = "colyseus.dll" | .copyToTargets = 1125899906842626),
-    ($orig_files[0] | .filename = "libcolyseus.so" | .copyToTargets = 4503599627370504),
-    $orig_files[1]
+    ($orig_files[0] | .filename = "libcolyseus.dylib" | .copyToTargets = -1),
+    ($orig_files[0] | .filename = "colyseus.dll" | .copyToTargets = -1),
+    ($orig_files[0] | .filename = "libcolyseus.so" | .copyToTargets = -1),
+    ($orig_files[1] | .copyToTargets = 32)
   ]
 ' > "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
 
