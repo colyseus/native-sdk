@@ -87,29 +87,22 @@ copy_if_exists() {
     fi
 }
 
-copy_if_exists "$ZIG_OUT/macos/arm64/libcolyseus.dylib" "$STAGE/$EXT_DIR/libcolyseus.dylib"
+# macOS — create universal binary if both archs exist, otherwise use whichever is available
+DYLIB_ARM64="$ZIG_OUT/macos/arm64/libcolyseus.dylib"
+DYLIB_X64="$ZIG_OUT/macos/x64/libcolyseus.dylib"
+if [ -f "$DYLIB_ARM64" ] && [ -f "$DYLIB_X64" ]; then
+    lipo -create "$DYLIB_ARM64" "$DYLIB_X64" -output "$STAGE/$EXT_DIR/libcolyseus.dylib"
+elif [ -f "$DYLIB_ARM64" ]; then
+    cp "$DYLIB_ARM64" "$STAGE/$EXT_DIR/libcolyseus.dylib"
+elif [ -f "$DYLIB_X64" ]; then
+    cp "$DYLIB_X64" "$STAGE/$EXT_DIR/libcolyseus.dylib"
+fi
 
-# macOS
-for arch in arm64 x64; do
-    copy_if_exists "$ZIG_OUT/macos/$arch/libcolyseus.dylib" "$STAGE/$EXT_DIR/macos/$arch/libcolyseus.dylib"
-done
-
-# iOS
-copy_if_exists "$ZIG_OUT/ios/arm64/libcolyseus.dylib" "$STAGE/$EXT_DIR/ios/arm64/libcolyseus.dylib"
-
-# Linux (root file for GameMaker to load + arch subdir)
-copy_if_exists "$ZIG_OUT/linux/x64/libcolyseus.so" "$STAGE/$EXT_DIR/libcolyseus.so"
-copy_if_exists "$ZIG_OUT/linux/x64/libcolyseus.so" "$STAGE/$EXT_DIR/linux/x64/libcolyseus.so"
-
-# Windows (root file for GameMaker to load + arch subdir)
+# Windows
 copy_if_exists "$ZIG_OUT/windows/x64/colyseus.dll" "$STAGE/$EXT_DIR/colyseus.dll"
-copy_if_exists "$ZIG_OUT/windows/x64/colyseus.dll" "$STAGE/$EXT_DIR/windows/x64/colyseus.dll"
-copy_if_exists "$ZIG_OUT/windows/x64/colyseus.pdb" "$STAGE/$EXT_DIR/windows/x64/colyseus.pdb"
 
-# Android
-for arch in arm64 arm32 x64; do
-    copy_if_exists "$ZIG_OUT/android/$arch/libcolyseus.so" "$STAGE/$EXT_DIR/android/$arch/libcolyseus.so"
-done
+# Linux
+copy_if_exists "$ZIG_OUT/linux/x64/libcolyseus.so" "$STAGE/$EXT_DIR/libcolyseus.so"
 
 # WASM
 copy_if_exists "$WASM_OUT/colyseus_wasm.js" "$STAGE/$EXT_DIR/colyseus_wasm.js"
