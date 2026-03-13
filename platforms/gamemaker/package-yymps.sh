@@ -87,10 +87,10 @@ copy_if_exists() {
     fi
 }
 
-# macOS — create universal binary if both archs exist, otherwise use whichever is available
+# macOS — create universal binary via lipo if available, otherwise use single arch
 DYLIB_ARM64="$ZIG_OUT/macos/arm64/libcolyseus.dylib"
 DYLIB_X64="$ZIG_OUT/macos/x64/libcolyseus.dylib"
-if [ -f "$DYLIB_ARM64" ] && [ -f "$DYLIB_X64" ]; then
+if [ -f "$DYLIB_ARM64" ] && [ -f "$DYLIB_X64" ] && command -v lipo &>/dev/null; then
     lipo -create "$DYLIB_ARM64" "$DYLIB_X64" -output "$STAGE/$EXT_DIR/libcolyseus.dylib"
 elif [ -f "$DYLIB_ARM64" ]; then
     cp "$DYLIB_ARM64" "$STAGE/$EXT_DIR/libcolyseus.dylib"
