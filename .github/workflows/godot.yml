@@ -836,7 +836,11 @@ jobs:
             ### Installation
             1. Download the `colyseus-godot-${{ needs.check-version.outputs.version }}.zip` file
             2. Extract the `addons` folder into your Godot project root
-            3. Enable the plugin in Project Settings > Plugins
+            3. **macOS only:** Remove the quarantine attribute by running in the project root:
+               ```
+               xattr -cr addons/colyseus
+               ```
+            4. Enable the plugin in Project Settings > Plugins
 
             ### Supported Platforms
             - Web
