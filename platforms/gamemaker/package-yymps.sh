@@ -46,27 +46,23 @@ fix_trailing_commas() {
     perl -0777 -pe '1 while s/,(\s*[\]\}])/$1/g' "$1"
 }
 
-# Copy Colyseus_SDK.yy — fix parent references, version, and split per-platform file entries
-# The source .yy has a single native file entry (macOS dylib) targeting all platforms.
-# Split it into per-platform entries so each platform loads the correct binary.
-#
-# IMPORTANT: jq 1.6 (Ubuntu CI) uses double-precision floats which corrupt 64-bit integers
-# like copyToTargets (3026418979657744622 → 3026418979657744384, losing platform bits).
-# We use -1 (all platforms) for copyToTargets to avoid this. GameMaker will attempt to load
-# all native files on each platform — the wrong-format ones fail silently and the correct
-# one succeeds.
+# Copy Colyseus_SDK.yy — fix parent references, version, and add ProxyFiles
+# The source .yy has a single native file entry (macOS dylib) used during development.
+# We add ProxyFiles entries so GameMaker loads the correct binary per platform:
+#   - Primary file: libcolyseus.dylib (macOS)
+#   - Proxy: colyseus.dll (Windows, TargetMask=6)
+#   - Proxy: libcolyseus.so (Linux, TargetMask=7)
 fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   --arg ver "$VERSION" --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" '
   .parent = { "name": $name, "path": $path } |
   .extensionVersion = $ver |
   .copyToTargets = -1 |
-  .files as $orig_files |
-  .files = [
-    ($orig_files[0] | .filename = "libcolyseus.dylib" | .copyToTargets = -1),
-    ($orig_files[0] | .filename = "colyseus.dll" | .copyToTargets = -1),
-    ($orig_files[0] | .filename = "libcolyseus.so" | .copyToTargets = -1),
-    ($orig_files[1] | .copyToTargets = 32)
-  ]
+  .files[0].copyToTargets = -1 |
+  .files[0].ProxyFiles = [
+    {"$GMProxyFile":"","%Name":"colyseus.dll","name":"colyseus.dll","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":6},
+    {"$GMProxyFile":"","%Name":"libcolyseus.so","name":"libcolyseus.so","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":7}
+  ] |
+  .files[1].copyToTargets = 32
 ' > "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
 
 # Copy Colyseus.gml + Colyseus.yy — fix parent references
