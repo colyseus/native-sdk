@@ -61,6 +61,12 @@ jobs:
         working-directory: platforms/godot
         run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
 
+      - name: Ad-hoc code sign macOS dylibs
+        run: |
+          for dylib in platforms/godot/addons/colyseus/bin/*.dylib; do
+            codesign -s - "$dylib"
+          done
+
       - name: Upload macOS binaries
         uses: actions/upload-artifact@v4
         with:
