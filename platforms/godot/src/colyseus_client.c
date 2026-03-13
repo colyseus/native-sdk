@@ -234,26 +234,27 @@ void gdext_colyseus_client_get_endpoint_call(void* p_method_userdata, GDExtensio
 // This ensures signals are emitted on the main thread, avoiding thread safety issues
 static void emit_signal(GDExtensionObjectPtr object, const char* signal_name, GDExtensionConstVariantPtr* args, int arg_count) {
     if (!object) return;
-    
+
     Variant object_variant;
     constructors.variant_from_object_constructor(&object_variant, &object);
-    
-    // Use call_deferred to ensure signal emission happens on main thread
+
+    // Use call_deferred because WebSocket callbacks fire from a background thread.
+    // Godot APIs are not thread-safe, so we must defer to the main thread.
     StringName call_deferred_method;
     constructors.string_name_new_with_latin1_chars(&call_deferred_method, "call_deferred", false);
-    
+
     // First arg to call_deferred is the method name "emit_signal"
     String emit_signal_str;
     constructors.string_new_with_utf8_chars(&emit_signal_str, "emit_signal");
     Variant emit_signal_variant;
     constructors.variant_from_string_constructor(&emit_signal_variant, &emit_signal_str);
-    
+
     // Second arg to call_deferred is the signal name
     String signal_string;
     constructors.string_new_with_utf8_chars(&signal_string, signal_name);
     Variant signal_name_variant;
     constructors.variant_from_string_constructor(&signal_name_variant, &signal_string);
-    
+
     // Build args array: ["emit_signal", signal_name, ...args]
     GDExtensionConstVariantPtr call_args[16];
     call_args[0] = &emit_signal_variant;
@@ -261,11 +262,11 @@ static void emit_signal(GDExtensionObjectPtr object, const char* signal_name, GD
     for (int i = 0; i < arg_count && i < 14; i++) {
         call_args[i + 2] = args[i];
     }
-    
+
     Variant return_value;
     GDExtensionCallError error;
     api.variant_call(&object_variant, &call_deferred_method, call_args, arg_count + 2, &return_value, &error);
-    
+
     destructors.string_name_destructor(&call_deferred_method);
     destructors.string_destructor(&emit_signal_str);
     destructors.variant_destroy(&emit_signal_variant);

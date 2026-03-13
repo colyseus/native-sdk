@@ -170,6 +170,7 @@ pub fn build(b: *std.Build) void {
                 "src/colyseus_state.c",
                 "src/colyseus_schema_registry.c",
                 "src/colyseus_gdscript_schema.c",
+                "src/tls_certificates_web.c",
                 "src/msgpack_variant.c",
                 "src/msgpack_encoder.c",
                 // Core SDK

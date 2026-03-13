@@ -591,10 +591,10 @@ static void on_collection_available(void* value, void* previous_value, void* use
         ctx->userdata
     );
 
-    /* 
+    /*
      * If immediate and ADD operation, call for existing items.
-     * BUT skip if we're currently triggering changes - the actual ADD changes
-     * will handle notifying about existing items.
+     * Skip if currently triggering changes - the ADD changes in the trigger
+     * list will handle notifying about items added in the same batch.
      */
     if (ctx->immediate && !ctx->callbacks->is_triggering && ctx->operation == (int)COLYSEUS_OP_ADD) {
         /* Check if it's an array or map and iterate */

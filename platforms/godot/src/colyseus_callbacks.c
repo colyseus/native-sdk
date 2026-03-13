@@ -220,26 +220,27 @@ static void native_value_to_variant(void* value, int field_type, const colyseus_
 static void property_change_trampoline(void* value, void* previous_value, void* userdata) {
     GodotCallbackEntry* entry = (GodotCallbackEntry*)userdata;
     if (!entry || !entry->active) return;
-    
+
     // Create Variant arguments for the callable
     Variant current_variant;
     Variant previous_variant;
-    
+
     native_value_to_variant(value, entry->field_type, entry->item_vtable, &current_variant);
     native_value_to_variant(previous_value, entry->field_type, entry->item_vtable, &previous_variant);
-    
-    // Call the "call" method on the Callable variant
+
+    // Use call_deferred to ensure the callable runs on the main thread.
+    // WebSocket callbacks fire from a background thread, so direct calls crash Godot.
     StringName call_method;
-    constructors.string_name_new_with_latin1_chars(&call_method, "call", false);
-    
+    constructors.string_name_new_with_latin1_chars(&call_method, "call_deferred", false);
+
     GDExtensionConstVariantPtr arg_ptrs[2] = { &current_variant, &previous_variant };
     Variant return_value;
     GDExtensionCallError error;
-    
+
     api.variant_call((GDExtensionVariantPtr)&entry->callable, &call_method, arg_ptrs, 2, &return_value, &error);
-    
+
     destructors.string_name_destructor(&call_method);
-    
+
     destructors.variant_destroy(&return_value);
     destructors.variant_destroy(&current_variant);
     destructors.variant_destroy(&previous_variant);
@@ -303,18 +304,19 @@ static void item_add_trampoline(void* value, void* key, void* userdata) {
         memset(&key_variant, 0, sizeof(Variant));
     }
     
-    // Call the "call" method on the Callable variant
+    // Use call_deferred to ensure the callable runs on the main thread.
+    // WebSocket callbacks fire from a background thread, so direct calls crash Godot.
     StringName call_method;
-    constructors.string_name_new_with_latin1_chars(&call_method, "call", false);
-    
+    constructors.string_name_new_with_latin1_chars(&call_method, "call_deferred", false);
+
     GDExtensionConstVariantPtr arg_ptrs[2] = { &value_variant, &key_variant };
     Variant return_value;
     GDExtensionCallError error;
-    
+
     api.variant_call((GDExtensionVariantPtr)&entry->callable, &call_method, arg_ptrs, 2, &return_value, &error);
-    
+
     destructors.string_name_destructor(&call_method);
-    
+
     destructors.variant_destroy(&return_value);
     destructors.variant_destroy(&value_variant);
     destructors.variant_destroy(&key_variant);
@@ -377,18 +379,19 @@ static void item_remove_trampoline(void* value, void* key, void* userdata) {
         memset(&key_variant, 0, sizeof(Variant));
     }
     
-    // Call the "call" method on the Callable variant
+    // Use call_deferred to ensure the callable runs on the main thread.
+    // WebSocket callbacks fire from a background thread, so direct calls crash Godot.
     StringName call_method;
-    constructors.string_name_new_with_latin1_chars(&call_method, "call", false);
-    
+    constructors.string_name_new_with_latin1_chars(&call_method, "call_deferred", false);
+
     GDExtensionConstVariantPtr arg_ptrs[2] = { &value_variant, &key_variant };
     Variant return_value;
     GDExtensionCallError error;
-    
+
     api.variant_call((GDExtensionVariantPtr)&entry->callable, &call_method, arg_ptrs, 2, &return_value, &error);
-    
+
     destructors.string_name_destructor(&call_method);
-    
+
     destructors.variant_destroy(&return_value);
     destructors.variant_destroy(&value_variant);
     destructors.variant_destroy(&key_variant);
