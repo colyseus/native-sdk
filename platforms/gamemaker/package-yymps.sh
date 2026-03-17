@@ -52,32 +52,34 @@ fix_trailing_commas() {
 
 # Copy Colyseus_SDK.yy — fix parent references, version, and create per-platform file entries.
 # The source .yy has a single native file entry (macOS dylib) used during development.
-# We duplicate it into separate file entries for each platform (each with copyToTargets
-# targeting only that platform) so GameMaker loads the correct binary per platform.
-# ProxyFiles are NOT used — they cause GameMaker to load the wrong binary on macOS.
+#
+# IMPORTANT: GameMaker only loads the FIRST kind:1 (native) file entry, ignoring
+# copyToTargets. We put colyseus.dll first since Windows is the most common target.
+# The build.sh/build.bat scripts reconfigure the .yy for the developer's platform.
 #
 # Platform copyToTargets flags: Windows=1, macOS=2, Linux=4, HTML5=8, iOS=16, Android=32
-# Save the macOS functions for reuse across platform entries
-MACOS_FUNCTIONS=$(fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq '.files[0].functions')
+NATIVE_FUNCTIONS=$(fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq '.files[0].functions')
 
 fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   --arg ver "$VERSION" --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" \
-  --argjson funcs "$MACOS_FUNCTIONS" '
+  --argjson funcs "$NATIVE_FUNCTIONS" '
   .parent = { "name": $name, "path": $path } |
   .extensionVersion = $ver |
   .copyToTargets = -1 |
 
-  # macOS entry (original): restrict to macOS only, no ProxyFiles
-  .files[0].copyToTargets = 2 |
+  # Windows as first native entry (GameMaker loads the first kind:1 entry)
+  .files[0].filename = "colyseus.dll" |
+  .files[0].copyToTargets = -1 |
   .files[0].ProxyFiles = [] |
+  .files[0].functions = $funcs |
 
   # Add functions to WASM entry (same declarations, JS implementation)
   .files[1].functions = $funcs |
 
-  # Clone file entries for Windows and Linux (same functions, different binary)
+  # Additional native entries (for reference / future GameMaker fixes)
   .files += [
-    (.files[0] | .filename = "colyseus.dll" | .copyToTargets = 1 | .functions = $funcs),
-    (.files[0] | .filename = "libcolyseus.so" | .copyToTargets = 4 | .functions = $funcs)
+    (.files[0] | .filename = "libcolyseus.dylib" | .functions = $funcs),
+    (.files[0] | .filename = "libcolyseus.so" | .functions = $funcs)
   ]
 ' > "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
 
