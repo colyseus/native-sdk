@@ -21,8 +21,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERSION=$(jq -r '.version' "$SCRIPT_DIR/version.json")
 PACKAGE_DISPLAY_NAME="Colyseus SDK"
-PACKAGE_NAME="Colyseus_SDK"
 PACKAGE_ID="Colyseus_SDK"
+# The .yyp filename MUST match the .yymps filename (without extension).
+# GameMaker's ProjectTool on Windows renames the .yyp to match the package
+# filename during import — parent references in .yy files must use this name.
+PACKAGE_NAME="colyseus-gamemaker-${VERSION}"
 EXT_DIR="extensions/Colyseus_SDK"
 SCRIPT_RESOURCE_DIR="scripts/Colyseus"
 
