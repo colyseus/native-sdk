@@ -20,7 +20,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERSION=$(jq -r '.version' "$SCRIPT_DIR/version.json")
-PACKAGE_NAME="Colyseus SDK"
+PACKAGE_DISPLAY_NAME="Colyseus SDK"
+PACKAGE_NAME="Colyseus_SDK"
 PACKAGE_ID="Colyseus_SDK"
 EXT_DIR="extensions/Colyseus_SDK"
 SCRIPT_RESOURCE_DIR="scripts/Colyseus"
@@ -136,7 +137,7 @@ cat > "$STAGE/$PACKAGE_NAME.yyp" << EOFYYP
   "MetaData":{
     "IDEVersion":"2024.1400.4.1003",
     "PackageType":"Asset",
-    "PackageName":"$PACKAGE_NAME",
+    "PackageName":"$PACKAGE_DISPLAY_NAME",
     "PackageID":"$PACKAGE_ID",
     "PackagePublisher":"Colyseus",
     "PackageVersion":"$VERSION"
