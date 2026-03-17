@@ -46,23 +46,32 @@ fix_trailing_commas() {
     perl -0777 -pe '1 while s/,(\s*[\]\}])/$1/g' "$1"
 }
 
-# Copy Colyseus_SDK.yy — fix parent references, version, and add ProxyFiles
+# Copy Colyseus_SDK.yy — fix parent references, version, and create per-platform file entries.
 # The source .yy has a single native file entry (macOS dylib) used during development.
-# We add ProxyFiles entries so GameMaker loads the correct binary per platform:
-#   - Primary file: libcolyseus.dylib (macOS)
-#   - Proxy: colyseus.dll (Windows, TargetMask=6)
-#   - Proxy: libcolyseus.so (Linux, TargetMask=7)
+# We duplicate it into separate file entries for each platform (each with copyToTargets
+# targeting only that platform) so GameMaker loads the correct binary per platform.
+# ProxyFiles are NOT used — they cause GameMaker to load the wrong binary on macOS.
+#
+# Platform copyToTargets flags: Windows=1, macOS=2, Linux=4, HTML5=8, iOS=16, Android=32
+# Save the macOS functions for reuse across platform entries
+MACOS_FUNCTIONS=$(fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq '.files[0].functions')
+
 fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
-  --arg ver "$VERSION" --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" '
+  --arg ver "$VERSION" --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" \
+  --argjson funcs "$MACOS_FUNCTIONS" '
   .parent = { "name": $name, "path": $path } |
   .extensionVersion = $ver |
   .copyToTargets = -1 |
-  .files[0].copyToTargets = -1 |
-  .files[0].ProxyFiles = [
-    {"$GMProxyFile":"","%Name":"colyseus.dll","name":"colyseus.dll","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":1},
-    {"$GMProxyFile":"","%Name":"libcolyseus.so","name":"libcolyseus.so","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":4}
-  ] |
-  .files[1].copyToTargets = 32
+
+  # macOS entry (original): restrict to macOS only, no ProxyFiles
+  .files[0].copyToTargets = 2 |
+  .files[0].ProxyFiles = [] |
+
+  # Clone file entries for Windows and Linux (same functions, different binary)
+  .files += [
+    (.files[0] | .filename = "colyseus.dll" | .copyToTargets = 1 | .functions = $funcs),
+    (.files[0] | .filename = "libcolyseus.so" | .copyToTargets = 4 | .functions = $funcs)
+  ]
 ' > "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
 
 # Copy Colyseus.gml + Colyseus.yy — fix parent references
