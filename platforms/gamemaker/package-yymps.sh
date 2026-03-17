@@ -71,6 +71,9 @@ fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   .files[0].copyToTargets = 2 |
   .files[0].ProxyFiles = [] |
 
+  # Add functions to WASM entry (same declarations, JS implementation)
+  .files[1].functions = $funcs |
+
   # Clone file entries for Windows and Linux (same functions, different binary)
   .files += [
     (.files[0] | .filename = "colyseus.dll" | .copyToTargets = 1 | .functions = $funcs),
