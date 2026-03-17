@@ -59,8 +59,8 @@ fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   .copyToTargets = -1 |
   .files[0].copyToTargets = -1 |
   .files[0].ProxyFiles = [
-    {"$GMProxyFile":"","%Name":"colyseus.dll","name":"colyseus.dll","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":6},
-    {"$GMProxyFile":"","%Name":"libcolyseus.so","name":"libcolyseus.so","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":7}
+    {"$GMProxyFile":"","%Name":"colyseus.dll","name":"colyseus.dll","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":1},
+    {"$GMProxyFile":"","%Name":"libcolyseus.so","name":"libcolyseus.so","resourceType":"GMProxyFile","resourceVersion":"2.0","TargetMask":4}
   ] |
   .files[1].copyToTargets = 32
 ' > "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
