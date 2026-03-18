@@ -131,6 +131,30 @@ Cross-compilation to Windows and macOS requires additional setup:
 
 Similar to Linux, cross-compilation requires the target platform's SDK and libraries.
 
+## Extension Packaging Notes
+
+The `.yymps` package and extension `.yy` file must follow specific rules due to undocumented GameMaker behaviors:
+
+### GameMaker loads only the FIRST native file entry
+
+GameMaker ignores `copyToTargets` at runtime for native extensions (`kind:1`). It always loads the **first** `kind:1` file entry in the `.files` array. The packaged `.yymps` puts `colyseus.dll` first (Windows is the most common import target). After importing, macOS/Linux developers must run `./build.sh` to reconfigure the extension for their platform.
+
+### Do NOT use ProxyFiles
+
+ProxyFiles cause GameMaker to load the wrong binary on macOS (it tries to dlopen the proxy file instead of the main file). Use separate file entries per platform instead, each with their own function declarations.
+
+### Every file entry needs its own function declarations
+
+Each native file entry AND the WASM entry must have the full list of function declarations duplicated. GameMaker only binds functions declared on the file entry it loads. If a file entry has `"functions":[]`, none of its extension functions will be available.
+
+### .yyp filename must match .yymps filename
+
+GameMaker's ProjectTool on Windows renames the `.yyp` to match the `.yymps` package filename during import. All `parent.path` references in `.yy` files must use the same name. The packaging script uses `colyseus-gamemaker-{VERSION}` for both. Spaces in the `.yyp` filename cause `FileNotFoundException` on Windows.
+
+### Platform copyToTargets flags
+
+`Windows=1, macOS=2, Linux=4, HTML5=8, iOS=16, Android=32`. These flags are only respected by the build tool (Igor/asset compiler) for file copying, NOT by the runtime runner for native extension loading.
+
 ## Troubleshooting
 
 ### Missing libcurl
