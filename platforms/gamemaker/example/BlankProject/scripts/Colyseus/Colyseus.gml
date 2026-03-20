@@ -102,7 +102,7 @@ function __colyseus_get_room_entry(_room_ref) {
 /// Listen for property changes: handler(value, previous_value)
 /// Usage: colyseus_listen(callbacks, "field", handler)          — listens on root state
 ///        colyseus_listen(callbacks, instance, "field", handler) — listens on a child instance
-function colyseus_listen(_callbacks, _instance_or_property, _property_or_handler, _handler) {
+function colyseus_listen(_callbacks, _instance_or_property, _property_or_handler, _handler = undefined) {
     if (is_string(_instance_or_property)) {
         // Root shorthand: colyseus_listen(callbacks, "field", handler)
         _handler = _property_or_handler;
@@ -120,7 +120,7 @@ function colyseus_listen(_callbacks, _instance_or_property, _property_or_handler
 /// Listen for items added to a collection: handler(instance_handle, key)
 /// Usage: colyseus_on_add(callbacks, "field", handler)          — listens on root state
 ///        colyseus_on_add(callbacks, instance, "field", handler) — listens on a child instance
-function colyseus_on_add(_callbacks, _instance_or_property, _property_or_handler, _handler) {
+function colyseus_on_add(_callbacks, _instance_or_property, _property_or_handler, _handler = undefined) {
     if (is_string(_instance_or_property)) {
         _handler = _property_or_handler;
         var _handle = colyseus_callbacks_on_add(_callbacks, 0, _instance_or_property);
@@ -136,7 +136,7 @@ function colyseus_on_add(_callbacks, _instance_or_property, _property_or_handler
 /// Listen for items removed from a collection: handler(instance_handle, key)
 /// Usage: colyseus_on_remove(callbacks, "field", handler)          — listens on root state
 ///        colyseus_on_remove(callbacks, instance, "field", handler) — listens on a child instance
-function colyseus_on_remove(_callbacks, _instance_or_property, _property_or_handler, _handler) {
+function colyseus_on_remove(_callbacks, _instance_or_property, _property_or_handler, _handler = undefined) {
     if (is_string(_instance_or_property)) {
         _handler = _property_or_handler;
         var _handle = colyseus_callbacks_on_remove(_callbacks, 0, _instance_or_property);
