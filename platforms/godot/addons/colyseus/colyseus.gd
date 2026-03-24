@@ -69,7 +69,7 @@ class Callbacks extends RefCounted:
 
 	static func of(room) -> Callbacks:
 		var native_room = room._native if room is Room else room
-		var class_name_str := &"ColyseusCallbacks"
+		var class_name_str := &"_ColyseusCallbacks"
 		if ClassDB.class_exists(class_name_str):
 			var instance = ClassDB.instantiate(class_name_str)
 			var native_cb = null
@@ -518,7 +518,7 @@ class Client extends RefCounted:
 	var auth: Auth
 
 	func _init(endpoint: String = ""):
-		var class_name_str := &"ColyseusClient"
+		var class_name_str := &"_ColyseusClient"
 		if ClassDB.class_exists(class_name_str):
 			_native = ClassDB.instantiate(class_name_str)
 		if not _native:

@@ -162,7 +162,7 @@ GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata) {
 
     // Attach our wrapper to the Godot object
     StringName class_name2;
-    constructors.string_name_new_with_latin1_chars(&class_name2, "ColyseusClient", false);
+    constructors.string_name_new_with_latin1_chars(&class_name2, "_ColyseusClient", false);
     api.object_set_instance(object, &class_name2, wrapper);
     destructors.string_name_destructor(&class_name2);
     
@@ -476,7 +476,7 @@ static void matchmaking_ptrcall_with_options(GDExtensionClassInstancePtr p_insta
 
     // Create a ColyseusRoom Godot object
     StringName class_name;
-    constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusRoom", false);
+    constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusRoom", false);
 
     GDExtensionObjectPtr room_object = api.classdb_construct_object(&class_name);
     destructors.string_name_destructor(&class_name);
@@ -548,7 +548,7 @@ static void matchmaking_ptrcall_reconnect(GDExtensionClassInstancePtr p_instance
     char* token_cstr = string_to_c_str(token_string);
 
     StringName class_name;
-    constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusRoom", false);
+    constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusRoom", false);
 
     GDExtensionObjectPtr room_object = api.classdb_construct_object(&class_name);
     destructors.string_name_destructor(&class_name);

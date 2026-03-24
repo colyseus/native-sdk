@@ -40,7 +40,7 @@ static void register_extension_class(
         GDExtensionClassCreationInfo5 class_info = {
             .is_virtual = false,
             .is_abstract = false,
-            .is_exposed = false,
+            .is_exposed = true,
             .is_runtime = false,
             .icon_path = NULL,
             .set_func = NULL,
@@ -70,7 +70,7 @@ static void register_extension_class(
         GDExtensionClassCreationInfo4 class_info = {
             .is_virtual = false,
             .is_abstract = false,
-            .is_exposed = false,
+            .is_exposed = true,
             .is_runtime = false,
             .icon_path = NULL,
             .set_func = NULL,
@@ -100,7 +100,7 @@ static void register_extension_class(
         GDExtensionClassCreationInfo2 class_info = {
             .is_virtual = false,
             .is_abstract = false,
-            .is_exposed = false,
+            .is_exposed = true,
             .set_func = NULL,
             .get_func = NULL,
             .get_property_list_func = NULL,
@@ -771,7 +771,7 @@ static void register_colyseus_client(void) {
     StringName class_name;
     StringName parent_class_name;
 
-    constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusClient", false);
+    constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusClient", false);
     constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
 
     register_extension_class(&class_name, &parent_class_name,
@@ -784,7 +784,7 @@ static void register_colyseus_client(void) {
 
     // Register set_endpoint method
     bind_method_1_no_ret(
-        "ColyseusClient",
+        "_ColyseusClient",
         "set_endpoint",
         gdext_colyseus_client_set_endpoint,
         "endpoint",
@@ -815,7 +815,7 @@ static void register_colyseus_client(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusClient", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusClient", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -855,7 +855,7 @@ static void register_colyseus_client(void) {
             .default_arguments = NULL \
         }; \
         StringName class_name_string; \
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusClient", false); \
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusClient", false); \
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info); \
         destructors.string_name_destructor(&method_name_string); \
         destructors.string_name_destructor(&class_name_string); \
@@ -892,7 +892,7 @@ static void register_colyseus_client(void) {
             .default_arguments = NULL \
         }; \
         StringName class_name_string; \
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusClient", false); \
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusClient", false); \
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info); \
         destructors.string_name_destructor(&method_name_string); \
         destructors.string_name_destructor(&class_name_string); \
@@ -911,11 +911,11 @@ static void register_colyseus_client(void) {
     #undef REGISTER_MATCHMAKING_METHOD_1
 
     // Register HTTP signals on ColyseusClient
-    bind_signal_3("ColyseusClient", "_http_response",
+    bind_signal_3("_ColyseusClient", "_http_response",
         "request_id", GDEXTENSION_VARIANT_TYPE_INT,
         "status_code", GDEXTENSION_VARIANT_TYPE_INT,
         "body", GDEXTENSION_VARIANT_TYPE_STRING);
-    bind_signal_3("ColyseusClient", "_http_error",
+    bind_signal_3("_ColyseusClient", "_http_error",
         "request_id", GDEXTENSION_VARIANT_TYPE_INT,
         "code", GDEXTENSION_VARIANT_TYPE_INT,
         "message", GDEXTENSION_VARIANT_TYPE_STRING);
@@ -951,7 +951,7 @@ static void register_colyseus_client(void) {
             };
 
             StringName class_name_string;
-            constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusClient", false);
+            constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusClient", false);
             api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
             destructors.string_name_destructor(&method_name_string);
@@ -961,9 +961,9 @@ static void register_colyseus_client(void) {
     }
 
     // Register auth methods (ptrcall — simple types)
-    bind_method_1_no_ret("ColyseusClient", "auth_set_token", gdext_colyseus_client_auth_set_token,
+    bind_method_1_no_ret("_ColyseusClient", "auth_set_token", gdext_colyseus_client_auth_set_token,
         "token", GDEXTENSION_VARIANT_TYPE_STRING);
-    bind_method_0_with_ret("ColyseusClient", "auth_get_token", gdext_colyseus_client_auth_get_token,
+    bind_method_0_with_ret("_ColyseusClient", "auth_get_token", gdext_colyseus_client_auth_get_token,
         GDEXTENSION_VARIANT_TYPE_STRING);
 
     // Register static poll() method
@@ -988,7 +988,7 @@ static void register_colyseus_client(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusClient", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusClient", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -1003,7 +1003,7 @@ static void register_colyseus_room(void) {
     StringName class_name;
     StringName parent_class_name;
 
-    constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusRoom", false);
+    constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusRoom", false);
     constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
 
     register_extension_class(&class_name, &parent_class_name,
@@ -1015,11 +1015,11 @@ static void register_colyseus_room(void) {
     destructors.string_name_destructor(&parent_class_name);
 
     // Register signals using helper functions
-    bind_signal_0("ColyseusRoom", "joined");
-    bind_signal_0("ColyseusRoom", "state_changed");
-    bind_signal_2("ColyseusRoom", "message_received", "type", GDEXTENSION_VARIANT_TYPE_NIL, "data", GDEXTENSION_VARIANT_TYPE_NIL);
-    bind_signal_2("ColyseusRoom", "error", "code", GDEXTENSION_VARIANT_TYPE_INT, "message", GDEXTENSION_VARIANT_TYPE_STRING);
-    bind_signal_2("ColyseusRoom", "left", "code", GDEXTENSION_VARIANT_TYPE_INT, "reason", GDEXTENSION_VARIANT_TYPE_STRING);
+    bind_signal_0("_ColyseusRoom", "joined");
+    bind_signal_0("_ColyseusRoom", "state_changed");
+    bind_signal_2("_ColyseusRoom", "message_received", "type", GDEXTENSION_VARIANT_TYPE_NIL, "data", GDEXTENSION_VARIANT_TYPE_NIL);
+    bind_signal_2("_ColyseusRoom", "error", "code", GDEXTENSION_VARIANT_TYPE_INT, "message", GDEXTENSION_VARIANT_TYPE_STRING);
+    bind_signal_2("_ColyseusRoom", "left", "code", GDEXTENSION_VARIANT_TYPE_INT, "reason", GDEXTENSION_VARIANT_TYPE_STRING);
 
     // Register send_message methods using vararg interface (accepts any Variant type for data)
     {
@@ -1052,7 +1052,7 @@ static void register_colyseus_room(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusRoom", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusRoom", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -1092,7 +1092,7 @@ static void register_colyseus_room(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusRoom", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusRoom", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -1103,34 +1103,34 @@ static void register_colyseus_room(void) {
     }
 
     bind_method_0_no_ret(
-        "ColyseusRoom",
+        "_ColyseusRoom",
         "leave",
         gdext_colyseus_room_leave
     );
 
     bind_method_0_with_ret(
-        "ColyseusRoom",
+        "_ColyseusRoom",
         "get_id",
         gdext_colyseus_room_get_id,
         GDEXTENSION_VARIANT_TYPE_STRING
     );
 
     bind_method_0_with_ret(
-        "ColyseusRoom",
+        "_ColyseusRoom",
         "get_session_id",
         gdext_colyseus_room_get_session_id,
         GDEXTENSION_VARIANT_TYPE_STRING
     );
 
     bind_method_0_with_ret(
-        "ColyseusRoom",
+        "_ColyseusRoom",
         "get_name",
         gdext_colyseus_room_get_name,
         GDEXTENSION_VARIANT_TYPE_STRING
     );
 
     bind_method_0_with_ret(
-        "ColyseusRoom",
+        "_ColyseusRoom",
         "is_connected",
         gdext_colyseus_room_is_connected,
         GDEXTENSION_VARIANT_TYPE_BOOL
@@ -1139,7 +1139,7 @@ static void register_colyseus_room(void) {
     // get_state - returns Dictionary with current state
     // Uses bind_method_0_with_ret like other working methods (is_connected, get_id, etc.)
     bind_method_0_with_ret(
-        "ColyseusRoom",
+        "_ColyseusRoom",
         "get_state",
         gdext_colyseus_room_get_state,
         GDEXTENSION_VARIANT_TYPE_DICTIONARY
@@ -1174,7 +1174,7 @@ static void register_colyseus_room(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusRoom", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusRoom", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -1195,7 +1195,7 @@ static void register_colyseus_callbacks(void) {
     StringName class_name;
     StringName parent_class_name;
 
-    constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusCallbacks", false);
+    constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusCallbacks", false);
     constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
 
     register_extension_class(&class_name, &parent_class_name,
@@ -1237,7 +1237,7 @@ static void register_colyseus_callbacks(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusCallbacks", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusCallbacks", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -1281,7 +1281,7 @@ static void register_colyseus_callbacks(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusCallbacks", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusCallbacks", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -1316,7 +1316,7 @@ static void register_colyseus_callbacks(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusCallbacks", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusCallbacks", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -1349,7 +1349,7 @@ static void register_colyseus_callbacks(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusCallbacks", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusCallbacks", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -1382,7 +1382,7 @@ static void register_colyseus_callbacks(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusCallbacks", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusCallbacks", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 
@@ -1420,7 +1420,7 @@ static void register_colyseus_callbacks(void) {
         };
 
         StringName class_name_string;
-        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusCallbacks", false);
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusCallbacks", false);
 
         api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
 

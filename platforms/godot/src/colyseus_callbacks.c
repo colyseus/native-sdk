@@ -512,7 +512,7 @@ GDExtensionObjectPtr gdext_colyseus_callbacks_constructor(void* p_class_userdata
     
     // Attach our wrapper to the Godot object
     StringName class_name;
-    constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusCallbacks", false);
+    constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusCallbacks", false);
     api.object_set_instance(object, &class_name, wrapper);
     destructors.string_name_destructor(&class_name);
     
@@ -611,7 +611,7 @@ void gdext_colyseus_callbacks_get(
     
     // Create a new ColyseusCallbacks instance
     StringName class_name;
-    constructors.string_name_new_with_latin1_chars(&class_name, "ColyseusCallbacks", false);
+    constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusCallbacks", false);
     GDExtensionObjectPtr callbacks_obj = api.classdb_construct_object(&class_name);
     destructors.string_name_destructor(&class_name);
     
