@@ -119,7 +119,7 @@ static GodotCallbackEntry* find_entry_by_handle(ColyseusCallbacksWrapper* wrappe
 // Helper to convert a native value to Variant based on field type
 static void native_value_to_variant(void* value, int field_type, const colyseus_schema_vtable_t* item_vtable, Variant* out_variant) {
     if (!value) {
-        memset(out_variant, 0, sizeof(Variant));
+        gdext_variant_new_nil(out_variant);
         return;
     }
     
@@ -133,7 +133,7 @@ static void native_value_to_variant(void* value, int field_type, const colyseus_
                 constructors.variant_from_string_constructor(out_variant, &godot_str);
                 destructors.string_destructor(&godot_str);
             } else {
-                memset(out_variant, 0, sizeof(Variant));
+                gdext_variant_new_nil(out_variant);
             }
             break;
         }
@@ -177,8 +177,8 @@ static void native_value_to_variant(void* value, int field_type, const colyseus_
             break;
         }
         case COLYSEUS_FIELD_BOOLEAN: {
-            int64_t bool_val = *(bool*)value ? 1 : 0;
-            constructors.variant_from_bool_constructor(out_variant, (GDExtensionBool*)&bool_val);
+            GDExtensionBool bool_val = *(bool*)value ? 1 : 0;
+            constructors.variant_from_bool_constructor(out_variant, &bool_val);
             break;
         }
         case COLYSEUS_FIELD_REF: {
@@ -207,12 +207,12 @@ static void native_value_to_variant(void* value, int field_type, const colyseus_
                     constructors.variant_from_dictionary_constructor(out_variant, &dict);
                 }
             } else {
-                memset(out_variant, 0, sizeof(Variant));
+                gdext_variant_new_nil(out_variant);
             }
             break;
         }
         default:
-            memset(out_variant, 0, sizeof(Variant));
+            gdext_variant_new_nil(out_variant);
             break;
     }
 }
@@ -280,10 +280,10 @@ static void item_add_trampoline(void* value, void* key, void* userdata) {
             constructors.variant_from_dictionary_constructor(&value_variant, &dict);
         } else {
             // No vtable, create nil variant
-            memset(&value_variant, 0, sizeof(Variant));
+            gdext_variant_new_nil(&value_variant);
         }
     } else {
-        memset(&value_variant, 0, sizeof(Variant));
+        gdext_variant_new_nil(&value_variant);
     }
     
     // Convert key based on collection type
@@ -301,7 +301,7 @@ static void item_add_trampoline(void* value, void* key, void* userdata) {
             destructors.string_destructor(&godot_key);
         }
     } else {
-        memset(&key_variant, 0, sizeof(Variant));
+        gdext_variant_new_nil(&key_variant);
     }
     
     // Use call_deferred to ensure the callable runs on the main thread.
@@ -355,10 +355,10 @@ static void item_remove_trampoline(void* value, void* key, void* userdata) {
             colyseus_schema_to_dictionary(schema, vtable, &dict);
             constructors.variant_from_dictionary_constructor(&value_variant, &dict);
         } else {
-            memset(&value_variant, 0, sizeof(Variant));
+            gdext_variant_new_nil(&value_variant);
         }
     } else {
-        memset(&value_variant, 0, sizeof(Variant));
+        gdext_variant_new_nil(&value_variant);
     }
     
     // Convert key based on collection type
@@ -376,7 +376,7 @@ static void item_remove_trampoline(void* value, void* key, void* userdata) {
             destructors.string_destructor(&godot_key);
         }
     } else {
-        memset(&key_variant, 0, sizeof(Variant));
+        gdext_variant_new_nil(&key_variant);
     }
     
     // Use call_deferred to ensure the callable runs on the main thread.

@@ -32,8 +32,7 @@ static void variant_from_bool(Variant* result, bool value) {
 // Helper to create a Variant from a C string
 static void variant_from_string(Variant* result, const char* str) {
     if (str == NULL) {
-        // Create nil variant - use a null constructor or similar
-        memset(result, 0, sizeof(Variant));
+        gdext_variant_new_nil(result);
         return;
     }
     
@@ -66,7 +65,7 @@ static void dictionary_set(Dictionary* dict, const char* key, Variant* value) {
     // Get pointer to value slot and copy variant
     Variant* slot = (Variant*)api.dictionary_operator_index(dict, &key_variant);
     if (slot) {
-        memcpy(slot, value, sizeof(Variant));
+        gdext_variant_assign(slot, value);
     }
     
     // Clean up key
@@ -104,7 +103,7 @@ void colyseus_field_to_variant(
     Variant* result
 ) {
     if (ptr == NULL) {
-        memset(result, 0, sizeof(Variant));
+        gdext_variant_new_nil(result);
         return;
     }
     
@@ -192,7 +191,7 @@ void colyseus_field_to_variant(
                 variant_from_dictionary(result, &child_dict);
                 // Note: Don't destruct child_dict - it's now owned by the variant
             } else {
-                memset(result, 0, sizeof(Variant));
+                gdext_variant_new_nil(result);
             }
             break;
         }
@@ -205,7 +204,7 @@ void colyseus_field_to_variant(
                 colyseus_array_to_godot_array(arr, &gd_array);
                 variant_from_array(result, &gd_array);
             } else {
-                memset(result, 0, sizeof(Variant));
+                gdext_variant_new_nil(result);
             }
             break;
         }
@@ -218,13 +217,13 @@ void colyseus_field_to_variant(
                 colyseus_map_to_dictionary(map, &gd_dict);
                 variant_from_dictionary(result, &gd_dict);
             } else {
-                memset(result, 0, sizeof(Variant));
+                gdext_variant_new_nil(result);
             }
             break;
         }
         
         default:
-            memset(result, 0, sizeof(Variant));
+            gdext_variant_new_nil(result);
             break;
     }
 }
@@ -312,7 +311,7 @@ static void colyseus_dynamic_value_to_variant(
     Variant* result
 ) {
     if (!value || !result) {
-        memset(result, 0, sizeof(Variant));
+        gdext_variant_new_nil(result);
         return;
     }
     
@@ -373,7 +372,7 @@ static void colyseus_dynamic_value_to_variant(
                 colyseus_dynamic_schema_to_dictionary(value->data.ref, &child_dict);
                 variant_from_dictionary(result, &child_dict);
             } else {
-                memset(result, 0, sizeof(Variant));
+                gdext_variant_new_nil(result);
             }
             break;
             
@@ -384,7 +383,7 @@ static void colyseus_dynamic_value_to_variant(
                 colyseus_array_to_godot_array(value->data.array, &gd_array);
                 variant_from_array(result, &gd_array);
             } else {
-                memset(result, 0, sizeof(Variant));
+                gdext_variant_new_nil(result);
             }
             break;
             
@@ -395,12 +394,12 @@ static void colyseus_dynamic_value_to_variant(
                 colyseus_map_to_dictionary(value->data.map, &gd_dict);
                 variant_from_dictionary(result, &gd_dict);
             } else {
-                memset(result, 0, sizeof(Variant));
+                gdext_variant_new_nil(result);
             }
             break;
             
         default:
-            memset(result, 0, sizeof(Variant));
+            gdext_variant_new_nil(result);
             break;
     }
 }
@@ -415,7 +414,7 @@ void colyseus_dynamic_schema_to_dictionary(
 // Helper to convert a primitive void* value (from colyseus_decode_primitive) to a Variant
 static void primitive_value_to_variant(void* value, const char* primitive_type, Variant* result) {
     if (!value || !primitive_type) {
-        memset(result, 0, sizeof(Variant));
+        gdext_variant_new_nil(result);
         return;
     }
 
@@ -460,7 +459,7 @@ static void primitive_value_to_variant(void* value, const char* primitive_type, 
             variant_from_int(result, (int64_t)*(uint64_t*)value);
             break;
         default:
-            memset(result, 0, sizeof(Variant));
+            gdext_variant_new_nil(result);
             break;
     }
 }
@@ -494,7 +493,7 @@ static void array_item_to_godot(int index, void* value, void* userdata) {
     } else if (value) {
         primitive_value_to_variant(value, ctx->child_primitive_type, &item_variant);
     } else {
-        memset(&item_variant, 0, sizeof(Variant));
+        gdext_variant_new_nil(&item_variant);
     }
 
     array_push_back(ctx->result, &item_variant);
@@ -546,7 +545,7 @@ static void map_item_to_godot(const char* key, void* value, void* userdata) {
     } else if (value) {
         primitive_value_to_variant(value, ctx->child_primitive_type, &item_variant);
     } else {
-        memset(&item_variant, 0, sizeof(Variant));
+        gdext_variant_new_nil(&item_variant);
     }
 
     dictionary_set(ctx->result, key, &item_variant);

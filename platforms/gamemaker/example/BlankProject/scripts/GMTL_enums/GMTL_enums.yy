@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMTL_enums",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMTL_enums",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

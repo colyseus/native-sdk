@@ -661,7 +661,7 @@ void gdscript_value_to_variant(colyseus_dynamic_value_t* value, Variant* r_varia
                 api.variant_new_copy(r_variant, instance_variant);
             } else {
                 /* Null ref */
-                memset(r_variant, 0, sizeof(Variant));
+                gdext_variant_new_nil(r_variant);
             }
             break;
         }
@@ -670,13 +670,13 @@ void gdscript_value_to_variant(colyseus_dynamic_value_t* value, Variant* r_varia
             /* Create a GDScript Map and populate it */
             colyseus_map_schema_t* map = value->data.map;
             if (!map) {
-                memset(r_variant, 0, sizeof(Variant));
+                gdext_variant_new_nil(r_variant);
                 break;
             }
             
             Variant* map_instance = gdscript_create_map_instance(NULL);
             if (!map_instance) {
-                memset(r_variant, 0, sizeof(Variant));
+                gdext_variant_new_nil(r_variant);
                 break;
             }
             
@@ -701,13 +701,13 @@ void gdscript_value_to_variant(colyseus_dynamic_value_t* value, Variant* r_varia
             /* Create a GDScript ArraySchema and populate it */
             colyseus_array_schema_t* arr = value->data.array;
             if (!arr) {
-                memset(r_variant, 0, sizeof(Variant));
+                gdext_variant_new_nil(r_variant);
                 break;
             }
             
             Variant* array_instance = gdscript_create_array_instance(NULL);
             if (!array_instance) {
-                memset(r_variant, 0, sizeof(Variant));
+                gdext_variant_new_nil(r_variant);
                 break;
             }
             
@@ -730,7 +730,7 @@ void gdscript_value_to_variant(colyseus_dynamic_value_t* value, Variant* r_varia
         
         default: {
             /* Unknown type - return nil */
-            memset(r_variant, 0, sizeof(Variant));
+            gdext_variant_new_nil(r_variant);
             break;
         }
     }

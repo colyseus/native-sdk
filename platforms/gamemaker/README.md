@@ -12,7 +12,7 @@ This directory contains the build configuration for compiling the Colyseus Nativ
 
 ## Prerequisites
 
-- [Zig](https://ziglang.org/download/) (0.15.0 or later)
+- [Zig](https://ziglang.org/download/) (0.15.2 or later)
 - System dependencies:
   - **macOS**: Xcode Command Line Tools
   - **Linux**: libcurl development headers (`libcurl4-openssl-dev` on Ubuntu/Debian)
@@ -110,6 +110,24 @@ The extension exposes the Colyseus client API through unified functions that wor
 - Native platforms: C library compiled from this SDK
 - HTML5: JavaScript wrapper using colyseus.js client
 
+## Auth Tokens
+
+Auth tokens are persisted automatically between sessions using GameMaker's `ds_map_secure_save`. When you set a token, it's saved to disk. When you create a new client, the saved token is restored automatically.
+
+```gml
+// Set token — automatically saved to disk
+colyseus_auth_set_token(client, "my-jwt-token");
+
+// On next game launch, the token is restored automatically:
+client = colyseus_client_create("http://localhost:2567");
+var token = colyseus_auth_get_token(client); // "my-jwt-token"
+
+// Clear token on logout — removes the persisted file
+colyseus_auth_clear_token(client);
+```
+
+The token is stored in `colyseus_auth.dat` in the game's save directory using GameMaker's encrypted format.
+
 ## Cross-Compilation Notes
 
 ### From macOS
@@ -168,6 +186,39 @@ If you get errors about missing libcurl:
 ### Linker Errors
 
 If you encounter linker errors during cross-compilation, you may need to install the target platform's development libraries or use a cross-compilation toolchain.
+
+## Running Tests
+
+The test suite runs the example GameMaker project via Igor (GameMaker's CLI build tool) and validates the extension against a live Colyseus server.
+
+### Prerequisites
+
+- **GameMaker IDE** installed and built at least once (to install the runtime with Igor)
+- **Colyseus `sdks-test-server`** running locally on port 2567
+- Native library already built (`zig build`)
+
+### Running
+
+Start the test server, then run:
+
+```bash
+./run-tests.sh
+```
+
+The script will:
+1. Locate Igor and the GameMaker runtime automatically
+2. Copy the latest `libcolyseus.dylib` into the example project's extension
+3. Build and launch the example project via Igor
+4. Wait for test output (90s timeout)
+5. Report pass/fail results
+
+### Test Suites
+
+Tests are GML scripts in `example/BlankProject/scripts/` using the GMTL test framework:
+
+- **TestRoomApi** — Room connection, state access, schema callbacks, messages, leave
+- **TestHttpApi** — HTTP API calls
+- **TestHttpHelpers** — HTTP helper utilities
 
 ## Development
 

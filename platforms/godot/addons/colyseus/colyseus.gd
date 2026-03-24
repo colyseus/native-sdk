@@ -11,13 +11,31 @@ extends RefCounted
 ##   var room = client.join_or_create("my_room")
 ##   var callbacks = Colyseus.callbacks(room)
 
-## Create a new Colyseus client
+## Create a new Colyseus client.
+## Returns a wrapper with .http and .auth sub-objects matching the TypeScript SDK.
+## Automatically starts polling for network events — no need to call poll() manually.
 static func create_client() -> Variant:
 	var class_name_str := &"ColyseusClient"
 	if ClassDB.class_exists(class_name_str):
-		return ClassDB.instantiate(class_name_str)
+		var native = ClassDB.instantiate(class_name_str)
+		if native:
+			_ensure_polling()
+			return Client.new(native)
 	push_error("Colyseus: ColyseusClient not available. Make sure the GDExtension is properly loaded.")
 	return null
+
+## Internal: singleton polling node added to scene tree
+static var _poll_node: Node = null
+
+static func _ensure_polling():
+	if _poll_node and is_instance_valid(_poll_node):
+		return
+	var tree = Engine.get_main_loop() as SceneTree
+	if not tree:
+		return
+	_poll_node = _Poller.new()
+	_poll_node.name = &"_ColyseusPoller"
+	tree.root.call_deferred(&"add_child", _poll_node)
 
 ## Get callbacks for a room
 static func callbacks(room) -> Variant:
@@ -414,6 +432,14 @@ class ArraySchema extends RefCounted:
 		return JSON.stringify(to_array())
 
 # =============================================================================
+# Internal Polling Node — auto-added to scene tree, calls poll() every frame
+# =============================================================================
+
+class _Poller extends Node:
+	func _process(_delta):
+		ColyseusClient.poll()
+
+# =============================================================================
 # Utility Functions
 # =============================================================================
 
@@ -438,3 +464,163 @@ static func get_default_value(type_str: String):
 			return 0
 		_:
 			return null
+
+# =============================================================================
+# Client Wrapper — exposes .http and .auth sub-objects
+# =============================================================================
+
+## Wraps the native ColyseusClient to provide .http and .auth accessors
+## matching the TypeScript SDK structure.
+class Client extends RefCounted:
+	## The native ColyseusClient GDExtension object
+	var _native
+	## HTTP sub-object for making HTTP requests
+	var http: HTTP
+	## Auth sub-object for token management
+	var auth: Auth
+
+	func _init(native_client):
+		_native = native_client
+		http = HTTP.new(native_client)
+		auth = Auth.new(native_client)
+
+	## Set the server endpoint (e.g., "ws://localhost:2567")
+	func set_endpoint(endpoint: String) -> void:
+		_native.set_endpoint(endpoint)
+		# Reconnect signal handlers after endpoint change
+		http._connected = false
+
+	## Get the server endpoint
+	func get_endpoint() -> String:
+		return _native.get_endpoint()
+
+	## Join or create a room
+	func join_or_create(room_name: String, options: Dictionary = {}):
+		return _native.join_or_create(room_name, JSON.stringify(options))
+
+	## Create a new room
+	func create(room_name: String, options: Dictionary = {}):
+		return _native.create(room_name, JSON.stringify(options))
+
+	## Join an existing room by name
+	func join(room_name: String, options: Dictionary = {}):
+		return _native.join(room_name, JSON.stringify(options))
+
+	## Join a room by its ID
+	func join_by_id(room_id: String, options: Dictionary = {}):
+		return _native.join_by_id(room_id, JSON.stringify(options))
+
+	## Reconnect to a room using a reconnection token
+	func reconnect(reconnection_token: String):
+		return _native.reconnect(reconnection_token)
+
+# =============================================================================
+# HTTP — callback-based HTTP requests
+# =============================================================================
+
+## HTTP client for making requests to the Colyseus server.
+## Note: "get" is renamed to "get_request" because Object.get() is reserved in Godot.
+## Usage:
+##   client.http.get_request("/test", func(err, data): print(data))
+##   client.http.post("/save", {"key": "val"}, func(err, data): print(data))
+class HTTP extends RefCounted:
+	var _native
+	var _callbacks: Dictionary = {}  # request_id -> Callable
+	var _connected: bool = false
+
+	func _init(native_client):
+		_native = native_client
+
+	func _ensure_signals():
+		if not _connected and _native:
+			_native._http_response.connect(_on_response)
+			_native._http_error.connect(_on_error)
+			_connected = true
+
+	## Set the auth token (sent as Bearer header on all requests)
+	var auth_token: String:
+		get: return _native.auth_get_token() if _native else ""
+		set(value):
+			if _native:
+				_native.auth_set_token(value)
+
+	## GET request (named get_request to avoid conflict with Object.get)
+	func get_request(path: String, callback: Callable) -> int:
+		_ensure_signals()
+		var rid = _native.http_get(path)
+		_callbacks[rid] = callback
+		return rid
+
+	## POST request (body auto-converted to JSON if Dictionary/Array)
+	func post(path: String, body, callback: Callable) -> int:
+		_ensure_signals()
+		var json_body = JSON.stringify(body) if (body is Dictionary or body is Array) else str(body)
+		var rid = _native.http_post(path, json_body)
+		_callbacks[rid] = callback
+		return rid
+
+	## PUT request
+	func put(path: String, body, callback: Callable) -> int:
+		_ensure_signals()
+		var json_body = JSON.stringify(body) if (body is Dictionary or body is Array) else str(body)
+		var rid = _native.http_put(path, json_body)
+		_callbacks[rid] = callback
+		return rid
+
+	## DELETE request
+	func delete(path: String, callback: Callable) -> int:
+		_ensure_signals()
+		var rid = _native.http_delete(path)
+		_callbacks[rid] = callback
+		return rid
+
+	## PATCH request
+	func patch(path: String, body, callback: Callable) -> int:
+		_ensure_signals()
+		var json_body = JSON.stringify(body) if (body is Dictionary or body is Array) else str(body)
+		var rid = _native.http_patch(path, json_body)
+		_callbacks[rid] = callback
+		return rid
+
+	func _on_response(request_id: int, status_code: int, body: String):
+		if not _callbacks.has(request_id):
+			return
+		var callback = _callbacks[request_id]
+		_callbacks.erase(request_id)
+		# Parse JSON body
+		var data = null
+		var json = JSON.new()
+		if json.parse(body) == OK:
+			data = json.data
+		else:
+			data = body
+		callback.call(null, data)
+
+	func _on_error(request_id: int, code: int, message: String):
+		if not _callbacks.has(request_id):
+			return
+		var callback = _callbacks[request_id]
+		_callbacks.erase(request_id)
+		callback.call({"code": code, "message": message}, null)
+
+# =============================================================================
+# Auth — token management
+# =============================================================================
+
+## Auth module for managing authentication tokens.
+## Usage:
+##   client.auth.set_token("my-jwt-token")
+##   var token = client.auth.get_token()
+class Auth extends RefCounted:
+	var _native
+
+	func _init(native_client):
+		_native = native_client
+
+	## Set the auth token (sent as Bearer header)
+	func set_token(token: String) -> void:
+		_native.auth_set_token(token)
+
+	## Get the current auth token
+	func get_token() -> String:
+		return _native.auth_get_token()

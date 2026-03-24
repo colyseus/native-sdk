@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMTL_dependencies",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMTL_dependencies",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

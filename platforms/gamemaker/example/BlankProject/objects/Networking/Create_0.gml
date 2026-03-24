@@ -1,7 +1,15 @@
 /// Create Event — initialize client and join room
+client = -1;
+colyseus_room = -1;
+callbacks = -1;
+
+// Skip room join when running GMTL tests
+if (gmtl_has_finished || gmtl_is_initializing) {
+    exit;
+}
+
 client = colyseus_client_create("http://localhost:2567");
 colyseus_room = colyseus_client_join_or_create(client, "test_room", "{}");
-callbacks = -1;
 
 // --- Room event handlers ---
 

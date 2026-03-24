@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"GMTL_core_MouseState",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"GMTL_core_MouseState",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}
