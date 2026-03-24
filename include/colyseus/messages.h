@@ -32,7 +32,7 @@ void colyseus_message_map_put_uint(colyseus_message_t* map, const char* key, uin
 void colyseus_message_map_put_float(colyseus_message_t* map, const char* key, double value);
 void colyseus_message_map_put_bool(colyseus_message_t* map, const char* key, bool value);
 void colyseus_message_map_put_nil(colyseus_message_t* map, const char* key);
-void colyseus_message_map_put(colyseus_message_t* map, const char* key, colyseus_message_t* value);
+void colyseus_message_map_put_msg(colyseus_message_t* map, const char* key, colyseus_message_t* value);
 
 /* Array operations */
 void colyseus_message_array_push_str(colyseus_message_t* arr, const char* value);
@@ -41,7 +41,7 @@ void colyseus_message_array_push_uint(colyseus_message_t* arr, uint64_t value);
 void colyseus_message_array_push_float(colyseus_message_t* arr, double value);
 void colyseus_message_array_push_bool(colyseus_message_t* arr, bool value);
 void colyseus_message_array_push_nil(colyseus_message_t* arr);
-void colyseus_message_array_push(colyseus_message_t* arr, colyseus_message_t* value);
+void colyseus_message_array_push_msg(colyseus_message_t* arr, colyseus_message_t* value);
 
 /* Encoding */
 uint8_t* colyseus_message_encode(colyseus_message_t* message, size_t* out_len);
@@ -128,5 +128,51 @@ bool colyseus_message_map_iterator_next(colyseus_message_map_iterator_t* iter, c
 #ifdef __cplusplus
 }
 #endif
+
+/* ============================================================================
+ * C11 _Generic convenience macros for type-auto-detected map/array operations
+ * ============================================================================
+ *
+ * Usage:
+ *   float x = 10.0f;
+ *   colyseus_message_map_put(msg, "x", x);       // auto-detects float
+ *   colyseus_message_map_put(msg, "name", "foo"); // auto-detects string
+ *   colyseus_message_map_put(msg, "nested", sub); // auto-detects nested message
+ *
+ * The explicit typed variants (_put_float, _put_int, etc.) remain available.
+ */
+#if !defined(__cplusplus) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+
+#define colyseus_message_map_put(map, key, value) _Generic((value),     \
+    _Bool:               colyseus_message_map_put_bool,                 \
+    char*:               colyseus_message_map_put_str,                  \
+    const char*:         colyseus_message_map_put_str,                  \
+    int:                 colyseus_message_map_put_int,                  \
+    long:                colyseus_message_map_put_int,                  \
+    long long:           colyseus_message_map_put_int,                  \
+    unsigned int:        colyseus_message_map_put_uint,                 \
+    unsigned long:       colyseus_message_map_put_uint,                 \
+    unsigned long long:  colyseus_message_map_put_uint,                 \
+    float:               colyseus_message_map_put_float,                \
+    double:              colyseus_message_map_put_float,                \
+    colyseus_message_t*: colyseus_message_map_put_msg                   \
+)(map, key, value)
+
+#define colyseus_message_array_push(arr, value) _Generic((value),       \
+    _Bool:               colyseus_message_array_push_bool,              \
+    char*:               colyseus_message_array_push_str,               \
+    const char*:         colyseus_message_array_push_str,               \
+    int:                 colyseus_message_array_push_int,               \
+    long:                colyseus_message_array_push_int,               \
+    long long:           colyseus_message_array_push_int,               \
+    unsigned int:        colyseus_message_array_push_uint,              \
+    unsigned long:       colyseus_message_array_push_uint,              \
+    unsigned long long:  colyseus_message_array_push_uint,              \
+    float:               colyseus_message_array_push_float,             \
+    double:              colyseus_message_array_push_float,             \
+    colyseus_message_t*: colyseus_message_array_push_msg                \
+)(arr, value)
+
+#endif /* C11 _Generic */
 
 #endif /* COLYSEUS_MESSAGES_H */
