@@ -48,7 +48,10 @@
 // Internal globals for dispatch
 global.__colyseus_room_handlers = ds_map_create();  // keyed by room_ref (real)
 global.__colyseus_schema_handlers = array_create(256, undefined);
+global.__colyseus_schema_meta = array_create(256, undefined);  // callback index → { parent_handle, field }
 global.__colyseus_http_handlers = ds_map_create();  // keyed by request handle (real)
+global.__colyseus_schema_structs = ds_map_create();  // keyed by instance handle (real) → GML struct
+global.__colyseus_current_room_ref = -1;  // set during event processing / state access for room tagging
 
 #macro __COLYSEUS_AUTH_FILE "colyseus_auth.dat"
 
@@ -171,16 +174,22 @@ function __colyseus_get_room_entry(_room_ref) {
 /// Usage: colyseus_listen(callbacks, "field", handler)          — listens on root state
 ///        colyseus_listen(callbacks, instance, "field", handler) — listens on a child instance
 function colyseus_listen(_callbacks, _instance_or_property, _property_or_handler, _handler = undefined) {
+    var _parent_handle, _field;
     if (is_string(_instance_or_property)) {
         // Root shorthand: colyseus_listen(callbacks, "field", handler)
         _handler = _property_or_handler;
-        var _handle = colyseus_callbacks_listen(_callbacks, 0, _instance_or_property);
+        _field = _instance_or_property;
+        _parent_handle = 0;  // resolved at C level to root state
+        var _handle = colyseus_callbacks_listen(_callbacks, 0, _field);
     } else {
         // Full form: colyseus_listen(callbacks, instance, "field", handler)
-        var _handle = colyseus_callbacks_listen(_callbacks, _instance_or_property, _property_or_handler);
+        _parent_handle = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        _field = _property_or_handler;
+        var _handle = colyseus_callbacks_listen(_callbacks, _parent_handle, _field);
     }
     if (_handle >= 0) {
         global.__colyseus_schema_handlers[_handle] = _handler;
+        global.__colyseus_schema_meta[_handle] = { parent_handle: _parent_handle, field: _field };
     }
     return _handle;
 }
@@ -193,7 +202,8 @@ function colyseus_on_add(_callbacks, _instance_or_property, _property_or_handler
         _handler = _property_or_handler;
         var _handle = colyseus_callbacks_on_add(_callbacks, 0, _instance_or_property);
     } else {
-        var _handle = colyseus_callbacks_on_add(_callbacks, _instance_or_property, _property_or_handler);
+        var _inst = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        var _handle = colyseus_callbacks_on_add(_callbacks, _inst, _property_or_handler);
     }
     if (_handle >= 0) {
         global.__colyseus_schema_handlers[_handle] = _handler;
@@ -209,7 +219,8 @@ function colyseus_on_remove(_callbacks, _instance_or_property, _property_or_hand
         _handler = _property_or_handler;
         var _handle = colyseus_callbacks_on_remove(_callbacks, 0, _instance_or_property);
     } else {
-        var _handle = colyseus_callbacks_on_remove(_callbacks, _instance_or_property, _property_or_handler);
+        var _inst = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        var _handle = colyseus_callbacks_on_remove(_callbacks, _inst, _property_or_handler);
     }
     if (_handle >= 0) {
         global.__colyseus_schema_handlers[_handle] = _handler;
@@ -221,20 +232,121 @@ function colyseus_on_remove(_callbacks, _instance_or_property, _property_or_hand
 // Schema field access — unified getter
 // =============================================================================
 
+/// Get the type of a field on a schema instance.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Field name
+/// @returns {Real} COLYSEUS_TYPE_* constant, or -1 if not found
+function colyseus_schema_get_field_type(_instance, _field) {
+    if (is_struct(_instance)) {
+        _instance = _instance.__handle;
+    }
+    return __colyseus_schema_get_field_type(_instance, _field);
+}
+
 /// Get a field value from a schema instance, auto-dispatching by type.
 /// Returns: string for string fields, number for numeric/bool fields,
-///          instance handle (real) for ref/array/map fields, undefined if unknown.
-/// @param {Real} _instance  Schema instance handle
+///          struct for ref fields (synchronized), undefined if unknown.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
 /// @param {String} _field   Field name
 function colyseus_schema_get(_instance, _field) {
+    // Allow passing a struct returned by a previous colyseus_schema_get call
+    if (is_struct(_instance)) {
+        _instance = _instance.__handle;
+    }
     var _type = __colyseus_schema_get(_instance, _field);
     if (_type == COLYSEUS_TYPE_STRING) {
         return __colyseus_schema_get_result_string();
     } else if (_type < 0) {
         return undefined;
+    } else if (_type == COLYSEUS_TYPE_REF) {
+        var _handle = __colyseus_schema_get_result_number();
+        if (_handle == 0) return undefined;
+        return __colyseus_schema_to_struct(_handle);
     } else {
         return __colyseus_schema_get_result_number();
     }
+}
+
+/// @ignore Internal: Build or retrieve a cached GML struct for a schema instance handle.
+/// The struct is kept in sync — fields are refreshed on each state change.
+function __colyseus_schema_to_struct(_handle) {
+    // Return cached struct if available
+    if (ds_map_exists(global.__colyseus_schema_structs, _handle)) {
+        return ds_map_find_value(global.__colyseus_schema_structs, _handle);
+    }
+
+    var _struct = {};
+    _struct.__handle = _handle;
+    _struct.__room_ref = global.__colyseus_current_room_ref;
+    ds_map_set(global.__colyseus_schema_structs, _handle, _struct);
+
+    // Populate fields from C data
+    __colyseus_schema_refresh_struct(_handle, _struct);
+    return _struct;
+}
+
+/// @ignore Internal: Refresh a GML struct's fields from the current C schema data.
+function __colyseus_schema_refresh_struct(_handle, _struct) {
+    var _count = __colyseus_schema_field_count(_handle);
+    for (var _i = 0; _i < _count; _i++) {
+        var _name = __colyseus_schema_field_name(_handle, _i);
+        var _ftype = __colyseus_schema_field_type_at(_handle, _i);
+        if (_name == "") continue;
+
+        if (_ftype == COLYSEUS_TYPE_STRING) {
+            variable_struct_set(_struct, _name, __colyseus_schema_get_string(_handle, _name));
+        } else if (_ftype == COLYSEUS_TYPE_REF) {
+            var _ref = __colyseus_schema_get_number(_handle, _name);
+            if (_ref != 0) {
+                variable_struct_set(_struct, _name, __colyseus_schema_to_struct(_ref));
+            } else {
+                variable_struct_set(_struct, _name, undefined);
+            }
+        } else if (_ftype >= 0) {
+            variable_struct_set(_struct, _name, __colyseus_schema_get_number(_handle, _name));
+        }
+    }
+}
+
+/// Free a room and clear cached schema structs belonging to it.
+/// @param {Real} _room_ref  Room reference
+function colyseus_room_free(_room_ref) {
+    var _key = ds_map_find_first(global.__colyseus_schema_structs);
+    while (_key != undefined) {
+        var _next = ds_map_find_next(global.__colyseus_schema_structs, _key);
+        var _s = ds_map_find_value(global.__colyseus_schema_structs, _key);
+        if (is_struct(_s) && _s.__room_ref == _room_ref) {
+            ds_map_delete(global.__colyseus_schema_structs, _key);
+        }
+        _key = _next;
+    }
+    __colyseus_room_free(_room_ref);
+}
+
+/// Get room state as a synchronized struct.
+/// All schema fields are populated, including nested refs.
+/// The struct is automatically refreshed on each state change.
+/// @param {Real} _room_ref  Room reference
+/// @returns {Struct}
+function colyseus_room_get_state(_room_ref) {
+    global.__colyseus_current_room_ref = _room_ref;
+    var _handle = __colyseus_room_get_state(_room_ref);
+    if (_handle == 0) return undefined;
+    return __colyseus_schema_to_struct(_handle);
+}
+
+/// Get an item from a MapSchema field by key. Returns a struct for schema items.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Map field name
+/// @param {String} _key  Map key
+/// @returns {Struct|Undefined}
+function colyseus_map_get(_instance, _field, _key) {
+    if (is_struct(_instance)) {
+        _instance = _instance.__handle;
+    }
+    var _handle = __colyseus_map_get(_instance, _field, _key);
+    if (_handle == 0) return undefined;
+    return __colyseus_schema_to_struct(_handle);
 }
 
 // =============================================================================
@@ -446,6 +558,7 @@ function colyseus_process() {
 
     while (_evt != COLYSEUS_EVENT_NONE) {
         var _room_ref = colyseus_event_get_room();
+        global.__colyseus_current_room_ref = _room_ref;
         var _entry = ds_map_exists(global.__colyseus_room_handlers, _room_ref)
             ? ds_map_find_value(global.__colyseus_room_handlers, _room_ref)
             : undefined;
@@ -511,12 +624,27 @@ function colyseus_process() {
                         _val = colyseus_event_get_value_string();
                         _prev = colyseus_event_get_prev_value_string();
                     } else if (_type == COLYSEUS_TYPE_REF) {
-                        _val = colyseus_event_get_instance();
-                        _prev = 0;
+                        var _ref = colyseus_event_get_instance();
+                        _val = (_ref != 0) ? __colyseus_schema_to_struct(_ref) : undefined;
+                        _prev = undefined;
                     } else {
                         _val = colyseus_event_get_value_number();
                         _prev = colyseus_event_get_prev_value_number();
                     }
+
+                    // Update cached struct field inline
+                    var _meta = global.__colyseus_schema_meta[_cb];
+                    if (_meta != undefined) {
+                        var _parent = _meta.parent_handle;
+                        if (ds_map_exists(global.__colyseus_schema_structs, _parent)) {
+                            variable_struct_set(
+                                ds_map_find_value(global.__colyseus_schema_structs, _parent),
+                                _meta.field,
+                                _val
+                            );
+                        }
+                    }
+
                     _handler(_val, _prev);
                 }
                 break;
@@ -525,8 +653,9 @@ function colyseus_process() {
                 var _cb = colyseus_event_get_callback_handle();
                 var _handler = global.__colyseus_schema_handlers[_cb];
                 if (_handler != undefined) {
+                    var _ref = colyseus_event_get_instance();
                     _handler(
-                        colyseus_event_get_instance(),
+                        (_ref != 0) ? __colyseus_schema_to_struct(_ref) : _ref,
                         colyseus_event_get_key_string()
                     );
                 }
@@ -536,10 +665,15 @@ function colyseus_process() {
                 var _cb = colyseus_event_get_callback_handle();
                 var _handler = global.__colyseus_schema_handlers[_cb];
                 if (_handler != undefined) {
+                    var _ref = colyseus_event_get_instance();
                     _handler(
-                        colyseus_event_get_instance(),
+                        (_ref != 0) ? __colyseus_schema_to_struct(_ref) : _ref,
                         colyseus_event_get_key_string()
                     );
+                    // Clean up cached struct for the removed instance
+                    if (_ref != 0 && ds_map_exists(global.__colyseus_schema_structs, _ref)) {
+                        ds_map_delete(global.__colyseus_schema_structs, _ref);
+                    }
                 }
                 break;
 

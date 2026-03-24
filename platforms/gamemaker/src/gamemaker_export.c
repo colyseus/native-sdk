@@ -967,6 +967,52 @@ GM_EXPORT double colyseus_gm_schema_get_result_number(void) {
     return gm_schema_get_result.number;
 }
 
+// =============================================================================
+// Schema field enumeration — for building GML structs
+// =============================================================================
+
+GM_EXPORT double colyseus_gm_schema_field_count(double instance_handle) {
+    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    if (!schema || !schema->__vtable) return 0.0;
+
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        const colyseus_dynamic_vtable_t* dvt = colyseus_vtable_as_dynamic(schema->__vtable);
+        return dvt ? (double)dvt->dyn_field_count : 0.0;
+    } else {
+        return (double)schema->__vtable->field_count;
+    }
+}
+
+GM_EXPORT const char* colyseus_gm_schema_field_name(double instance_handle, double index) {
+    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    int idx = (int)index;
+    if (!schema || !schema->__vtable || idx < 0) return "";
+
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        const colyseus_dynamic_vtable_t* dvt = colyseus_vtable_as_dynamic(schema->__vtable);
+        if (!dvt || idx >= dvt->dyn_field_count) return "";
+        return dvt->dyn_fields[idx]->name ? dvt->dyn_fields[idx]->name : "";
+    } else {
+        if (idx >= schema->__vtable->field_count) return "";
+        return schema->__vtable->fields[idx].name ? schema->__vtable->fields[idx].name : "";
+    }
+}
+
+GM_EXPORT double colyseus_gm_schema_field_type_at(double instance_handle, double index) {
+    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    int idx = (int)index;
+    if (!schema || !schema->__vtable || idx < 0) return -1.0;
+
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        const colyseus_dynamic_vtable_t* dvt = colyseus_vtable_as_dynamic(schema->__vtable);
+        if (!dvt || idx >= dvt->dyn_field_count) return -1.0;
+        return (double)dvt->dyn_fields[idx]->type;
+    } else {
+        if (idx >= schema->__vtable->field_count) return -1.0;
+        return (double)schema->__vtable->fields[idx].type;
+    }
+}
+
 GM_EXPORT double colyseus_gm_map_get(double instance_handle, const char* field_name, const char* key) {
     colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
     if (!schema || !field_name || !key) return 0.0;

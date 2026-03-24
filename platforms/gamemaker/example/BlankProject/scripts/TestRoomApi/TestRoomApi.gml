@@ -135,9 +135,9 @@ suite(function() {
             test_drain_events();
         });
 
-        test("get_state returns valid handle", function() {
+        test("get_state returns valid struct", function() {
             var _state = colyseus_room_get_state(global.__rt.room);
-            expect(_state).toBeGreaterThan(0);
+            expect(is_struct(_state)).toBe(true);
         });
 
         test("state has currentTurn string field", function() {
@@ -160,7 +160,7 @@ suite(function() {
             var _state = colyseus_room_get_state(global.__rt.room);
             var _session_id = colyseus_room_get_session_id(global.__rt.room);
             var _player = colyseus_map_get(_state, "players", _session_id);
-            expect(_player).toBeGreaterThan(0);
+            expect(is_struct(_player)).toBe(true);
         });
 
         test("player has x, y number fields", function() {
@@ -177,8 +177,135 @@ suite(function() {
         test("host ref points to a player", function() {
             var _state = colyseus_room_get_state(global.__rt.room);
             var _host = colyseus_schema_get(_state, "host");
-            // host is a Player ref — should be a valid handle
-            expect(_host).toBeGreaterThan(0);
+            // host is a Player ref — should be a struct with fields
+            expect(is_struct(_host)).toBe(true);
+        });
+    });
+
+    // =========================================================================
+    // Section 2b: Schema Structs (dot access, inline sync)
+    // =========================================================================
+    describe("Schema Structs", function() {
+
+        beforeEach(function() {
+            test_drain_events();
+            global.__rt = { done: false, room: -1, client: -1, callbacks: -1 };
+            global.__rt.client = colyseus_client_create("http://127.0.0.1:2567");
+            global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
+
+            global.__rt.state_received = false;
+            colyseus_on_join(global.__rt.room, function(_room) {
+                global.__rt.done = true;
+            });
+            colyseus_on_state_change(global.__rt.room, function(_room) {
+                global.__rt.state_received = true;
+            });
+            test_poll_until(global.__rt, 5000);
+            var _start = current_time;
+            while (!global.__rt.state_received && current_time - _start < 2000) {
+                colyseus_process();
+            }
+        });
+
+        afterEach(function() {
+            if (global.__rt.callbacks != -1) {
+                colyseus_callbacks_free(global.__rt.callbacks);
+                global.__rt.callbacks = -1;
+            }
+            if (global.__rt.room != -1) {
+                colyseus_room_leave(global.__rt.room);
+                var _start = current_time;
+                while (current_time - _start < 500) { colyseus_process(); }
+                colyseus_room_free(global.__rt.room);
+                global.__rt.room = -1;
+            }
+            if (global.__rt.client != -1) {
+                colyseus_client_free(global.__rt.client);
+                global.__rt.client = -1;
+            }
+            test_drain_events();
+        });
+
+        test("state struct has currentTurn accessible via dot notation", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            expect(variable_struct_exists(_state, "currentTurn")).toBe(true);
+            expect(string_length(_state.currentTurn)).toBeGreaterThan(0);
+        });
+
+        test("state.host is a nested struct with x and y fields", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            expect(is_struct(_state.host)).toBe(true);
+            expect(variable_struct_exists(_state.host, "x")).toBe(true);
+            expect(variable_struct_exists(_state.host, "y")).toBe(true);
+        });
+
+        test("colyseus_map_get returns struct with fields", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _session_id = colyseus_room_get_session_id(global.__rt.room);
+            var _player = colyseus_map_get(_state, "players", _session_id);
+            expect(is_struct(_player)).toBe(true);
+            expect(variable_struct_exists(_player, "x")).toBe(true);
+            expect(variable_struct_exists(_player, "y")).toBe(true);
+        });
+
+        test("same C handle returns same struct reference", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _state2 = colyseus_room_get_state(global.__rt.room);
+            expect(_state).toBe(_state2);
+        });
+
+        test("on_add delivers struct instances", function() {
+            global.__rt.callbacks = colyseus_callbacks_create(global.__rt.room);
+            global.__rt.add_instance = undefined;
+            global.__rt.add_done = false;
+
+            colyseus_on_add(global.__rt.callbacks, "players", function(_instance, _key) {
+                global.__rt.add_instance = _instance;
+                global.__rt.add_done = true;
+            });
+
+            var _start = current_time;
+            while (!global.__rt.add_done && current_time - _start < 2000) {
+                colyseus_process();
+            }
+
+            expect(global.__rt.add_done).toBeTruthy();
+            expect(is_struct(global.__rt.add_instance)).toBe(true);
+            expect(variable_struct_exists(global.__rt.add_instance, "x")).toBe(true);
+        });
+
+        test("struct field updates inline when listener fires", function() {
+            global.__rt.callbacks = colyseus_callbacks_create(global.__rt.room);
+            global.__rt.player_struct = undefined;
+            global.__rt.move_done = false;
+
+            colyseus_on_add(global.__rt.callbacks, "players", function(_instance, _key) {
+                global.__rt.player_struct = _instance;
+                colyseus_listen(global.__rt.callbacks, _instance, "x", function(_val, _prev) {
+                    if (_val == 77) {
+                        global.__rt.move_done = true;
+                    }
+                });
+            });
+
+            // Let on_add fire
+            var _start = current_time;
+            while (global.__rt.player_struct == undefined && current_time - _start < 2000) {
+                colyseus_process();
+            }
+            expect(is_struct(global.__rt.player_struct)).toBe(true);
+
+            // Send move and wait for listener
+            colyseus_send(global.__rt.room, "move", { x: 77, y: 88 });
+
+            _start = current_time;
+            while (!global.__rt.move_done && current_time - _start < 3000) {
+                colyseus_process();
+            }
+
+            expect(global.__rt.move_done).toBeTruthy();
+            // The struct should have been updated inline
+            expect(global.__rt.player_struct.x).toBe(77);
         });
     });
 

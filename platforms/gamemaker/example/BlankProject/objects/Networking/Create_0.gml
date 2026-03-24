@@ -48,7 +48,7 @@ colyseus_on_join(colyseus_room, function(_room) {
 
 colyseus_on_state_change(colyseus_room, function(_room) {
     var state = colyseus_room_get_state(_room);
-    if (state != 0) {
+    if (is_struct(state)) {
         show_debug_message("State changed");
         show_debug_message("Room session id: " + colyseus_room_get_session_id(_room));
 
