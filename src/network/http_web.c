@@ -412,6 +412,17 @@ void colyseus_http_delete(
     http_fetch_request(http, "DELETE", path, NULL, on_success, on_error, userdata);
 }
 
+void colyseus_http_patch(
+    colyseus_http_t* http,
+    const char* path,
+    const char* json_body,
+    colyseus_http_success_callback_t on_success,
+    colyseus_http_error_callback_t on_error,
+    void* userdata
+) {
+    http_fetch_request(http, "PATCH", path, json_body, on_success, on_error, userdata);
+}
+
 void colyseus_http_response_free(colyseus_http_response_t* response) {
     (void)response;
 }
