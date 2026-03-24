@@ -6,23 +6,23 @@ extends RefCounted
 ## Works on all platforms including web (requires dlink-enabled export templates).
 ##
 ## Usage:
-##   var client = Colyseus.create_client()
-##   client.set_endpoint("ws://localhost:2567")
+##   var client = Colyseus.Client.new("ws://localhost:2567")
 ##   var room = client.join_or_create("my_room")
-##   var callbacks = Colyseus.callbacks(room)
+##   var callbacks = Colyseus.Callbacks.of(room)
 
-## Create a new Colyseus client.
-## Returns a wrapper with .http and .auth sub-objects matching the TypeScript SDK.
-## Automatically starts polling for network events — no need to call poll() manually.
-static func create_client() -> Variant:
-	var class_name_str := &"ColyseusClient"
-	if ClassDB.class_exists(class_name_str):
-		var native = ClassDB.instantiate(class_name_str)
-		if native:
-			_ensure_polling()
-			return Client.new(native)
-	push_error("Colyseus: ColyseusClient not available. Make sure the GDExtension is properly loaded.")
-	return null
+## @deprecated: Use Colyseus.Client.new("ws://localhost:2567") instead.
+static func create_client() -> Client:
+	push_warning("Colyseus.create_client() is deprecated. Use Colyseus.Client.new(endpoint) instead.")
+	return Client.new()
+
+## Poll the native SDK for network events. Called automatically each frame
+## via the internal _Poller node. Only call manually for headless/test usage.
+static func poll() -> void:
+	if _poll_instance:
+		_poll_instance.call(&"poll")
+
+## Internal: a native ColyseusClient instance kept alive for calling static poll()
+static var _poll_instance = null
 
 ## Internal: singleton polling node added to scene tree
 static var _poll_node: Node = null
@@ -37,19 +37,10 @@ static func _ensure_polling():
 	_poll_node.name = &"_ColyseusPoller"
 	tree.root.call_deferred(&"add_child", _poll_node)
 
-## Get callbacks for a room
-static func callbacks(room) -> Variant:
-	var class_name_str := &"ColyseusCallbacks"
-	if ClassDB.class_exists(class_name_str):
-		var instance = ClassDB.instantiate(class_name_str)
-		if instance and instance.has_method(&"_init_with_room"):
-			instance._init_with_room(room)
-			return instance
-		if instance and instance.has_method(&"get"):
-			return instance.get(room)
-		return instance
-	push_error("Colyseus: ColyseusCallbacks not available. Make sure the GDExtension is properly loaded.")
-	return null
+## @deprecated: Use Colyseus.Callbacks.of(room) instead.
+static func callbacks(room) -> Callbacks:
+	push_warning("Colyseus.callbacks(room) is deprecated. Use Colyseus.Callbacks.of(room) instead.")
+	return Callbacks.of(room)
 
 ## Colyseus Schema Definition Library
 ## 
@@ -71,6 +62,53 @@ static func callbacks(room) -> Variant:
 ##           ]
 ##   
 ##   room.set_state_type(RoomState)
+
+## Wraps native ColyseusCallbacks so users can type `var callbacks: Colyseus.Callbacks`.
+class Callbacks extends RefCounted:
+	var _native
+
+	static func of(room) -> Callbacks:
+		var native_room = room._native if room is Room else room
+		var class_name_str := &"ColyseusCallbacks"
+		if ClassDB.class_exists(class_name_str):
+			var instance = ClassDB.instantiate(class_name_str)
+			var native_cb = null
+			if instance and instance.has_method(&"_init_with_room"):
+				instance._init_with_room(native_room)
+				native_cb = instance
+			elif instance and instance.has_method(&"get"):
+				native_cb = instance.get(native_room)
+			if native_cb:
+				var cb = Callbacks.new()
+				cb._native = native_cb
+				return cb
+		push_error("Colyseus: ColyseusCallbacks not available. Make sure the GDExtension is properly loaded.")
+		return null
+
+	func listen(target, property_or_callback, callback = null) -> int:
+		if callback == null:
+			return _native.listen(target, property_or_callback)
+		return _native.listen(target, property_or_callback, callback)
+
+	func on_add(target, property_or_callback, callback = null) -> int:
+		if callback == null:
+			return _native.on_add(target, property_or_callback)
+		return _native.on_add(target, property_or_callback, callback)
+
+	func on_remove(target, property_or_callback, callback = null) -> int:
+		if callback == null:
+			return _native.on_remove(target, property_or_callback)
+		return _native.on_remove(target, property_or_callback, callback)
+
+	func on_change(target, property_or_callback = null, callback = null) -> int:
+		if property_or_callback == null:
+			return _native.on_change(target)
+		if callback == null:
+			return _native.on_change(target, property_or_callback)
+		return _native.on_change(target, property_or_callback, callback)
+
+	func remove(handle: int) -> void:
+		_native.remove(handle)
 
 # =============================================================================
 # Schema Base Class
@@ -437,7 +475,7 @@ class ArraySchema extends RefCounted:
 
 class _Poller extends Node:
 	func _process(_delta):
-		ColyseusClient.poll()
+		Colyseus.poll()
 
 # =============================================================================
 # Utility Functions
@@ -479,10 +517,20 @@ class Client extends RefCounted:
 	## Auth sub-object for token management
 	var auth: Auth
 
-	func _init(native_client):
-		_native = native_client
-		http = HTTP.new(native_client)
-		auth = Auth.new(native_client)
+	func _init(endpoint: String = ""):
+		var class_name_str := &"ColyseusClient"
+		if ClassDB.class_exists(class_name_str):
+			_native = ClassDB.instantiate(class_name_str)
+		if not _native:
+			push_error("Colyseus: ColyseusClient not available. Make sure the GDExtension is properly loaded.")
+			return
+		http = HTTP.new(_native)
+		auth = Auth.new(_native)
+		if endpoint != "":
+			_native.set_endpoint(endpoint)
+		if not Colyseus._poll_instance:
+			Colyseus._poll_instance = _native
+		Colyseus._ensure_polling()
 
 	## Set the server endpoint (e.g., "ws://localhost:2567")
 	func set_endpoint(endpoint: String) -> void:
@@ -496,23 +544,77 @@ class Client extends RefCounted:
 
 	## Join or create a room
 	func join_or_create(room_name: String, options: Dictionary = {}):
-		return _native.join_or_create(room_name, JSON.stringify(options))
+		var native_room = _native.join_or_create(room_name, JSON.stringify(options))
+		return Room.new(native_room) if native_room else null
 
 	## Create a new room
 	func create(room_name: String, options: Dictionary = {}):
-		return _native.create(room_name, JSON.stringify(options))
+		var native_room = _native.create(room_name, JSON.stringify(options))
+		return Room.new(native_room) if native_room else null
 
 	## Join an existing room by name
 	func join(room_name: String, options: Dictionary = {}):
-		return _native.join(room_name, JSON.stringify(options))
+		var native_room = _native.join(room_name, JSON.stringify(options))
+		return Room.new(native_room) if native_room else null
 
 	## Join a room by its ID
 	func join_by_id(room_id: String, options: Dictionary = {}):
-		return _native.join_by_id(room_id, JSON.stringify(options))
+		var native_room = _native.join_by_id(room_id, JSON.stringify(options))
+		return Room.new(native_room) if native_room else null
 
 	## Reconnect to a room using a reconnection token
 	func reconnect(reconnection_token: String):
-		return _native.reconnect(reconnection_token)
+		var native_room = _native.reconnect(reconnection_token)
+		return Room.new(native_room) if native_room else null
+
+# =============================================================================
+# Room Wrapper — exposes signals and methods from native ColyseusRoom
+# =============================================================================
+
+## Wraps the native ColyseusRoom so users can type `var room: Colyseus.Room`.
+class Room extends RefCounted:
+	signal joined()
+	signal state_changed()
+	signal message_received(type: Variant, data: Variant)
+	signal error(code: int, message: String)
+	signal left(code: int, reason: String)
+
+	var _native
+
+	func _init(native_room):
+		_native = native_room
+		_native.joined.connect(func(): joined.emit())
+		_native.state_changed.connect(func(): state_changed.emit())
+		_native.message_received.connect(func(type, data): message_received.emit(type, data))
+		_native.error.connect(func(code, msg): error.emit(code, msg))
+		_native.left.connect(func(code, reason): left.emit(code, reason))
+
+	func send_message(type, data = null):
+		if data == null:
+			_native.send_message(type)
+		else:
+			_native.send_message(type, data)
+
+	func leave() -> void:
+		_native.leave()
+
+	func get_id() -> String:
+		return _native.get_id()
+
+	func get_session_id() -> String:
+		return _native.get_session_id()
+
+	func get_name() -> String:
+		return _native.get_name()
+
+	var connected: bool:
+		get: return _native.is_connected()
+
+	func get_state() -> Variant:
+		return _native.get_state()
+
+	func set_state_type(state_type) -> void:
+		_native.set_state_type(state_type)
 
 # =============================================================================
 # HTTP — callback-based HTTP requests

@@ -17,7 +17,8 @@ extern "C" {
 typedef enum {
     COLYSEUS_GDCB_LISTEN,
     COLYSEUS_GDCB_ON_ADD,
-    COLYSEUS_GDCB_ON_REMOVE
+    COLYSEUS_GDCB_ON_REMOVE,
+    COLYSEUS_GDCB_ON_CHANGE
 } ColyseusGodotCallbackType;
 
 // Callback entry - stores the GDScript callable and related info
@@ -81,6 +82,16 @@ void gdext_colyseus_callbacks_on_add(
 
 // on_remove(target, property_or_callback, [callback]) -> int
 void gdext_colyseus_callbacks_on_remove(
+    void* p_method_userdata,
+    GDExtensionClassInstancePtr p_instance,
+    const GDExtensionConstVariantPtr* p_args,
+    GDExtensionInt p_argument_count,
+    GDExtensionVariantPtr r_return,
+    GDExtensionCallError* r_error
+);
+
+// on_change(target, property_or_callback, [callback]) -> int
+void gdext_colyseus_callbacks_on_change(
     void* p_method_userdata,
     GDExtensionClassInstancePtr p_instance,
     const GDExtensionConstVariantPtr* p_args,

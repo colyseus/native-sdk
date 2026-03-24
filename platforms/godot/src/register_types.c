@@ -40,7 +40,7 @@ static void register_extension_class(
         GDExtensionClassCreationInfo5 class_info = {
             .is_virtual = false,
             .is_abstract = false,
-            .is_exposed = true,
+            .is_exposed = false,
             .is_runtime = false,
             .icon_path = NULL,
             .set_func = NULL,
@@ -70,7 +70,7 @@ static void register_extension_class(
         GDExtensionClassCreationInfo4 class_info = {
             .is_virtual = false,
             .is_abstract = false,
-            .is_exposed = true,
+            .is_exposed = false,
             .is_runtime = false,
             .icon_path = NULL,
             .set_func = NULL,
@@ -100,7 +100,7 @@ static void register_extension_class(
         GDExtensionClassCreationInfo2 class_info = {
             .is_virtual = false,
             .is_abstract = false,
-            .is_exposed = true,
+            .is_exposed = false,
             .set_func = NULL,
             .get_func = NULL,
             .get_property_list_func = NULL,
@@ -1335,6 +1335,39 @@ static void register_colyseus_callbacks(void) {
         GDExtensionClassMethodInfo method_info = {
             .name = &method_name_string,
             .method_userdata = (void*)gdext_colyseus_callbacks_on_remove,
+            .call_func = call_vararg,
+            .ptrcall_func = NULL,
+            .method_flags = GDEXTENSION_METHOD_FLAG_VARARG,
+            .has_return_value = true,
+            .return_value_info = &return_info,
+            .return_value_metadata = GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+            .argument_count = 0,
+            .arguments_info = NULL,
+            .arguments_metadata = NULL,
+            .default_argument_count = 0,
+            .default_arguments = NULL
+        };
+
+        StringName class_name_string;
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "ColyseusCallbacks", false);
+
+        api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
+
+        destructors.string_name_destructor(&method_name_string);
+        destructors.string_name_destructor(&class_name_string);
+        destruct_property(&return_info);
+    }
+
+    // Register on_change method (vararg)
+    {
+        StringName method_name_string;
+        constructors.string_name_new_with_latin1_chars(&method_name_string, "on_change", false);
+
+        GDExtensionPropertyInfo return_info = make_property(GDEXTENSION_VARIANT_TYPE_INT, "");
+
+        GDExtensionClassMethodInfo method_info = {
+            .name = &method_name_string,
+            .method_userdata = (void*)gdext_colyseus_callbacks_on_change,
             .call_func = call_vararg,
             .ptrcall_func = NULL,
             .method_flags = GDEXTENSION_METHOD_FLAG_VARARG,

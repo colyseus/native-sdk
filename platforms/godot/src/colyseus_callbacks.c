@@ -397,6 +397,88 @@ static void item_remove_trampoline(void* value, void* key, void* userdata) {
     destructors.variant_destroy(&key_variant);
 }
 
+static void instance_change_trampoline(void* userdata) {
+    GodotCallbackEntry* entry = (GodotCallbackEntry*)userdata;
+    if (!entry || !entry->active) return;
+
+    // Use call_deferred with no arguments
+    StringName call_method;
+    constructors.string_name_new_with_latin1_chars(&call_method, "call_deferred", false);
+
+    Variant return_value;
+    GDExtensionCallError error;
+
+    api.variant_call((GDExtensionVariantPtr)&entry->callable, &call_method, NULL, 0, &return_value, &error);
+
+    destructors.string_name_destructor(&call_method);
+    destructors.variant_destroy(&return_value);
+}
+
+static void collection_change_trampoline(void* key, void* value, void* userdata) {
+    GodotCallbackEntry* entry = (GodotCallbackEntry*)userdata;
+    if (!entry || !entry->active) return;
+
+    Variant key_variant;
+    Variant value_variant;
+
+    // Convert key
+    if (key) {
+        if (entry->field_type == COLYSEUS_FIELD_ARRAY) {
+            int64_t index = *(int*)key;
+            constructors.variant_from_int_constructor(&key_variant, &index);
+        } else {
+            const char* key_str = (const char*)key;
+            String godot_key;
+            constructors.string_new_with_utf8_chars(&godot_key, key_str);
+            constructors.variant_from_string_constructor(&key_variant, &godot_key);
+            destructors.string_destructor(&godot_key);
+        }
+    } else {
+        gdext_variant_new_nil(&key_variant);
+    }
+
+    // Convert value
+    if (value) {
+        colyseus_schema_t* schema = (colyseus_schema_t*)value;
+        const colyseus_schema_vtable_t* vtable = entry->item_vtable ? entry->item_vtable : schema->__vtable;
+
+        if (vtable && colyseus_vtable_is_dynamic(vtable)) {
+            colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)value;
+            if (dyn_schema->userdata) {
+                api.variant_new_copy(&value_variant, (Variant*)dyn_schema->userdata);
+            } else {
+                Dictionary dict;
+                constructors.dictionary_constructor(&dict, NULL);
+                colyseus_dynamic_schema_to_dictionary(dyn_schema, &dict);
+                constructors.variant_from_dictionary_constructor(&value_variant, &dict);
+            }
+        } else if (vtable) {
+            Dictionary dict;
+            constructors.dictionary_constructor(&dict, NULL);
+            colyseus_schema_to_dictionary(schema, vtable, &dict);
+            constructors.variant_from_dictionary_constructor(&value_variant, &dict);
+        } else {
+            gdext_variant_new_nil(&value_variant);
+        }
+    } else {
+        gdext_variant_new_nil(&value_variant);
+    }
+
+    StringName call_method;
+    constructors.string_name_new_with_latin1_chars(&call_method, "call_deferred", false);
+
+    GDExtensionConstVariantPtr arg_ptrs[2] = { &key_variant, &value_variant };
+    Variant return_value;
+    GDExtensionCallError error;
+
+    api.variant_call((GDExtensionVariantPtr)&entry->callable, &call_method, arg_ptrs, 2, &return_value, &error);
+
+    destructors.string_name_destructor(&call_method);
+    destructors.variant_destroy(&return_value);
+    destructors.variant_destroy(&key_variant);
+    destructors.variant_destroy(&value_variant);
+}
+
 // ============================================================================
 // Constructor/Destructor
 // ============================================================================
@@ -1006,6 +1088,204 @@ void gdext_colyseus_callbacks_on_remove(
     
     wrapper->entry_count++;
     
+    int64_t handle = entry->handle;
+    if (r_return) constructors.variant_from_int_constructor(r_return, &handle);
+}
+
+void gdext_colyseus_callbacks_on_change(
+    void* p_method_userdata,
+    GDExtensionClassInstancePtr p_instance,
+    const GDExtensionConstVariantPtr* p_args,
+    GDExtensionInt p_argument_count,
+    GDExtensionVariantPtr r_return,
+    GDExtensionCallError* r_error
+) {
+    (void)p_method_userdata;
+
+    ColyseusCallbacksWrapper* wrapper = (ColyseusCallbacksWrapper*)p_instance;
+    if (!wrapper) {
+        if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_INSTANCE_IS_NULL;
+        return;
+    }
+
+    if (p_argument_count < 1) {
+        if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+        return;
+    }
+
+    GDExtensionVariantType first_arg_type = api.variant_get_type(p_args[0]);
+
+    void* instance = NULL;
+    char* property_name = NULL;
+    GDExtensionConstVariantPtr callable_arg = NULL;
+    bool is_instance_change = false;  // true = instance on_change (no property), false = collection on_change
+
+    if (first_arg_type == GDEXTENSION_VARIANT_TYPE_CALLABLE) {
+        // on_change(callback) — instance change on root state
+        callable_arg = p_args[0];
+        is_instance_change = true;
+
+        if (wrapper->room_wrapper && wrapper->room_wrapper->native_room) {
+            instance = colyseus_room_get_state(wrapper->room_wrapper->native_room);
+        }
+
+    } else if (first_arg_type == GDEXTENSION_VARIANT_TYPE_STRING) {
+        // on_change("property", callback) — collection change on root state
+        if (p_argument_count < 2) {
+            if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+            return;
+        }
+        property_name = variant_string_to_c_str(p_args[0]);
+        callable_arg = p_args[1];
+
+        if (wrapper->room_wrapper && wrapper->room_wrapper->native_room) {
+            instance = colyseus_room_get_state(wrapper->room_wrapper->native_room);
+        }
+
+    } else if (first_arg_type == GDEXTENSION_VARIANT_TYPE_DICTIONARY) {
+        if (p_argument_count < 2) {
+            if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+            return;
+        }
+
+        GDExtensionVariantType second_arg_type = api.variant_get_type(p_args[1]);
+        int ref_id = colyseus_extract_ref_id(p_args[0]);
+
+        if (second_arg_type == GDEXTENSION_VARIANT_TYPE_CALLABLE) {
+            // on_change(schema_dict, callback) — instance change
+            callable_arg = p_args[1];
+            is_instance_change = true;
+        } else {
+            // on_change(schema_dict, "property", callback) — collection change
+            if (p_argument_count < 3) {
+                if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+                return;
+            }
+            property_name = variant_string_to_c_str(p_args[1]);
+            callable_arg = p_args[2];
+        }
+
+        if (wrapper->room_wrapper && wrapper->room_wrapper->native_room &&
+            wrapper->room_wrapper->native_room->serializer &&
+            wrapper->room_wrapper->native_room->serializer->decoder) {
+
+            colyseus_ref_tracker_t* refs =
+                wrapper->room_wrapper->native_room->serializer->decoder->refs;
+            if (refs) {
+                instance = colyseus_ref_tracker_get(refs, ref_id);
+            }
+        }
+
+    } else if (first_arg_type == GDEXTENSION_VARIANT_TYPE_OBJECT) {
+        if (p_argument_count < 2) {
+            if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+            return;
+        }
+
+        GDExtensionVariantType second_arg_type = api.variant_get_type(p_args[1]);
+        int ref_id = colyseus_extract_ref_id_from_object(p_args[0]);
+
+        if (second_arg_type == GDEXTENSION_VARIANT_TYPE_CALLABLE) {
+            // on_change(schema_obj, callback) — instance change
+            callable_arg = p_args[1];
+            is_instance_change = true;
+        } else {
+            // on_change(schema_obj, "property", callback) — collection change
+            if (p_argument_count < 3) {
+                if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS;
+                return;
+            }
+            property_name = variant_string_to_c_str(p_args[1]);
+            callable_arg = p_args[2];
+        }
+
+        if (wrapper->room_wrapper && wrapper->room_wrapper->native_room &&
+            wrapper->room_wrapper->native_room->serializer &&
+            wrapper->room_wrapper->native_room->serializer->decoder) {
+
+            colyseus_ref_tracker_t* refs =
+                wrapper->room_wrapper->native_room->serializer->decoder->refs;
+            if (refs) {
+                instance = colyseus_ref_tracker_get(refs, ref_id);
+            }
+        }
+
+    } else {
+        if (r_error) r_error->error = GDEXTENSION_CALL_ERROR_INVALID_ARGUMENT;
+        return;
+    }
+
+    GodotCallbackEntry* entry = find_free_entry(wrapper);
+    if (!entry) {
+        if (property_name) free(property_name);
+        int64_t result = -1;
+        if (r_return) constructors.variant_from_int_constructor(r_return, &result);
+        return;
+    }
+
+    entry->active = true;
+    entry->type = COLYSEUS_GDCB_ON_CHANGE;
+    entry->property = property_name;
+    entry->ref_id = 0;
+    entry->field_type = COLYSEUS_FIELD_MAP;  // Default for collections
+    entry->item_vtable = NULL;
+
+    if (first_arg_type == GDEXTENSION_VARIANT_TYPE_DICTIONARY) {
+        entry->ref_id = colyseus_extract_ref_id(p_args[0]);
+    } else if (first_arg_type == GDEXTENSION_VARIANT_TYPE_OBJECT) {
+        entry->ref_id = colyseus_extract_ref_id_from_object(p_args[0]);
+    }
+
+    // Look up field info for collection changes
+    if (!is_instance_change && instance && property_name) {
+        colyseus_schema_t* schema = (colyseus_schema_t*)instance;
+        if (schema->__vtable) {
+            if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+                const colyseus_dynamic_vtable_t* dyn_vtable = colyseus_vtable_as_dynamic(schema->__vtable);
+                const colyseus_dynamic_field_t* dyn_field = colyseus_dynamic_vtable_find_field_by_name(dyn_vtable, property_name);
+                if (dyn_field) {
+                    entry->field_type = dyn_field->type;
+                    entry->item_vtable = dyn_field->child_vtable ? &dyn_field->child_vtable->base : NULL;
+                }
+            } else {
+                for (int i = 0; i < schema->__vtable->field_count; i++) {
+                    if (schema->__vtable->fields[i].name && strcmp(schema->__vtable->fields[i].name, property_name) == 0) {
+                        entry->field_type = schema->__vtable->fields[i].type;
+                        entry->item_vtable = schema->__vtable->fields[i].child_vtable;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    api.variant_new_copy(&entry->callable, callable_arg);
+
+    if (wrapper->native_callbacks && instance) {
+        if (is_instance_change) {
+            entry->handle = colyseus_callbacks_on_change_instance(
+                wrapper->native_callbacks,
+                instance,
+                instance_change_trampoline,
+                entry
+            );
+        } else if (property_name) {
+            entry->handle = colyseus_callbacks_on_change_collection(
+                wrapper->native_callbacks,
+                instance,
+                property_name,
+                collection_change_trampoline,
+                entry
+            );
+        } else {
+            entry->handle = wrapper->entry_count;
+        }
+    } else {
+        entry->handle = wrapper->entry_count;
+    }
+
+    wrapper->entry_count++;
+
     int64_t handle = entry->handle;
     if (r_return) constructors.variant_from_int_constructor(r_return, &handle);
 }
