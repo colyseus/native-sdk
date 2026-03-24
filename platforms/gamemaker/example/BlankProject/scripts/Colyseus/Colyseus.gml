@@ -13,6 +13,8 @@
 #macro COLYSEUS_EVENT_PROPERTY_CHANGE 7
 #macro COLYSEUS_EVENT_ITEM_ADD        8
 #macro COLYSEUS_EVENT_ITEM_REMOVE     9
+#macro COLYSEUS_EVENT_HTTP_RESPONSE   10
+#macro COLYSEUS_EVENT_HTTP_ERROR      11
 
 // Field type constants (matches colyseus_field_type_t)
 #macro COLYSEUS_TYPE_STRING   0
@@ -46,6 +48,72 @@
 // Internal globals for dispatch
 global.__colyseus_room_handlers = ds_map_create();  // keyed by room_ref (real)
 global.__colyseus_schema_handlers = array_create(256, undefined);
+global.__colyseus_http_handlers = ds_map_create();  // keyed by request handle (real)
+
+#macro __COLYSEUS_AUTH_FILE "colyseus_auth.dat"
+
+// =============================================================================
+// Client creation — wraps native + restores auth token
+// =============================================================================
+
+/// Create a Colyseus client. Automatically restores a previously saved auth token.
+/// @param {String} _endpoint  Server endpoint (e.g., "http://localhost:2567")
+/// @returns {Real} Client handle
+function colyseus_client_create(_endpoint) {
+    var _client = __colyseus_gm_client_create(_endpoint);
+    if (_client > 0) {
+        __colyseus_auth_restore(_client);
+    }
+    return _client;
+}
+
+// =============================================================================
+// Matchmaking — wraps native join/create with struct-to-JSON conversion
+// =============================================================================
+
+/// @ignore Internal: convert options to JSON string
+function __colyseus_options_to_json(_options) {
+    if (is_struct(_options)) {
+        return json_stringify(_options);
+    }
+    return string(_options);
+}
+
+/// Join or create a room.
+/// @param {Real} _client  Client handle
+/// @param {String} _room_name  Room name
+/// @param {Struct|String} _options  Matchmaking options (struct or JSON string)
+/// @returns {Real} Room reference
+function colyseus_client_join_or_create(_client, _room_name, _options) {
+    return __colyseus_gm_client_join_or_create(_client, _room_name, __colyseus_options_to_json(_options));
+}
+
+/// Create a room.
+/// @param {Real} _client  Client handle
+/// @param {String} _room_name  Room name
+/// @param {Struct|String} _options  Matchmaking options (struct or JSON string)
+/// @returns {Real} Room reference
+function colyseus_client_create_room(_client, _room_name, _options) {
+    return __colyseus_gm_client_create_room(_client, _room_name, __colyseus_options_to_json(_options));
+}
+
+/// Join a room.
+/// @param {Real} _client  Client handle
+/// @param {String} _room_name  Room name
+/// @param {Struct|String} _options  Matchmaking options (struct or JSON string)
+/// @returns {Real} Room reference
+function colyseus_client_join(_client, _room_name, _options) {
+    return __colyseus_gm_client_join(_client, _room_name, __colyseus_options_to_json(_options));
+}
+
+/// Join a room by ID.
+/// @param {Real} _client  Client handle
+/// @param {String} _room_id  Room ID
+/// @param {Struct|String} _options  Matchmaking options (struct or JSON string)
+/// @returns {Real} Room reference
+function colyseus_client_join_by_id(_client, _room_id, _options) {
+    return __colyseus_gm_client_join_by_id(_client, _room_id, __colyseus_options_to_json(_options));
+}
 
 // =============================================================================
 // Room event handler registration (keyed by room ref)
@@ -214,6 +282,120 @@ function colyseus_send(_room_ref, _type, _data) {
 }
 
 // =============================================================================
+// HTTP requests — callback(err, response) style
+// =============================================================================
+
+/// Perform an HTTP GET request.
+/// @param {Real} _client  Client handle
+/// @param {String} _path  Request path (e.g., "/api/leaderboard")
+/// @param {Function} _callback  callback(err, response) — err is undefined on success, response is the parsed body
+function colyseus_http_get(_client, _path, _callback) {
+    var _handle = __colyseus_gm_http_get(_client, _path);
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_http_handlers, _handle, _callback);
+    }
+    return _handle;
+}
+
+/// Perform an HTTP POST request.
+/// @param {Real} _client  Client handle
+/// @param {String} _path  Request path
+/// @param {Struct} _body  Request body (struct will be JSON-encoded, string sent as-is)
+/// @param {Function} _callback  callback(err, response)
+function colyseus_http_post(_client, _path, _body, _callback) {
+    var _json = is_struct(_body) ? json_stringify(_body) : string(_body);
+    var _handle = __colyseus_gm_http_post(_client, _path, _json);
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_http_handlers, _handle, _callback);
+    }
+    return _handle;
+}
+
+/// Perform an HTTP PUT request.
+/// @param {Real} _client  Client handle
+/// @param {String} _path  Request path
+/// @param {Struct} _body  Request body (struct will be JSON-encoded, string sent as-is)
+/// @param {Function} _callback  callback(err, response)
+function colyseus_http_put(_client, _path, _body, _callback) {
+    var _json = is_struct(_body) ? json_stringify(_body) : string(_body);
+    var _handle = __colyseus_gm_http_put(_client, _path, _json);
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_http_handlers, _handle, _callback);
+    }
+    return _handle;
+}
+
+/// Perform an HTTP DELETE request.
+/// @param {Real} _client  Client handle
+/// @param {String} _path  Request path
+/// @param {Function} _callback  callback(err, response)
+function colyseus_http_delete(_client, _path, _callback) {
+    var _handle = __colyseus_gm_http_delete(_client, _path);
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_http_handlers, _handle, _callback);
+    }
+    return _handle;
+}
+
+/// Perform an HTTP PATCH request.
+/// @param {Real} _client  Client handle
+/// @param {String} _path  Request path
+/// @param {Struct} _body  Request body (struct will be JSON-encoded, string sent as-is)
+/// @param {Function} _callback  callback(err, response)
+function colyseus_http_patch(_client, _path, _body, _callback) {
+    var _json = is_struct(_body) ? json_stringify(_body) : string(_body);
+    var _handle = __colyseus_gm_http_patch(_client, _path, _json);
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_http_handlers, _handle, _callback);
+    }
+    return _handle;
+}
+
+/// Set auth token for HTTP requests (sent as Bearer token).
+/// Automatically persists the token to disk for future sessions.
+/// @param {Real} _client  Client handle
+/// @param {String} _token  Auth token
+function colyseus_auth_set_token(_client, _token) {
+    __colyseus_gm_auth_set_token(_client, _token);
+    __colyseus_auth_save(_token);
+}
+
+/// Get current auth token.
+/// @param {Real} _client  Client handle
+/// @returns {String}
+function colyseus_auth_get_token(_client) {
+    return __colyseus_gm_auth_get_token(_client);
+}
+
+/// Clear the persisted auth token (e.g., on logout).
+function colyseus_auth_clear_token(_client) {
+    __colyseus_gm_auth_set_token(_client, "");
+    if (file_exists(__COLYSEUS_AUTH_FILE)) {
+        file_delete(__COLYSEUS_AUTH_FILE);
+    }
+}
+
+/// @ignore Internal: save auth token to disk
+function __colyseus_auth_save(_token) {
+    var _map = ds_map_create();
+    ds_map_set(_map, "token", _token);
+    ds_map_secure_save(_map, __COLYSEUS_AUTH_FILE);
+    ds_map_destroy(_map);
+}
+
+/// @ignore Internal: restore auth token from disk
+function __colyseus_auth_restore(_client) {
+    if (!file_exists(__COLYSEUS_AUTH_FILE)) return;
+    var _map = ds_map_secure_load(__COLYSEUS_AUTH_FILE);
+    if (_map == -1) return;
+    var _token = ds_map_find_value(_map, "token");
+    if (is_string(_token) && _token != "") {
+        __colyseus_gm_auth_set_token(_client, _token);
+    }
+    ds_map_destroy(_map);
+}
+
+// =============================================================================
 // Message decoding helper — auto-decode received message into GML value
 // =============================================================================
 
@@ -358,6 +540,32 @@ function colyseus_process() {
                         colyseus_event_get_instance(),
                         colyseus_event_get_key_string()
                     );
+                }
+                break;
+
+            case COLYSEUS_EVENT_HTTP_RESPONSE:
+                var _cb = colyseus_event_get_callback_handle();
+                if (ds_map_exists(global.__colyseus_http_handlers, _cb)) {
+                    var _handler = ds_map_find_value(global.__colyseus_http_handlers, _cb);
+                    ds_map_delete(global.__colyseus_http_handlers, _cb);
+                    var _body = __colyseus_gm_event_get_http_body();
+                    var _response = undefined;
+                    try { _response = json_parse(_body); }
+                    catch (_e) { _response = _body; }
+                    _handler(undefined, _response);
+                }
+                break;
+
+            case COLYSEUS_EVENT_HTTP_ERROR:
+                var _cb = colyseus_event_get_callback_handle();
+                if (ds_map_exists(global.__colyseus_http_handlers, _cb)) {
+                    var _handler = ds_map_find_value(global.__colyseus_http_handlers, _cb);
+                    ds_map_delete(global.__colyseus_http_handlers, _cb);
+                    var _err = {
+                        code: colyseus_event_get_code(),
+                        message: colyseus_event_get_message()
+                    };
+                    _handler(_err, undefined);
                 }
                 break;
         }
