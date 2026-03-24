@@ -177,6 +177,7 @@ jobs:
             --exclude=platforms \
             --exclude=example-server \
             --exclude=.git \
+            --exclude='*.tar.gz' \
             .
 
       - name: Package all-targets bundle
