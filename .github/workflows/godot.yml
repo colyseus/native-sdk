@@ -3,12 +3,18 @@ name: Godot Extension Build
 on:
   push:
     paths:
-      - 'platforms/swift/**'
+      - 'platforms/godot/**'
+      - 'src/**'
+      - 'include/**'
+      - 'third_party/**'
     branches:
       - main
   pull_request:
     paths:
-      - 'platforms/swift/**'
+      - 'platforms/godot/**'
+      - 'src/**'
+      - 'include/**'
+      - 'third_party/**'
   workflow_dispatch:
   workflow_call:
 jobs:

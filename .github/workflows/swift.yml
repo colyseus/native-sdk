@@ -2,7 +2,17 @@ name: Swift Platform
 
 on:
   push:
+    paths:
+      - 'platforms/swift/**'
+      - 'src/**'
+      - 'include/**'
+      - 'third_party/**'
   pull_request:
+    paths:
+      - 'platforms/swift/**'
+      - 'src/**'
+      - 'include/**'
+      - 'third_party/**'
   workflow_call:
 
 jobs:
