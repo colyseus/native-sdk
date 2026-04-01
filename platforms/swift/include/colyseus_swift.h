@@ -17,5 +17,6 @@
 #include <colyseus/schema/callbacks.h>
 #include <colyseus/schema/collections.h>
 #include <colyseus/auth/auth.h>
+#include <colyseus/auth/secure_storage.h>
 
 #endif /* COLYSEUS_SWIFT_H */

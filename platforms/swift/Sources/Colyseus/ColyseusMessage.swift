@@ -152,7 +152,7 @@ public final class MessageBuilder {
     @discardableResult public func set(_ k: String, _ v: Double)         -> MessageBuilder { colyseus_message_map_put_float(raw, k, v); return self }
     @discardableResult public func set(_ k: String, _ v: Bool)           -> MessageBuilder { colyseus_message_map_put_bool(raw, k, v);  return self }
     @discardableResult public func setNil(_ k: String)                   -> MessageBuilder { colyseus_message_map_put_nil(raw, k);       return self }
-    @discardableResult public func set(_ k: String, _ v: MessageBuilder) -> MessageBuilder { colyseus_message_map_put(raw, k, v.raw);   return self }
+    @discardableResult public func set(_ k: String, _ v: MessageBuilder) -> MessageBuilder { colyseus_message_map_put_msg(raw, k, v.raw); return self }
 
     @discardableResult public func push(_ v: String)         -> MessageBuilder { colyseus_message_array_push_str(raw, v);   return self }
     @discardableResult public func push(_ v: Int64)          -> MessageBuilder { colyseus_message_array_push_int(raw, v);   return self }
@@ -160,7 +160,7 @@ public final class MessageBuilder {
     @discardableResult public func push(_ v: Double)         -> MessageBuilder { colyseus_message_array_push_float(raw, v); return self }
     @discardableResult public func push(_ v: Bool)           -> MessageBuilder { colyseus_message_array_push_bool(raw, v);  return self }
     @discardableResult public func pushNil()                 -> MessageBuilder { colyseus_message_array_push_nil(raw);       return self }
-    @discardableResult public func push(_ v: MessageBuilder) -> MessageBuilder { colyseus_message_array_push(raw, v.raw);   return self }
+    @discardableResult public func push(_ v: MessageBuilder) -> MessageBuilder { colyseus_message_array_push_msg(raw, v.raw); return self }
 
     public func encode() -> Data {
         var length = 0
