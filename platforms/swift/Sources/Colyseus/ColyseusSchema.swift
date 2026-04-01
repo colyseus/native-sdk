@@ -15,7 +15,6 @@ enum SchemaWalker {
     /// Walk a colyseus_dynamic_schema_t* and return a SchemaState.
     static func walk(_ ptr: UnsafeMutableRawPointer) -> SchemaState {
         let schema = ptr.assumingMemoryBound(to: colyseus_dynamic_schema_t.self)
-        var result = SchemaState()
 
         // Iterate over all fields stored in the hash table.
         typealias Ctx = (result: SchemaState, schema: UnsafeMutablePointer<colyseus_dynamic_schema_t>)

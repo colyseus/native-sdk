@@ -57,6 +57,10 @@ jobs:
         working-directory: platforms/swift/example
         run: swift build -c release
 
+      - name: Run Swift package tests
+        working-directory: platforms/swift
+        run: swift test
+
       - name: Upload xcframework artifact
         uses: actions/upload-artifact@v4
         with:

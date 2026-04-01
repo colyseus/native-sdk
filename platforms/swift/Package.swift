@@ -48,5 +48,11 @@ let package = Package(
             name: "CColyseus",
             path: "build/Colyseus.xcframework"
         ),
+
+        .testTarget(
+            name: "ColyseusTests",
+            dependencies: ["Colyseus"],
+            path: "Tests/ColyseusTests"
+        ),
     ]
 )
