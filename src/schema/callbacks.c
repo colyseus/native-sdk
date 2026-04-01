@@ -256,6 +256,7 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
                 /* Trigger DELETE callbacks on the child */
                 colyseus_callback_entry_t* entry = child_cb->entries;
                 while (entry) {
+                    colyseus_callback_entry_t* next = entry->next;
                     if (entry->key_type == CALLBACK_KEY_OPERATION &&
                         entry->key_value == (int)COLYSEUS_OP_DELETE) {
                         /* Call with no args (just userdata) - onRemove on self */
@@ -263,7 +264,7 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
                             (colyseus_instance_change_callback_fn)entry->handler;
                         fn(entry->userdata);
                     }
-                    entry = entry->next;
+                    entry = next;
                 }
             }
         }
@@ -286,13 +287,14 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
                 /* Trigger onChange (REPLACE) callbacks */
                 colyseus_callback_entry_t* entry = ref_cb->entries;
                 while (entry) {
+                    colyseus_callback_entry_t* next = entry->next;
                     if (entry->key_type == CALLBACK_KEY_OPERATION &&
                         entry->key_value == (int)COLYSEUS_OP_REPLACE) {
                         colyseus_instance_change_callback_fn fn =
                             (colyseus_instance_change_callback_fn)entry->handler;
                         fn(entry->userdata);
                     }
-                    entry = entry->next;
+                    entry = next;
                 }
             }
 
@@ -300,6 +302,7 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
             if (change->field) {
                 colyseus_callback_entry_t* entry = ref_cb->entries;
                 while (entry) {
+                    colyseus_callback_entry_t* next = entry->next;
                     if (entry->key_type == CALLBACK_KEY_FIELD &&
                         entry->field_name &&
                         strcmp(entry->field_name, change->field) == 0) {
@@ -309,7 +312,7 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
                         fn(change->value, change->previous_value, entry->userdata);
                         cb->is_triggering = false;
                     }
-                    entry = entry->next;
+                    entry = next;
                 }
             }
 
@@ -324,13 +327,14 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
                     /* Trigger onRemove (value, key) */
                     colyseus_callback_entry_t* entry = ref_cb->entries;
                     while (entry) {
+                        colyseus_callback_entry_t* next = entry->next;
                         if (entry->key_type == CALLBACK_KEY_OPERATION &&
                             entry->key_value == (int)COLYSEUS_OP_DELETE) {
                             colyseus_item_callback_fn fn =
                                 (colyseus_item_callback_fn)entry->handler;
                             fn(change->previous_value, dynamic_index, entry->userdata);
                         }
-                        entry = entry->next;
+                        entry = next;
                     }
                 }
 
@@ -339,13 +343,14 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
                     cb->is_triggering = true;
                     colyseus_callback_entry_t* entry = ref_cb->entries;
                     while (entry) {
+                        colyseus_callback_entry_t* next = entry->next;
                         if (entry->key_type == CALLBACK_KEY_OPERATION &&
                             entry->key_value == (int)COLYSEUS_OP_ADD) {
                             colyseus_item_callback_fn fn =
                                 (colyseus_item_callback_fn)entry->handler;
                             fn(change->value, dynamic_index, entry->userdata);
                         }
-                        entry = entry->next;
+                        entry = next;
                     }
                     cb->is_triggering = false;
                 }
@@ -356,13 +361,14 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
                 cb->is_triggering = true;
                 colyseus_callback_entry_t* entry = ref_cb->entries;
                 while (entry) {
+                    colyseus_callback_entry_t* next = entry->next;
                     if (entry->key_type == CALLBACK_KEY_OPERATION &&
                         entry->key_value == (int)COLYSEUS_OP_ADD) {
                         colyseus_item_callback_fn fn =
                             (colyseus_item_callback_fn)entry->handler;
                         fn(change->value, dynamic_index, entry->userdata);
                     }
-                    entry = entry->next;
+                    entry = next;
                 }
                 cb->is_triggering = false;
             }
@@ -371,13 +377,14 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
             if (change->value != change->previous_value) {
                 colyseus_callback_entry_t* entry = ref_cb->entries;
                 while (entry) {
+                    colyseus_callback_entry_t* next = entry->next;
                     if (entry->key_type == CALLBACK_KEY_OPERATION &&
                         entry->key_value == (int)COLYSEUS_OP_REPLACE) {
                         colyseus_collection_change_callback_fn fn =
                             (colyseus_collection_change_callback_fn)entry->handler;
                         fn(dynamic_index, change->value, entry->userdata);
                     }
-                    entry = entry->next;
+                    entry = next;
                 }
             }
         }
@@ -584,10 +591,10 @@ static void on_collection_available(void* value, void* previous_value, void* use
         ctx->userdata
     );
 
-    /* 
+    /*
      * If immediate and ADD operation, call for existing items.
-     * BUT skip if we're currently triggering changes - the actual ADD changes
-     * will handle notifying about existing items.
+     * Skip if currently triggering changes - the ADD changes in the trigger
+     * list will handle notifying about items added in the same batch.
      */
     if (ctx->immediate && !ctx->callbacks->is_triggering && ctx->operation == (int)COLYSEUS_OP_ADD) {
         /* Check if it's an array or map and iterate */
@@ -696,6 +703,7 @@ static colyseus_callback_handle_t add_collection_callback_or_wait(
             callbacks->decoder->refs, collection_ref_id);
 
         if (entry) {
+            int count = 0;
             if (entry->ref_type == COLYSEUS_REF_TYPE_ARRAY) {
                 colyseus_array_schema_t* arr = (colyseus_array_schema_t*)collection;
                 colyseus_array_item_t* item = arr->items;
@@ -706,6 +714,7 @@ static colyseus_callback_handle_t add_collection_callback_or_wait(
                         handler(item->value, idx, userdata);
                         free(idx);
                     }
+                    count++;
                     item = item->next;
                 }
             } else if (entry->ref_type == COLYSEUS_REF_TYPE_MAP) {
@@ -714,6 +723,7 @@ static colyseus_callback_handle_t add_collection_callback_or_wait(
                 colyseus_map_item_t* tmp;
                 HASH_ITER(hh, map->items, item, tmp) {
                     handler(item->value, item->key, userdata);
+                    count++;
                 }
             }
         }

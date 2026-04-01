@@ -4,51 +4,84 @@
 #include <gdextension_interface.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 #include <colyseus/client.h>
 
+/*
+ * Builtin wrapper sizes must match the target Godot build configuration.
+ * See platforms/godot/include/extension_api.json for the authoritative values.
+ */
 #ifdef REAL_T_IS_DOUBLE
-#define VARIANT_SIZE 40
+#define GDEXT_COLYSEUS_VARIANT_SIZE 40
 #else
-#define VARIANT_SIZE 24
+#define GDEXT_COLYSEUS_VARIANT_SIZE 24
 #endif
 
-#ifdef BUILD_32
-#define STRING_NAME_SIZE 4
-#define STRING_SIZE 4
+#if UINTPTR_MAX == 0xffffffffu
+#define GDEXT_COLYSEUS_STRING_NAME_SIZE 4
+#define GDEXT_COLYSEUS_STRING_SIZE 4
+#define GDEXT_COLYSEUS_PACKED_BYTE_ARRAY_SIZE 8
+#define GDEXT_COLYSEUS_DICTIONARY_SIZE 4
+#define GDEXT_COLYSEUS_ARRAY_SIZE 4
 #else
-#define STRING_NAME_SIZE 8
-#define STRING_SIZE 8
+#define GDEXT_COLYSEUS_STRING_NAME_SIZE 8
+#define GDEXT_COLYSEUS_STRING_SIZE 8
+#define GDEXT_COLYSEUS_PACKED_BYTE_ARRAY_SIZE 16
+#define GDEXT_COLYSEUS_DICTIONARY_SIZE 8
+#define GDEXT_COLYSEUS_ARRAY_SIZE 8
 #endif
 
 // Opaque types
-typedef struct {
-    uint8_t data[STRING_NAME_SIZE]; 
+#define GDEXT_COLYSEUS_VARIANT_WORDS (GDEXT_COLYSEUS_VARIANT_SIZE / sizeof(uintptr_t))
+#define GDEXT_COLYSEUS_STRING_WORDS (GDEXT_COLYSEUS_STRING_SIZE / sizeof(uintptr_t))
+#define GDEXT_COLYSEUS_STRING_NAME_WORDS (GDEXT_COLYSEUS_STRING_NAME_SIZE / sizeof(uintptr_t))
+#define GDEXT_COLYSEUS_PACKED_BYTE_ARRAY_WORDS (GDEXT_COLYSEUS_PACKED_BYTE_ARRAY_SIZE / sizeof(uintptr_t))
+#define GDEXT_COLYSEUS_DICTIONARY_WORDS (GDEXT_COLYSEUS_DICTIONARY_SIZE / sizeof(uintptr_t))
+#define GDEXT_COLYSEUS_ARRAY_WORDS (GDEXT_COLYSEUS_ARRAY_SIZE / sizeof(uintptr_t))
+
+_Static_assert(GDEXT_COLYSEUS_VARIANT_SIZE % sizeof(uintptr_t) == 0, "Variant size must be word-aligned");
+_Static_assert(GDEXT_COLYSEUS_STRING_SIZE % sizeof(uintptr_t) == 0, "String size must be word-aligned");
+_Static_assert(GDEXT_COLYSEUS_STRING_NAME_SIZE % sizeof(uintptr_t) == 0, "StringName size must be word-aligned");
+_Static_assert(GDEXT_COLYSEUS_PACKED_BYTE_ARRAY_SIZE % sizeof(uintptr_t) == 0, "PackedByteArray size must be word-aligned");
+_Static_assert(GDEXT_COLYSEUS_DICTIONARY_SIZE % sizeof(uintptr_t) == 0, "Dictionary size must be word-aligned");
+_Static_assert(GDEXT_COLYSEUS_ARRAY_SIZE % sizeof(uintptr_t) == 0, "Array size must be word-aligned");
+
+typedef union {
+    uint8_t data[GDEXT_COLYSEUS_STRING_NAME_SIZE];
+    uintptr_t words[GDEXT_COLYSEUS_STRING_NAME_WORDS];
 } StringName;
 
-typedef struct {
-    uint8_t data[STRING_SIZE]; 
+typedef union {
+    uint8_t data[GDEXT_COLYSEUS_STRING_SIZE];
+    uintptr_t words[GDEXT_COLYSEUS_STRING_WORDS];
 } String;
 
-// PackedByteArray is typically 16 bytes (pointer + size + capacity or similar)
-#define PACKED_BYTE_ARRAY_SIZE 16
-typedef struct {
-    uint8_t data[PACKED_BYTE_ARRAY_SIZE];
+typedef union {
+    uint8_t data[GDEXT_COLYSEUS_PACKED_BYTE_ARRAY_SIZE];
+    uintptr_t words[GDEXT_COLYSEUS_PACKED_BYTE_ARRAY_WORDS];
+    uint64_t align_u64;
+    void *align_ptr;
 } PackedByteArray;
 
-// Dictionary and Array sizes (same as PackedByteArray in most builds)
-#define DICTIONARY_SIZE 8
-#define ARRAY_SIZE 8
-typedef struct {
-    uint8_t data[DICTIONARY_SIZE];
+typedef union {
+    uint8_t data[GDEXT_COLYSEUS_DICTIONARY_SIZE];
+    uintptr_t words[GDEXT_COLYSEUS_DICTIONARY_WORDS];
 } Dictionary;
 
-typedef struct {
-    uint8_t data[ARRAY_SIZE];
+typedef union {
+    uint8_t data[GDEXT_COLYSEUS_ARRAY_SIZE];
+    uintptr_t words[GDEXT_COLYSEUS_ARRAY_WORDS];
 } Array;
 
-typedef struct {
-    uint8_t data[VARIANT_SIZE];
+typedef union {
+    uint8_t data[GDEXT_COLYSEUS_VARIANT_SIZE];
+    uintptr_t words[GDEXT_COLYSEUS_VARIANT_WORDS];
+    uint64_t align_u64;
+    double align_f64;
+    void *align_ptr;
 } Variant;
+
+typedef Variant GDExtensionValueStorage;
 
 // Enums.
 typedef enum
@@ -84,10 +117,12 @@ struct Constructors
     GDExtensionVariantFromTypeConstructorFunc variant_from_dictionary_constructor;
     GDExtensionVariantFromTypeConstructorFunc variant_from_array_constructor;
     GDExtensionTypeFromVariantConstructorFunc string_from_variant_constructor;
+    GDExtensionTypeFromVariantConstructorFunc bool_from_variant_constructor;
     GDExtensionTypeFromVariantConstructorFunc dictionary_from_variant_constructor;
     GDExtensionTypeFromVariantConstructorFunc array_from_variant_constructor;
     GDExtensionTypeFromVariantConstructorFunc object_from_variant_constructor;
     GDExtensionTypeFromVariantConstructorFunc int_from_variant_constructor;
+    GDExtensionTypeFromVariantConstructorFunc float_from_variant_constructor;
     GDExtensionTypeFromVariantConstructorFunc string_name_from_variant_constructor;
     GDExtensionPtrConstructor packed_byte_array_constructor;
     GDExtensionPtrConstructor dictionary_constructor;
@@ -113,6 +148,8 @@ extern struct Destructors destructors;
 // GDExtension interface struct - holds function pointers
 typedef struct {
     GDExtensionInterfaceClassdbRegisterExtensionClass2 classdb_register_extension_class2;
+    GDExtensionInterfaceClassdbRegisterExtensionClass4 classdb_register_extension_class4;
+    GDExtensionInterfaceClassdbRegisterExtensionClass5 classdb_register_extension_class5;
     GDExtensionInterfaceClassdbRegisterExtensionClassMethod classdb_register_extension_class_method;
     GDExtensionInterfaceClassdbRegisterExtensionClassSignal classdb_register_extension_class_signal;
     GDExtensionInterfaceClassdbConstructObject classdb_construct_object;
@@ -132,6 +169,9 @@ typedef struct {
     GDExtensionInterfaceArrayOperatorIndex array_operator_index;
     GDExtensionInterfaceArrayOperatorIndexConst array_operator_index_const;
     GDExtensionInterfaceVariantGetType variant_get_type;
+    GDExtensionInterfaceVariantSetKeyed variant_set_keyed;
+    GDExtensionInterfaceVariantSetIndexed variant_set_indexed;
+    GDExtensionInterfaceVariantNewNil variant_new_nil;
     GDExtensionInterfaceObjectGetInstanceId object_get_instance_id;
     GDExtensionInterfaceObjectGetInstanceFromId object_get_instance_from_id;
     GDExtensionInterfaceCallableCustomCreate callable_custom_create;
@@ -143,9 +183,41 @@ typedef struct {
 extern GDExtensionInterface api;
 extern GDExtensionClassLibraryPtr class_library;
 
+static inline void gdext_variant_new_nil(Variant *variant) {
+    if (api.variant_new_nil) {
+        api.variant_new_nil(variant);
+    } else {
+        memset(variant, 0, sizeof(*variant));
+    }
+}
+
+static inline void gdext_variant_assign(Variant *dst, GDExtensionConstVariantPtr src) {
+    destructors.variant_destroy(dst);
+    api.variant_new_copy(dst, src);
+}
+
+static inline void gdext_variant_move_assign(Variant *dst, Variant *src) {
+    gdext_variant_assign(dst, src);
+    destructors.variant_destroy(src);
+    gdext_variant_new_nil(src);
+}
+
+static inline void gdext_variant_set_keyed(Variant *container, GDExtensionConstVariantPtr key, Variant *value) {
+    GDExtensionBool valid = 0;
+    api.variant_set_keyed(container, key, value, &valid);
+}
+
+static inline void gdext_variant_set_indexed(Variant *container, GDExtensionInt index, Variant *value) {
+    GDExtensionBool valid = 0;
+    GDExtensionBool oob = 0;
+    api.variant_set_indexed(container, index, value, &valid, &oob);
+}
+
 // ColyseusClientWrapper type
 typedef struct ColyseusClientWrapper {
     colyseus_client_t* native_client;
+    GDExtensionObjectPtr godot_object;
+    volatile int pending_http_requests;  // Track in-flight HTTP requests
 } ColyseusClientWrapper;
 
 // Forward declaration for GDScript schema context
@@ -166,8 +238,17 @@ void gdext_colyseus_client_destructor(void* p_class_userdata, GDExtensionClassIn
 void gdext_colyseus_client_reference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
 void gdext_colyseus_client_unreference(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
 void gdext_colyseus_client_set_endpoint(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+// Matchmaking methods (call + ptrcall versions)
 void gdext_colyseus_client_join_or_create(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 void gdext_colyseus_client_join_or_create_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_client_create(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_create_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_client_join(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_join_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_client_join_by_id(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_join_by_id_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_client_reconnect(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_reconnect_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 
 // Simple getter (reference implementation style)
 const char* gdext_colyseus_client_get_endpoint(const ColyseusClientWrapper* self);
@@ -175,6 +256,17 @@ const char* gdext_colyseus_client_get_endpoint(const ColyseusClientWrapper* self
 // GDExtension wrappers for get_endpoint (call and ptrcall versions)
 void gdext_colyseus_client_get_endpoint_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 void gdext_colyseus_client_get_endpoint_call(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+
+// ColyseusClient HTTP methods (vararg call convention)
+void gdext_colyseus_client_http_get(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_http_post(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_http_put(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_http_delete(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_http_patch(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+
+// ColyseusClient auth methods
+void gdext_colyseus_client_auth_set_token(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_client_auth_get_token(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 
 // ColyseusRoom methods
 GDExtensionObjectPtr gdext_colyseus_room_constructor(void* p_class_userdata);
@@ -201,4 +293,3 @@ void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInst
 void gdext_colyseus_room_set_state_type(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 
 #endif // gdext_colyseus_H
-

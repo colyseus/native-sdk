@@ -541,33 +541,8 @@ static bool encode_variant(EncoderBuffer* buf, const Variant* variant) {
         }
             
         case GDEXTENSION_VARIANT_TYPE_FLOAT: {
-            // Extract float/double from variant
-            // Godot floats are typically doubles
-            double value;
-            // We need a float from variant constructor - let's use a workaround
-            // by calling a method or using variant_call
-            StringName method;
-            constructors.string_name_new_with_latin1_chars(&method, "", false);
-            
-            // Actually, let's use the native float extraction
-            // The Variant contains the float data directly for simple types
-            // We can cast and extract - but this is tricky in C
-            
-            // Safer approach: use variant operations
-            // For now, let's try direct memory access (Godot Variant layout)
-            // The float is stored at a known offset in the Variant
-            
-            // Alternative: use string conversion and parse
-            // Or: use variant multiplication/division to extract
-            
-            // Simplest for now: treat as int if we can't get float properly
-            // But Godot floats are common, so let's try harder
-            
-            // Actually, looking at the Variant structure, for float type,
-            // the value is stored in the first 8 bytes (double)
-            memcpy(&value, variant, sizeof(double));
-            
-            destructors.string_name_destructor(&method);
+            double value = 0.0;
+            constructors.float_from_variant_constructor(&value, variant);
             return encode_float(buf, value);
         }
             

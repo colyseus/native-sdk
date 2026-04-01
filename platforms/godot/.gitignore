@@ -20,3 +20,4 @@ zig-out/
 *.swp
 *.swo
 *~
+*.uid

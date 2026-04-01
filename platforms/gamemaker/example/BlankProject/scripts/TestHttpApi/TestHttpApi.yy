@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"TestHttpApi",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"TestHttpApi",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

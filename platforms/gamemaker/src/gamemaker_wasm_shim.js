@@ -35,17 +35,20 @@
 
     function _callN(name, argTypes, args) {
         if (!_mod) { return 0; }
-        return _mod.ccall(name, 'number', argTypes, args);
+        try { return _mod.ccall(name, 'number', argTypes, args); }
+        catch(e) { console.error("[Colyseus WASM] ccall error (" + name + "):", e); return 0; }
     }
 
     function _callS(name, argTypes, args) {
         if (!_mod) { return ""; }
-        return _mod.ccall(name, 'string', argTypes, args);
+        try { return _mod.ccall(name, 'string', argTypes, args); }
+        catch(e) { console.error("[Colyseus WASM] ccall error (" + name + "):", e); return ""; }
     }
 
     function _callV(name, argTypes, args) {
         if (!_mod) { return; }
-        _mod.ccall(name, null, argTypes, args);
+        try { _mod.ccall(name, null, argTypes, args); }
+        catch(e) { console.error("[Colyseus WASM] ccall error (" + name + "):", e); }
     }
 
     // =========================================================================
@@ -144,8 +147,20 @@
         return _callN('colyseus_gm_schema_get_number', ['number', 'string'], [inst, field]);
     };
 
-    window.colyseus_gm_schema_get_ref = function(inst, field) {
-        return _callN('colyseus_gm_schema_get_ref', ['number', 'string'], [inst, field]);
+    window.colyseus_gm_schema_get_field_type = function(inst, field) {
+        return _callN('colyseus_gm_schema_get_field_type', ['number', 'string'], [inst, field]);
+    };
+
+    window.colyseus_gm_schema_get = function(inst, field) {
+        return _callN('colyseus_gm_schema_get', ['number', 'string'], [inst, field]);
+    };
+
+    window.colyseus_gm_schema_get_result_string = function() {
+        return _callS('colyseus_gm_schema_get_result_string', [], []);
+    };
+
+    window.colyseus_gm_schema_get_result_number = function() {
+        return _callN('colyseus_gm_schema_get_result_number', [], []);
     };
 
     window.colyseus_gm_map_get = function(inst, field, key) {
@@ -265,6 +280,23 @@
         _callV('colyseus_gm_message_free', ['number'], [h]);
     };
 
+    // Raw value message creators
+    window.colyseus_gm_message_create_bool = function(val) {
+        return _callN('colyseus_gm_message_create_bool', ['number'], [val]);
+    };
+
+    window.colyseus_gm_message_create_number = function(val) {
+        return _callN('colyseus_gm_message_create_number', ['number'], [val]);
+    };
+
+    window.colyseus_gm_message_create_int = function(val) {
+        return _callN('colyseus_gm_message_create_int', ['number'], [val]);
+    };
+
+    window.colyseus_gm_message_create_string = function(val) {
+        return _callN('colyseus_gm_message_create_string', ['string'], [val]);
+    };
+
     window.colyseus_gm_room_send_message = function(room, type, msg) {
         _callV('colyseus_gm_room_send_message', ['number', 'string', 'number'], [room, type, msg]);
     };
@@ -327,6 +359,107 @@
 
     window.colyseus_gm_message_iter_value_number = function() {
         return _callN('colyseus_gm_message_iter_value_number', [], []);
+    };
+
+    // =========================================================================
+    // HTTP functions (implemented via JS fetch — native HTTP not available on WASM)
+    // =========================================================================
+
+    var _httpRequestCounter = 0;
+
+    function _httpRequest(clientHandle, method, path, body) {
+        var requestId = ++_httpRequestCounter;
+
+        // Get base URL and auth token from the WASM module
+        var endpoint = _callS('colyseus_gm_http_get_endpoint', ['number'], [clientHandle]);
+        if (!endpoint) {
+            _callV('colyseus_gm_http_push_error', ['number', 'number', 'string'],
+                [requestId, 0, 'No endpoint configured']);
+            return requestId;
+        }
+
+        // Build full URL
+        var url = endpoint;
+        if (path) {
+            var endsWithSlash = url.charAt(url.length - 1) === '/';
+            var startsWithSlash = path.charAt(0) === '/';
+            if (endsWithSlash && startsWithSlash) {
+                url = url + path.substring(1);
+            } else if (!endsWithSlash && !startsWithSlash) {
+                url = url + '/' + path;
+            } else {
+                url = url + path;
+            }
+        }
+
+        var authToken = _callS('colyseus_gm_auth_get_token', ['number'], [clientHandle]);
+
+        var fetchOptions = {
+            method: method,
+            headers: { 'Content-Type': 'application/json' }
+        };
+
+        if (authToken) {
+            fetchOptions.headers['Authorization'] = 'Bearer ' + authToken;
+        }
+
+        if (body) {
+            fetchOptions.body = body;
+        }
+
+        fetch(url, fetchOptions).then(function(response) {
+            return response.text().then(function(text) {
+                if (response.ok) {
+                    _callV('colyseus_gm_http_push_response', ['number', 'number', 'string'],
+                        [requestId, response.status, text]);
+                } else {
+                    _callV('colyseus_gm_http_push_error', ['number', 'number', 'string'],
+                        [requestId, response.status, text]);
+                }
+            });
+        }).catch(function(err) {
+            _callV('colyseus_gm_http_push_error', ['number', 'number', 'string'],
+                [requestId, 0, err.message || 'Network error']);
+        });
+
+        return requestId;
+    }
+
+    window.colyseus_gm_http_get = function(clientHandle, path) {
+        return _httpRequest(clientHandle, 'GET', path, null);
+    };
+
+    window.colyseus_gm_http_post = function(clientHandle, path, body) {
+        return _httpRequest(clientHandle, 'POST', path, body);
+    };
+
+    window.colyseus_gm_http_put = function(clientHandle, path, body) {
+        return _httpRequest(clientHandle, 'PUT', path, body);
+    };
+
+    window.colyseus_gm_http_delete = function(clientHandle, path) {
+        return _httpRequest(clientHandle, 'DELETE', path, null);
+    };
+
+    window.colyseus_gm_http_patch = function(clientHandle, path, body) {
+        return _httpRequest(clientHandle, 'PATCH', path, body);
+    };
+
+    window.colyseus_gm_auth_set_token = function(clientHandle, token) {
+        _callV('colyseus_gm_auth_set_token', ['number', 'string'], [clientHandle, token]);
+    };
+
+    window.colyseus_gm_auth_get_token = function(clientHandle) {
+        return _callS('colyseus_gm_auth_get_token', ['number'], [clientHandle]);
+    };
+
+    // HTTP event accessors (read from WASM event queue)
+    window.colyseus_gm_event_get_http_status = function() {
+        return _callN('colyseus_gm_event_get_http_status', [], []);
+    };
+
+    window.colyseus_gm_event_get_http_body = function() {
+        return _callS('colyseus_gm_event_get_http_body', [], []);
     };
 
 })();

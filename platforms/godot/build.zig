@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const godot_double_precision = b.option(bool, "godot-double-precision", "Build against a double-precision Godot engine") orelse false;
 
     const os_tag = target.result.os.tag;
 
@@ -34,6 +35,7 @@ pub fn build(b: *std.Build) void {
     };
 
     const build_type = if (optimize == .Debug) "debug" else "release";
+    const godot_precision_flag: ?[]const u8 = if (godot_double_precision) "-DREAL_T_IS_DOUBLE" else null;
 
     // Build library name based on platform
     // macOS uses universal binaries, others include architecture
@@ -145,7 +147,7 @@ pub fn build(b: *std.Build) void {
             const dot_emsc_path = emsdk_dep.path(".emscripten").getPath(b);
             const has_emscripten = if (std.fs.accessAbsolute(dot_emsc_path, .{})) |_| true else |_| false;
 
-    // Link Zig HTTP and URL parsing libraries
+            // Link Zig HTTP and URL parsing libraries
             var emsdk_activate: ?*std.Build.Step.Run = null;
             if (!has_emscripten) {
                 const emsdk_install = b.addSystemCommand(&.{emsdk_dep.path("emsdk").getPath(b)});
@@ -170,6 +172,7 @@ pub fn build(b: *std.Build) void {
                 "src/colyseus_state.c",
                 "src/colyseus_schema_registry.c",
                 "src/colyseus_gdscript_schema.c",
+                "src/tls_certificates_web.c",
                 "src/msgpack_variant.c",
                 "src/msgpack_encoder.c",
                 // Core SDK
@@ -379,6 +382,7 @@ pub fn build(b: *std.Build) void {
                 "-Wall",
                 "-Wextra",
                 "-Wno-unused-parameter",
+                if (godot_precision_flag) |flag| flag else "",
             },
         });
 
@@ -421,6 +425,7 @@ pub fn build(b: *std.Build) void {
                 "-Wextra",
                 "-Wno-unused-parameter",
                 "-DHAVE_CONFIG_H",
+                if (godot_precision_flag) |flag| flag else "",
             },
         });
 
@@ -562,7 +567,7 @@ pub fn build(b: *std.Build) void {
                 "../../third_party/mbedtls/library/version.c",
                 "../../third_party/mbedtls/library/version_features.c",
             },
-            .flags = &.{ "-Wall" },
+            .flags = &.{"-Wall"},
         });
 
         const mbedx509 = b.addLibrary(.{
@@ -586,7 +591,7 @@ pub fn build(b: *std.Build) void {
                 "../../third_party/mbedtls/library/x509write_crt.c",
                 "../../third_party/mbedtls/library/x509write_csr.c",
             },
-            .flags = &.{ "-Wall" },
+            .flags = &.{"-Wall"},
         });
         mbedx509.linkLibrary(mbedcrypto);
 
@@ -619,7 +624,7 @@ pub fn build(b: *std.Build) void {
                 "../../third_party/mbedtls/library/ssl_tls13_keys.c",
                 "../../third_party/mbedtls/library/ssl_tls13_server.c",
             },
-            .flags = &.{ "-Wall" },
+            .flags = &.{"-Wall"},
         });
         mbedtls.linkLibrary(mbedx509);
         mbedtls.linkLibrary(mbedcrypto);
@@ -628,7 +633,6 @@ pub fn build(b: *std.Build) void {
         lib.linkLibrary(mbedtls);
         lib.linkLibrary(mbedx509);
         lib.linkLibrary(mbedcrypto);
-
 
         // Link Zig libraries
         lib.linkLibrary(http_object);

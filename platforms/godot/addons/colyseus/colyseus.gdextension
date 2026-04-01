@@ -17,8 +17,10 @@ windows.release.x86_32 = "bin/colyseus_godot.windows.x86.release.dll"
 windows.debug.x86_64 = "bin/colyseus_godot.windows.x86_64.debug.dll"
 windows.release.x86_64 = "bin/colyseus_godot.windows.x86_64.release.dll"
 
-; Linux (x86_64 only)
-linux.debug.x86_64 = "bin/libcolyseus_godot.linux.x86_64.debug.so"
+; Linux (x86_64 only) - 
+; WORKAROUND: the "debug" build is crashing at runtime. we're using "release" for both "debug" and "release" on Linux.
+; linux.debug.x86_64 = "bin/libcolyseus_godot.linux.x86_64.debug.so"
+linux.debug.x86_64 = "bin/libcolyseus_godot.linux.x86_64.release.so"
 linux.release.x86_64 = "bin/libcolyseus_godot.linux.x86_64.release.so"
 
 ; Android (arm32, arm64, x86_64)

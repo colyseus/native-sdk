@@ -76,6 +76,15 @@ void colyseus_http_delete(
     void* userdata
 );
 
+void colyseus_http_patch(
+    colyseus_http_t* http,
+    const char* path,
+    const char* json_body,
+    colyseus_http_success_callback_t on_success,
+    colyseus_http_error_callback_t on_error,
+    void* userdata
+);
+
 /* Helper functions for response/error cleanup */
 void colyseus_http_response_free(colyseus_http_response_t* response);
 void colyseus_http_error_free(colyseus_http_error_t* error);

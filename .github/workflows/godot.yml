@@ -67,6 +67,12 @@ jobs:
         working-directory: platforms/godot
         run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
 
+      - name: Ad-hoc code sign macOS dylibs
+        run: |
+          for dylib in platforms/godot/addons/colyseus/bin/*.dylib; do
+            codesign -s - "$dylib"
+          done
+
       - name: Upload macOS binaries
         uses: actions/upload-artifact@v4
         with:
@@ -741,8 +747,36 @@ jobs:
           name: binaries-android
           path: platforms/godot/addons/colyseus/bin/*android*.so
 
+  build-web:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build Web wasm32 (debug)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=wasm32-emscripten -Doptimize=Debug
+
+      - name: Build Web wasm32 (release)
+        working-directory: platforms/godot
+        run: zig build -Dtarget=wasm32-emscripten -Doptimize=ReleaseFast
+
+      - name: Upload Web binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-web
+          path: platforms/godot/addons/colyseus/bin/*.wasm
+
   release:
-    needs: [check-version, build-macos, build-ios, build-linux, build-windows, build-android]
+    needs: [check-version, build-macos, build-ios, build-linux, build-windows, build-android, build-web]
     if: needs.check-version.outputs.changed == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -784,6 +818,12 @@ jobs:
           name: binaries-android
           path: platforms/godot/addons/colyseus/bin
 
+      - name: Download Web binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-web
+          path: platforms/godot/addons/colyseus/bin
+
       - name: List all binaries
         run: ls -la platforms/godot/addons/colyseus/bin/
 
@@ -802,7 +842,11 @@ jobs:
             ### Installation
             1. Download the `colyseus-godot-${{ needs.check-version.outputs.version }}.zip` file
             2. Extract the `addons` folder into your Godot project root
-            3. Enable the plugin in Project Settings > Plugins
+            3. **macOS only:** Remove the quarantine attribute by running in the project root:
+               ```
+               xattr -cr addons/colyseus
+               ```
+            4. Enable the plugin in Project Settings > Plugins
 
             ### Supported Platforms
             - Web

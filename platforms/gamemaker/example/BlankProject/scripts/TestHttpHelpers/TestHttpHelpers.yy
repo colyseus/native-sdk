@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"TestHttpHelpers",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"TestHttpHelpers",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

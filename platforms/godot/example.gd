@@ -28,21 +28,12 @@ class TestRoomState extends Colyseus.Schema:
 			Colyseus.Schema.Field.new("currentTurn", Colyseus.Schema.STRING),
 		]
 
-# Client and room references (no type hints for cross-platform compatibility)
-var client: ColyseusClient;
-var room: ColyseusRoom;    
-var callbacks: ColyseusCallbacks;
-
-# # For web, remove the native references 
-# var client  
-# var room    
-# var callbacks 
+var client: Colyseus.Client
+var room: Colyseus.Room
+var callbacks
 
 func _ready():
-	# Create and connect client using platform-aware factory
-	client = Colyseus.create_client()
-	client.connect_to("ws://localhost:2567")
-	
+	client = Colyseus.Client.new("ws://localhost:2567")
 	print("Connecting to: ", client.get_endpoint())
 	
 	# Join or create a room
@@ -62,8 +53,7 @@ func _ready():
 func _on_room_joined():
 	print("Joined room: ", room.get_id())
 	
-	# Get callbacks container using platform-aware factory
-	callbacks = Colyseus.callbacks(room)
+	callbacks = Colyseus.Callbacks.of(room)
 	
 	# Listen to state changes
 	callbacks.listen("currentTurn", _on_turn_change)
@@ -112,5 +102,5 @@ func _on_room_left(code: int, reason: String):
 	print("Left room [", code, "]: ", reason)
 
 func _exit_tree():
-	if room and room.is_connected():
+	if room and room.connected:
 		room.leave()

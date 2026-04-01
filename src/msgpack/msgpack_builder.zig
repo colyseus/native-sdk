@@ -158,7 +158,7 @@ export fn colyseus_message_map_put_nil(map: ?*PayloadWrapper, key: [*c]const u8)
     map.?.payload.?.mapPut(key_str, Payload.nilToPayload()) catch return;
 }
 
-export fn colyseus_message_map_put(map: ?*PayloadWrapper, key: [*c]const u8, value: ?*PayloadWrapper) void {
+export fn colyseus_message_map_put_msg(map: ?*PayloadWrapper, key: [*c]const u8, value: ?*PayloadWrapper) void {
     if (map == null or key == null or value == null or map.?.payload_type != .map) return;
     const key_str = std.mem.span(key);
 
@@ -212,7 +212,7 @@ export fn colyseus_message_array_push_nil(arr: ?*PayloadWrapper) void {
     list.append(allocator, Payload.nilToPayload()) catch return;
 }
 
-export fn colyseus_message_array_push(arr: ?*PayloadWrapper, value: ?*PayloadWrapper) void {
+export fn colyseus_message_array_push_msg(arr: ?*PayloadWrapper, value: ?*PayloadWrapper) void {
     if (arr == null or value == null or arr.?.payload_type != .array) return;
     var list = &arr.?.array_elements.?;
 

@@ -120,12 +120,23 @@ test "integration: full connection flow" {
     defer c.colyseus_message_free(msg);
     c.colyseus_room_send(room.?, "test", msg);
 
-    std.Thread.sleep(50 * std.time.ns_per_ms);
+    // Poll until state property is synchronized or timeout
+    var state_elapsed: u64 = 0;
+    const state_deadline = 5 * std.time.ns_per_s;
+    while (state_elapsed < state_deadline) : (state_elapsed += poll_interval) {
+        const sp = c.colyseus_room_get_state(room.?);
+        if (sp != null) {
+            const s: *const c.my_room_state_t = @ptrCast(@alignCast(sp));
+            if (s.mySynchronizedProperty != null) break;
+        }
+        std.Thread.sleep(poll_interval);
+    }
 
     // Test if room state has mySynchronizedProperty
     const state_ptr = c.colyseus_room_get_state(room.?);
     try testing.expect(state_ptr != null);
     const state: *const c.my_room_state_t = @ptrCast(@alignCast(state_ptr));
+    try testing.expect(state.mySynchronizedProperty != null);
     try testing.expectEqualStrings("Hello world", std.mem.span(state.mySynchronizedProperty));
 
     c.colyseus_room_leave(room.?, true);

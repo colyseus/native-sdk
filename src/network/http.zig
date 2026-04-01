@@ -5,7 +5,7 @@ const is_emscripten = builtin.os.tag == .emscripten;
 
 // std.http is not available on emscripten - HTTP should use JavaScript fetch API
 const http = if (!is_emscripten) std.http else struct {
-    pub const Method = enum { GET, POST, PUT, DELETE };
+    pub const Method = enum { GET, POST, PUT, DELETE, PATCH };
     pub const Header = struct { name: []const u8, value: []const u8 };
     pub const Client = struct {
         allocator: Allocator,
@@ -181,6 +181,17 @@ export fn colyseus_http_delete(
     httpRequest(http_client, .DELETE, path, null, on_success, on_error, userdata);
 }
 
+export fn colyseus_http_patch(
+    http_client: ?*colyseus_http_t,
+    path: [*c]const u8,
+    json_body: [*c]const u8,
+    on_success: colyseus_http_success_callback_t,
+    on_error: colyseus_http_error_callback_t,
+    userdata: ?*anyopaque,
+) void {
+    httpRequest(http_client, .PATCH, path, json_body, on_success, on_error, userdata);
+}
+
 export fn colyseus_http_response_free(response: ?*colyseus_http_response_t) void {
     if (response == null) return;
     freeString(allocator, response.?.body);
@@ -244,10 +255,10 @@ fn httpRequestImpl(
     var response_writer: std.Io.Writer.Allocating = .init(allocator);
     defer response_writer.deinit();
 
-    var owned_headers = try buildHeaders(h);
-    defer owned_headers.deinit(allocator);
-
     const body_slice = if (body_cstr != null) cStrToSlice(body_cstr) else null;
+
+    var owned_headers = try buildHeaders(h, body_slice != null);
+    defer owned_headers.deinit(allocator);
 
     const result = try client.fetch(.{
         .location = .{ .url = url },
@@ -307,12 +318,18 @@ fn buildUrl(alloc: Allocator, base: []const u8, path: []const u8) ![]u8 {
     }
 }
 
-fn buildHeaders(http_client: *colyseus_http_t) !OwnedHeaders {
+fn buildHeaders(http_client: *colyseus_http_t, has_body: bool) !OwnedHeaders {
     var headers: std.ArrayListUnmanaged(http.Header) = .empty;
     errdefer headers.deinit(allocator); // leak-safe on any failure
 
     var auth_value: ?[]u8 = null;
     errdefer if (auth_value) |v| allocator.free(v); // leak-safe on any failure
+
+    // All Colyseus API communication uses JSON
+    if (has_body) {
+        try headers.append(allocator, .{ .name = "Content-Type", .value = "application/json" });
+    }
+    try headers.append(allocator, .{ .name = "Accept", .value = "application/json" });
 
     var header: ?*colyseus_header_t = http_client.settings.headers;
     while (header) |h| {

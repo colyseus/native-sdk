@@ -3,7 +3,12 @@ zig-out/
 zig-cache/
 .zig-cache/
 
+output/
+.test-cache/
+
 # Build outputs
+wasm-out/
+package-out/
 lib/
 *.dylib
 *.so

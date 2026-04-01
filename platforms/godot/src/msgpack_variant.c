@@ -67,8 +67,7 @@ static void msgpack_container_cb(
 
 // Helper to create a nil Variant
 static void variant_new_nil(Variant* v) {
-    memset(v, 0, sizeof(Variant));
-    // Variant type 0 is NIL in Godot
+    gdext_variant_new_nil(v);
 }
 
 // Helper to resize an array using variant_call
@@ -93,7 +92,7 @@ static void array_variant_resize(Variant* arr_variant, int64_t new_size) {
 static void builder_add_value(MsgpackBuilderContext* ctx, Variant* value) {
     if (ctx->stack_depth == 0) {
         // No container on stack, this is the root value
-        *ctx->result = *value;
+        gdext_variant_move_assign(ctx->result, value);
         return;
     }
     
@@ -109,30 +108,25 @@ static void builder_add_value(MsgpackBuilderContext* ctx, Variant* value) {
         array_variant_resize(&current->variant, new_size);
         
         // Get pointer to the slot and copy the variant there
-        Variant* slot = api.array_operator_index(&arr, (GDExtensionInt)current->current_count);
-        if (slot) {
-            *slot = *value;
-        }
+        gdext_variant_set_indexed(&current->variant, (GDExtensionInt)current->current_count, value);
+        destructors.variant_destroy(value);
+        gdext_variant_new_nil(value);
         
         current->current_count++;
     } else if (current->type == STACK_TYPE_DICTIONARY) {
         if (current->awaiting_key) {
             // This value is a key, store it for later
-            current->pending_key = *value;
+            gdext_variant_move_assign(&current->pending_key, value);
             current->awaiting_key = false;
         } else {
             // This value is the value for the pending key
-            Dictionary dict;
-            constructors.dictionary_from_variant_constructor(&dict, &current->variant);
-            
-            // Get pointer for this key and set the value
-            Variant* slot = api.dictionary_operator_index(&dict, &current->pending_key);
-            if (slot) {
-                *slot = *value;
-            }
+            gdext_variant_set_keyed(&current->variant, &current->pending_key, value);
+            destructors.variant_destroy(value);
+            gdext_variant_new_nil(value);
             
             // Clean up the key variant
             destructors.variant_destroy(&current->pending_key);
+            gdext_variant_new_nil(&current->pending_key);
             
             current->current_count++;
             current->awaiting_key = true;  // Next value will be a key again

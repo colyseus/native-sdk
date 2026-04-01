@@ -1,0 +1,19 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; but it can also be edited via code.
+
+[application]
+
+config/name="Colyseus SDK Tests"
+config/features=PackedStringArray("4.3")
+run/main_scene=""
+
+[autoload]
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/gut/plugin.cfg")
+
+[gut]
+
+directory="res://test"

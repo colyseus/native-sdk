@@ -12,6 +12,10 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#else
+#include <pthread.h>
 #endif
 
 // Export macro for GameMaker DLL functions
@@ -43,12 +47,15 @@ typedef enum {
     GM_EVENT_PROPERTY_CHANGE = 7,
     GM_EVENT_ITEM_ADD = 8,
     GM_EVENT_ITEM_REMOVE = 9,
+    GM_EVENT_HTTP_RESPONSE = 10,
+    GM_EVENT_HTTP_ERROR = 11,
 } gm_event_type_t;
 
 // Event structure for the queue
 typedef struct {
     gm_event_type_t type;
     double room_handle;  // Room pointer as double (for GameMaker)
+    double callback_handle;  // Shared across schema & HTTP events
     int code;
     char message[1024];
 
@@ -61,7 +68,6 @@ typedef struct {
 
         // Schema callback events (types 7, 8, 9)
         struct {
-            double callback_handle;
             double instance_handle;
             int value_type;
             double value_number;
@@ -71,10 +77,15 @@ typedef struct {
             char key_string[256];
             int key_index;
         } schema;
+
+        // HTTP response/error events (types 10, 11)
+        struct {
+            char* body;  // dynamically allocated, freed on next poll
+        } http;
     };
 } gm_event_t;
 
-// Event queue (circular buffer)
+// Event queue (circular buffer, thread-safe)
 typedef struct {
     gm_event_t events[MAX_EVENT_QUEUE_SIZE];
     int head;
@@ -115,6 +126,15 @@ static gm_room_ref_t g_room_refs[MAX_ROOM_REFS] = {0};
 // Global event queue
 static gm_event_queue_t g_event_queue = {0};
 
+// Event queue mutex (background WS thread pushes, main GML thread pops)
+#ifdef __EMSCRIPTEN__
+    /* No mutex needed — single-threaded */
+#elif defined(_WIN32)
+static SRWLOCK g_event_queue_lock = SRWLOCK_INIT;
+#else
+static pthread_mutex_t g_event_queue_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
 // Current event (for event accessors)
 static gm_event_t g_current_event = {0};
 
@@ -128,6 +148,10 @@ static colyseus_message_reader_t* g_current_iter_value = NULL;
 
 // Global callback entry table
 static gm_callback_entry_t g_callback_entries[MAX_GM_CALLBACK_ENTRIES] = {0};
+
+// HTTP request counter and current response body
+static double g_http_request_counter = 0;
+static char* g_current_http_body = NULL;
 
 // =============================================================================
 // Room reference helpers
@@ -219,12 +243,40 @@ static void gm_room_ref_release(int ref) {
 }
 
 // =============================================================================
-// Event queue functions
+// Event queue functions (thread-safe via mutex)
 // =============================================================================
 
+static void event_queue_lock(void) {
+#ifdef __EMSCRIPTEN__
+    /* no-op */
+#elif defined(_WIN32)
+    AcquireSRWLockExclusive(&g_event_queue_lock);
+#else
+    pthread_mutex_lock(&g_event_queue_lock);
+#endif
+}
+
+static void event_queue_unlock(void) {
+#ifdef __EMSCRIPTEN__
+    /* no-op */
+#elif defined(_WIN32)
+    ReleaseSRWLockExclusive(&g_event_queue_lock);
+#else
+    pthread_mutex_unlock(&g_event_queue_lock);
+#endif
+}
+
 static void event_queue_push(const gm_event_t* event) {
+    event_queue_lock();
+
     if (g_event_queue.count >= MAX_EVENT_QUEUE_SIZE) {
-        // Queue is full, drop oldest event
+        // Queue is full, drop oldest event — free HTTP body if applicable
+        gm_event_t* oldest = &g_event_queue.events[g_event_queue.head];
+        if ((oldest->type == GM_EVENT_HTTP_RESPONSE || oldest->type == GM_EVENT_HTTP_ERROR)
+            && oldest->http.body) {
+            free(oldest->http.body);
+            oldest->http.body = NULL;
+        }
         g_event_queue.head = (g_event_queue.head + 1) % MAX_EVENT_QUEUE_SIZE;
         g_event_queue.count--;
     }
@@ -232,16 +284,23 @@ static void event_queue_push(const gm_event_t* event) {
     g_event_queue.events[g_event_queue.tail] = *event;
     g_event_queue.tail = (g_event_queue.tail + 1) % MAX_EVENT_QUEUE_SIZE;
     g_event_queue.count++;
+
+    event_queue_unlock();
 }
 
 static int event_queue_pop(gm_event_t* event) {
+    event_queue_lock();
+
     if (g_event_queue.count == 0) {
+        event_queue_unlock();
         return 0;  // Queue is empty
     }
 
     *event = g_event_queue.events[g_event_queue.head];
     g_event_queue.head = (g_event_queue.head + 1) % MAX_EVENT_QUEUE_SIZE;
     g_event_queue.count--;
+
+    event_queue_unlock();
     return 1;
 }
 
@@ -349,7 +408,7 @@ static void gm_property_change_trampoline(void* value, void* previous_value, voi
     gm_event_t event = {0};
     event.type = GM_EVENT_PROPERTY_CHANGE;
     event.room_handle = entry->room_handle;
-    event.schema.callback_handle = (double)entry->index;
+    event.callback_handle = (double)entry->index;
     event.schema.value_type = entry->value_type;
 
     gm_snapshot_value(entry->value_type, value,
@@ -370,7 +429,7 @@ static void gm_item_add_trampoline(void* value, void* key, void* userdata) {
     gm_event_t event = {0};
     event.type = GM_EVENT_ITEM_ADD;
     event.room_handle = entry->room_handle;
-    event.schema.callback_handle = (double)entry->index;
+    event.callback_handle = (double)entry->index;
     event.schema.value_type = entry->value_type;
 
     if (value) {
@@ -381,6 +440,7 @@ static void gm_item_add_trampoline(void* value, void* key, void* userdata) {
         // MAP keys are char*, ARRAY keys are int*
         if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
             event.schema.key_index = *(int*)key;
+            snprintf(event.schema.key_string, sizeof(event.schema.key_string), "%d", *(int*)key);
         } else {
             strncpy(event.schema.key_string, (const char*)key,
                     sizeof(event.schema.key_string) - 1);
@@ -397,7 +457,7 @@ static void gm_item_remove_trampoline(void* value, void* key, void* userdata) {
     gm_event_t event = {0};
     event.type = GM_EVENT_ITEM_REMOVE;
     event.room_handle = entry->room_handle;
-    event.schema.callback_handle = (double)entry->index;
+    event.callback_handle = (double)entry->index;
     event.schema.value_type = entry->value_type;
 
     if (value) {
@@ -407,6 +467,7 @@ static void gm_item_remove_trampoline(void* value, void* key, void* userdata) {
     if (key) {
         if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
             event.schema.key_index = *(int*)key;
+            snprintf(event.schema.key_string, sizeof(event.schema.key_string), "%d", *(int*)key);
         } else {
             strncpy(event.schema.key_string, (const char*)key,
                     sizeof(event.schema.key_string) - 1);
@@ -577,8 +638,6 @@ GM_EXPORT double colyseus_gm_client_join_or_create(double client_handle, const c
     if (ref == 0) return 0.0;
 
     const char* options = (options_json && strlen(options_json) > 0) ? options_json : "{}";
-
-    printf("Joining room: %s\n", room_name);
 
     colyseus_client_join_or_create(
         client,
@@ -796,6 +855,25 @@ GM_EXPORT const char* colyseus_gm_schema_get_string(double instance_handle, cons
     return buffer;
 }
 
+GM_EXPORT double colyseus_gm_schema_get_field_type(double instance_handle, const char* field_name) {
+    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    if (!schema || !field_name) return -1.0;
+
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        colyseus_dynamic_schema_t* dyn = (colyseus_dynamic_schema_t*)schema;
+        colyseus_dynamic_value_t* val = colyseus_dynamic_schema_get_by_name(dyn, field_name);
+        if (val) return (double)val->type;
+    } else {
+        for (int i = 0; i < schema->__vtable->field_count; i++) {
+            if (schema->__vtable->fields[i].name &&
+                strcmp(schema->__vtable->fields[i].name, field_name) == 0) {
+                return (double)schema->__vtable->fields[i].type;
+            }
+        }
+    }
+    return -1.0;
+}
+
 GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const char* field_name) {
     colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
     if (!schema || !field_name) return 0.0;
@@ -817,6 +895,9 @@ GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const cha
             case COLYSEUS_FIELD_UINT32:  return (double)val->data.u32;
             case COLYSEUS_FIELD_INT64:   return (double)val->data.i64;
             case COLYSEUS_FIELD_UINT64:  return (double)val->data.u64;
+            case COLYSEUS_FIELD_REF:     return val->data.ref ? (double)(uintptr_t)val->data.ref : 0.0;
+            case COLYSEUS_FIELD_ARRAY:   return val->data.array ? (double)(uintptr_t)val->data.array : 0.0;
+            case COLYSEUS_FIELD_MAP:     return val->data.map ? (double)(uintptr_t)val->data.map : 0.0;
             default: return 0.0;
         }
     } else {
@@ -837,6 +918,12 @@ GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const cha
                     case COLYSEUS_FIELD_UINT32:  return (double)*(uint32_t*)ptr;
                     case COLYSEUS_FIELD_INT64:   return (double)*(int64_t*)ptr;
                     case COLYSEUS_FIELD_UINT64:  return (double)*(uint64_t*)ptr;
+                    case COLYSEUS_FIELD_REF:
+                    case COLYSEUS_FIELD_ARRAY:
+                    case COLYSEUS_FIELD_MAP: {
+                        void* ref = *(void**)ptr;
+                        return ref ? (double)(uintptr_t)ref : 0.0;
+                    }
                     default: return 0.0;
                 }
             }
@@ -845,27 +932,85 @@ GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const cha
     return 0.0;
 }
 
-GM_EXPORT double colyseus_gm_schema_get_ref(double instance_handle, const char* field_name) {
+// Unified schema_get: returns the field type (or -1). Stores the result internally.
+// For string fields, call colyseus_gm_schema_get_result_string() to retrieve.
+// For number/ref/array/map fields, call colyseus_gm_schema_get_result_number().
+static struct {
+    double number;
+    char string[4096];
+} gm_schema_get_result = {0};
+
+GM_EXPORT double colyseus_gm_schema_get(double instance_handle, const char* field_name) {
+    gm_schema_get_result.number = 0.0;
+    gm_schema_get_result.string[0] = '\0';
+
     colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
-    if (!schema || !field_name) return 0.0;
+    if (!schema || !field_name) return -1.0;
+
+    double type = colyseus_gm_schema_get_field_type(instance_handle, field_name);
+    if (type < 0) return -1.0;
+
+    if ((int)type == COLYSEUS_FIELD_STRING) {
+        const char* s = colyseus_gm_schema_get_string(instance_handle, field_name);
+        if (s) strncpy(gm_schema_get_result.string, s, sizeof(gm_schema_get_result.string) - 1);
+    } else {
+        gm_schema_get_result.number = colyseus_gm_schema_get_number(instance_handle, field_name);
+    }
+    return type;
+}
+
+GM_EXPORT const char* colyseus_gm_schema_get_result_string(void) {
+    return gm_schema_get_result.string;
+}
+
+GM_EXPORT double colyseus_gm_schema_get_result_number(void) {
+    return gm_schema_get_result.number;
+}
+
+// =============================================================================
+// Schema field enumeration — for building GML structs
+// =============================================================================
+
+GM_EXPORT double colyseus_gm_schema_field_count(double instance_handle) {
+    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    if (!schema || !schema->__vtable) return 0.0;
 
     if (colyseus_vtable_is_dynamic(schema->__vtable)) {
-        colyseus_dynamic_schema_t* dyn = (colyseus_dynamic_schema_t*)schema;
-        colyseus_dynamic_value_t* val = colyseus_dynamic_schema_get_by_name(dyn, field_name);
-        if (val && val->type == COLYSEUS_FIELD_REF && val->data.ref) {
-            return (double)(uintptr_t)val->data.ref;
-        }
+        const colyseus_dynamic_vtable_t* dvt = colyseus_vtable_as_dynamic(schema->__vtable);
+        return dvt ? (double)dvt->dyn_field_count : 0.0;
     } else {
-        for (int i = 0; i < schema->__vtable->field_count; i++) {
-            if (schema->__vtable->fields[i].name &&
-                strcmp(schema->__vtable->fields[i].name, field_name) == 0 &&
-                schema->__vtable->fields[i].type == COLYSEUS_FIELD_REF) {
-                void* ref = *(void**)((char*)schema + schema->__vtable->fields[i].offset);
-                return (double)(uintptr_t)ref;
-            }
-        }
+        return (double)schema->__vtable->field_count;
     }
-    return 0.0;
+}
+
+GM_EXPORT const char* colyseus_gm_schema_field_name(double instance_handle, double index) {
+    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    int idx = (int)index;
+    if (!schema || !schema->__vtable || idx < 0) return "";
+
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        const colyseus_dynamic_vtable_t* dvt = colyseus_vtable_as_dynamic(schema->__vtable);
+        if (!dvt || idx >= dvt->dyn_field_count) return "";
+        return dvt->dyn_fields[idx]->name ? dvt->dyn_fields[idx]->name : "";
+    } else {
+        if (idx >= schema->__vtable->field_count) return "";
+        return schema->__vtable->fields[idx].name ? schema->__vtable->fields[idx].name : "";
+    }
+}
+
+GM_EXPORT double colyseus_gm_schema_field_type_at(double instance_handle, double index) {
+    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    int idx = (int)index;
+    if (!schema || !schema->__vtable || idx < 0) return -1.0;
+
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        const colyseus_dynamic_vtable_t* dvt = colyseus_vtable_as_dynamic(schema->__vtable);
+        if (!dvt || idx >= dvt->dyn_field_count) return -1.0;
+        return (double)dvt->dyn_fields[idx]->type;
+    } else {
+        if (idx >= schema->__vtable->field_count) return -1.0;
+        return (double)schema->__vtable->fields[idx].type;
+    }
 }
 
 GM_EXPORT double colyseus_gm_map_get(double instance_handle, const char* field_name, const char* key) {
@@ -1003,7 +1148,7 @@ GM_EXPORT double colyseus_gm_callbacks_on_add(double callbacks_handle, double in
         property,
         gm_item_add_trampoline,
         entry,
-        false  // not immediate
+        true  // immediate — fire for items already in collection
     );
 
     return (double)entry->index;
@@ -1064,9 +1209,22 @@ GM_EXPORT double colyseus_gm_poll_event(void) {
         g_current_message_reader = NULL;
     }
 
+    // Clean up previous HTTP response body
+    if (g_current_http_body) {
+        free(g_current_http_body);
+        g_current_http_body = NULL;
+    }
+
     if (event_queue_pop(&g_current_event)) {
+        // Save HTTP body pointer for accessor (valid until next poll)
+        if ((g_current_event.type == GM_EVENT_HTTP_RESPONSE ||
+             g_current_event.type == GM_EVENT_HTTP_ERROR) &&
+            g_current_event.http.body) {
+            g_current_http_body = g_current_event.http.body;
+        }
         return (double)g_current_event.type;
     }
+
     memset(&g_current_event, 0, sizeof(g_current_event));
     return 0.0;
 }
@@ -1094,7 +1252,7 @@ GM_EXPORT double colyseus_gm_event_get_data_length(void) {
 // Schema event accessors
 
 GM_EXPORT double colyseus_gm_event_get_callback_handle(void) {
-    return g_current_event.schema.callback_handle;
+    return g_current_event.callback_handle;
 }
 
 GM_EXPORT double colyseus_gm_event_get_instance(void) {
@@ -1172,6 +1330,30 @@ GM_EXPORT void colyseus_gm_room_send_message(double room_handle, const char* typ
 }
 
 // =============================================================================
+// Raw value message creators (for sending non-map/non-struct values)
+// =============================================================================
+
+GM_EXPORT double colyseus_gm_message_create_bool(double value) {
+    colyseus_message_t* msg = colyseus_message_bool_create(value > 0.5);
+    return (double)(uintptr_t)msg;
+}
+
+GM_EXPORT double colyseus_gm_message_create_number(double value) {
+    colyseus_message_t* msg = colyseus_message_float_create(value);
+    return (double)(uintptr_t)msg;
+}
+
+GM_EXPORT double colyseus_gm_message_create_int(double value) {
+    colyseus_message_t* msg = colyseus_message_int_create((int64_t)value);
+    return (double)(uintptr_t)msg;
+}
+
+GM_EXPORT double colyseus_gm_message_create_string(const char* value) {
+    colyseus_message_t* msg = colyseus_message_str_create(value ? value : "");
+    return (double)(uintptr_t)msg;
+}
+
+// =============================================================================
 // Message Reader — read fields from received messages
 // =============================================================================
 
@@ -1190,14 +1372,21 @@ GM_EXPORT double colyseus_gm_message_get_type(void) {
 }
 
 GM_EXPORT const char* colyseus_gm_message_read_string(const char* key) {
+    static char buf[4096];
+    buf[0] = '\0';
     gm_ensure_message_reader();
-    if (!g_current_message_reader || !key) return "";
+    if (!g_current_message_reader || !key) return buf;
     const char* value = NULL;
     size_t len = 0;
     if (colyseus_message_reader_map_get_str(g_current_message_reader, key, &value, &len)) {
-        return value ? value : "";
+        if (value && len > 0) {
+            if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+            memcpy(buf, value, len);
+            buf[len] = '\0';
+            return buf;
+        }
     }
-    return "";
+    return buf;
 }
 
 GM_EXPORT double colyseus_gm_message_read_number(const char* key) {
@@ -1229,11 +1418,18 @@ GM_EXPORT double colyseus_gm_message_read_bool(const char* key) {
 }
 
 GM_EXPORT const char* colyseus_gm_message_read_string_value(void) {
+    static char buf[4096];
+    buf[0] = '\0';
     gm_ensure_message_reader();
-    if (!g_current_message_reader) return "";
+    if (!g_current_message_reader) return buf;
     size_t len = 0;
     const char* value = colyseus_message_reader_get_str(g_current_message_reader, &len);
-    return value ? value : "";
+    if (value && len > 0) {
+        if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+        memcpy(buf, value, len);
+        buf[len] = '\0';
+    }
+    return buf;
 }
 
 GM_EXPORT double colyseus_gm_message_read_number_value(void) {
@@ -1296,10 +1492,17 @@ GM_EXPORT double colyseus_gm_message_iter_next(void) {
 }
 
 GM_EXPORT const char* colyseus_gm_message_iter_key(void) {
-    if (!g_current_iter_key) return "";
+    static char buf[1024];
+    buf[0] = '\0';
+    if (!g_current_iter_key) return buf;
     size_t len = 0;
     const char* key = colyseus_message_reader_get_str(g_current_iter_key, &len);
-    return key ? key : "";
+    if (key && len > 0) {
+        if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+        memcpy(buf, key, len);
+        buf[len] = '\0';
+    }
+    return buf;
 }
 
 GM_EXPORT double colyseus_gm_message_iter_value_type(void) {
@@ -1308,10 +1511,17 @@ GM_EXPORT double colyseus_gm_message_iter_value_type(void) {
 }
 
 GM_EXPORT const char* colyseus_gm_message_iter_value_string(void) {
-    if (!g_current_iter_value) return "";
+    static char buf[4096];
+    buf[0] = '\0';
+    if (!g_current_iter_value) return buf;
     size_t len = 0;
     const char* str = colyseus_message_reader_get_str(g_current_iter_value, &len);
-    return str ? str : "";
+    if (str && len > 0) {
+        if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+        memcpy(buf, str, len);
+        buf[len] = '\0';
+    }
+    return buf;
 }
 
 GM_EXPORT double colyseus_gm_message_iter_value_number(void) {
@@ -1326,4 +1536,200 @@ GM_EXPORT double colyseus_gm_message_iter_value_number(void) {
         return colyseus_message_reader_get_bool(g_current_iter_value) ? 1.0 : 0.0;
     }
     return 0.0;
+}
+
+// =============================================================================
+// HTTP — trampolines, thread dispatch, exported functions
+// =============================================================================
+
+// Thread args for async HTTP dispatch
+typedef struct {
+    colyseus_http_t* http;
+    char* path;
+    char* body;
+    int method;  // 0=GET, 1=POST, 2=PUT, 3=DELETE, 4=PATCH
+    double request_id;
+} gm_http_thread_args_t;
+
+// HTTP success trampoline — pushes GM_EVENT_HTTP_RESPONSE to event queue
+static void on_http_success(const colyseus_http_response_t* response, void* userdata) {
+    gm_http_thread_args_t* args = (gm_http_thread_args_t*)userdata;
+    gm_event_t event = {0};
+    event.type = GM_EVENT_HTTP_RESPONSE;
+    event.callback_handle = args->request_id;
+    event.code = response->status_code;
+    event.http.body = response->body ? strdup(response->body) : NULL;
+    event_queue_push(&event);
+}
+
+// HTTP error trampoline — pushes GM_EVENT_HTTP_ERROR to event queue
+static void on_http_error(const colyseus_http_error_t* error, void* userdata) {
+    gm_http_thread_args_t* args = (gm_http_thread_args_t*)userdata;
+    gm_event_t event = {0};
+    event.type = GM_EVENT_HTTP_ERROR;
+    event.callback_handle = args->request_id;
+    event.code = error->code;
+    if (error->message) {
+        strncpy(event.message, error->message, sizeof(event.message) - 1);
+    }
+    event.http.body = NULL;
+    event_queue_push(&event);
+}
+
+// Thread function — runs the blocking HTTP call
+static void gm_http_thread_func(gm_http_thread_args_t* args) {
+    switch (args->method) {
+        case 0: colyseus_http_get(args->http, args->path, on_http_success, on_http_error, args); break;
+        case 1: colyseus_http_post(args->http, args->path, args->body, on_http_success, on_http_error, args); break;
+        case 2: colyseus_http_put(args->http, args->path, args->body, on_http_success, on_http_error, args); break;
+        case 3: colyseus_http_delete(args->http, args->path, on_http_success, on_http_error, args); break;
+        case 4: colyseus_http_patch(args->http, args->path, args->body, on_http_success, on_http_error, args); break;
+    }
+    free(args->path);
+    if (args->body) free(args->body);
+    free(args);
+}
+
+#ifndef __EMSCRIPTEN__
+#ifdef _WIN32
+static DWORD WINAPI gm_http_thread_wrapper(LPVOID arg) {
+    gm_http_thread_func((gm_http_thread_args_t*)arg);
+    return 0;
+}
+#else
+static void* gm_http_thread_wrapper(void* arg) {
+    gm_http_thread_func((gm_http_thread_args_t*)arg);
+    return NULL;
+}
+#endif
+#endif
+
+// Dispatch an HTTP request on a background thread, returns request_id
+static double gm_http_dispatch(colyseus_http_t* http, int method, const char* path, const char* body) {
+    gm_http_thread_args_t* args = (gm_http_thread_args_t*)calloc(1, sizeof(gm_http_thread_args_t));
+    if (!args) return 0.0;
+
+    g_http_request_counter += 1.0;
+    args->http = http;
+    args->path = strdup(path ? path : "");
+    args->body = body ? strdup(body) : NULL;
+    args->method = method;
+    args->request_id = g_http_request_counter;
+
+#ifdef __EMSCRIPTEN__
+    // On WASM the JS shim overrides these; if reached, run synchronously
+    gm_http_thread_func(args);
+#elif defined(_WIN32)
+    HANDLE thread = CreateThread(NULL, 0, gm_http_thread_wrapper, args, 0, NULL);
+    if (thread) CloseHandle(thread);
+#else
+    pthread_t thread;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_create(&thread, &attr, gm_http_thread_wrapper, args);
+    pthread_attr_destroy(&attr);
+#endif
+
+    return g_http_request_counter;
+}
+
+// =============================================================================
+// GameMaker Exported Functions — HTTP
+// =============================================================================
+
+GM_EXPORT double colyseus_gm_http_get(double client_handle, const char* path) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->http) return 0.0;
+    return gm_http_dispatch(client->http, 0, path, NULL);
+}
+
+GM_EXPORT double colyseus_gm_http_post(double client_handle, const char* path, const char* body) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->http) return 0.0;
+    return gm_http_dispatch(client->http, 1, path, body);
+}
+
+GM_EXPORT double colyseus_gm_http_put(double client_handle, const char* path, const char* body) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->http) return 0.0;
+    return gm_http_dispatch(client->http, 2, path, body);
+}
+
+GM_EXPORT double colyseus_gm_http_delete(double client_handle, const char* path) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->http) return 0.0;
+    return gm_http_dispatch(client->http, 3, path, NULL);
+}
+
+GM_EXPORT double colyseus_gm_http_patch(double client_handle, const char* path, const char* body) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->http) return 0.0;
+    return gm_http_dispatch(client->http, 4, path, body);
+}
+
+GM_EXPORT void colyseus_gm_auth_set_token(double client_handle, const char* token) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->http) return;
+    colyseus_http_set_auth_token(client->http, token);
+}
+
+GM_EXPORT const char* colyseus_gm_auth_get_token(double client_handle) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->http) return "";
+    const char* token = colyseus_http_get_auth_token(client->http);
+    return token ? token : "";
+}
+
+// =============================================================================
+// HTTP Event Accessors
+// =============================================================================
+
+GM_EXPORT double colyseus_gm_event_get_http_status(void) {
+    return (double)g_current_event.code;
+}
+
+GM_EXPORT const char* colyseus_gm_event_get_http_body(void) {
+    return g_current_http_body ? g_current_http_body : "";
+}
+
+// =============================================================================
+// HTTP Push Helpers (for WASM shim — JS calls these to push HTTP events)
+// =============================================================================
+
+GM_EXPORT void colyseus_gm_http_push_response(double request_id, double status_code, const char* body) {
+    gm_event_t event = {0};
+    event.type = GM_EVENT_HTTP_RESPONSE;
+    event.callback_handle = request_id;
+    event.code = (int)status_code;
+    event.http.body = body ? strdup(body) : NULL;
+    event_queue_push(&event);
+}
+
+GM_EXPORT void colyseus_gm_http_push_error(double request_id, double code, const char* message) {
+    gm_event_t event = {0};
+    event.type = GM_EVENT_HTTP_ERROR;
+    event.callback_handle = request_id;
+    event.code = (int)code;
+    if (message) {
+        strncpy(event.message, message, sizeof(event.message) - 1);
+    }
+    event.http.body = NULL;
+    event_queue_push(&event);
+}
+
+// Get HTTP base endpoint from client (used by WASM shim for URL construction)
+GM_EXPORT const char* colyseus_gm_http_get_endpoint(double client_handle) {
+    static char endpoint_buf[1024];
+    endpoint_buf[0] = '\0';
+
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->settings) return endpoint_buf;
+
+    char* ep = colyseus_settings_get_webrequest_endpoint(client->settings);
+    if (ep) {
+        strncpy(endpoint_buf, ep, sizeof(endpoint_buf) - 1);
+        free(ep);
+    }
+    return endpoint_buf;
 }

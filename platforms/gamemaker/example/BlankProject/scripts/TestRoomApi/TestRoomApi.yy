@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"TestRoomApi",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"TestRoomApi",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

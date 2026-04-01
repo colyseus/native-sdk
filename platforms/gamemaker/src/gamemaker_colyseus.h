@@ -26,6 +26,8 @@ typedef enum {
     GM_EVENT_ROOM_ERROR = 4,
     GM_EVENT_ROOM_LEAVE = 5,
     GM_EVENT_CLIENT_ERROR = 6,
+    GM_EVENT_HTTP_RESPONSE = 10,
+    GM_EVENT_HTTP_ERROR = 11,
 } gm_event_type_t;
 
 // =============================================================================
@@ -198,6 +200,86 @@ GM_EXPORT const uint8_t* colyseus_gm_event_get_data(void);
  * @return Data length
  */
 GM_EXPORT double colyseus_gm_event_get_data_length(void);
+
+// =============================================================================
+// HTTP Functions
+// =============================================================================
+
+/**
+ * Perform an HTTP GET request
+ * @param client_handle Client handle
+ * @param path Request path (e.g., "/api/data")
+ * @return Request ID (use to correlate with HTTP events), 0 on failure
+ */
+GM_EXPORT double colyseus_gm_http_get(double client_handle, const char* path);
+
+/**
+ * Perform an HTTP POST request
+ * @param client_handle Client handle
+ * @param path Request path
+ * @param body JSON body string
+ * @return Request ID, 0 on failure
+ */
+GM_EXPORT double colyseus_gm_http_post(double client_handle, const char* path, const char* body);
+
+/**
+ * Perform an HTTP PUT request
+ * @param client_handle Client handle
+ * @param path Request path
+ * @param body JSON body string
+ * @return Request ID, 0 on failure
+ */
+GM_EXPORT double colyseus_gm_http_put(double client_handle, const char* path, const char* body);
+
+/**
+ * Perform an HTTP DELETE request
+ * @param client_handle Client handle
+ * @param path Request path
+ * @return Request ID, 0 on failure
+ */
+GM_EXPORT double colyseus_gm_http_delete(double client_handle, const char* path);
+
+/**
+ * Perform an HTTP PATCH request
+ * @param client_handle Client handle
+ * @param path Request path
+ * @param body JSON body string
+ * @return Request ID, 0 on failure
+ */
+GM_EXPORT double colyseus_gm_http_patch(double client_handle, const char* path, const char* body);
+
+/**
+ * Set auth token for HTTP requests (sent as Bearer token)
+ * @param client_handle Client handle
+ * @param token Auth token string
+ */
+GM_EXPORT void colyseus_gm_auth_set_token(double client_handle, const char* token);
+
+/**
+ * Get current auth token
+ * @param client_handle Client handle
+ * @return Auth token (caller must NOT free), empty string if not set
+ */
+GM_EXPORT const char* colyseus_gm_auth_get_token(double client_handle);
+
+/**
+ * Get HTTP status code from last polled HTTP event
+ * @return HTTP status code
+ */
+GM_EXPORT double colyseus_gm_event_get_http_status(void);
+
+/**
+ * Get HTTP response body from last polled HTTP event
+ * @return Body string (caller must NOT free, valid until next poll)
+ */
+GM_EXPORT const char* colyseus_gm_event_get_http_body(void);
+
+/**
+ * Get HTTP base endpoint URL from client (used by WASM shim)
+ * @param client_handle Client handle
+ * @return Endpoint URL (caller must NOT free)
+ */
+GM_EXPORT const char* colyseus_gm_http_get_endpoint(double client_handle);
 
 #ifdef __cplusplus
 }

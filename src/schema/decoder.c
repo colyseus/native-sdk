@@ -262,9 +262,6 @@ static void set_dyn_schema_field(colyseus_dynamic_schema_t* schema,
         case COLYSEUS_FIELD_FLOAT64:
             if (value) {
                 dyn_value->data.num = *(double*)value;
-                printf("[DECODER] set_dyn number field '%s' = %f (ref_id=%d)\n", 
-                    field->name, dyn_value->data.num, schema->__refId);
-                fflush(stdout);
                 free(value);
             }
             break;
@@ -760,7 +757,39 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
     /* Set field value */
     if (value != NULL || operation == (uint8_t)COLYSEUS_OP_DELETE) {
         if (is_dynamic) {
+            /* For dynamic schemas, set_dyn_schema_field frees:
+             * - The heap-allocated primitive from decode_value (value pointer)
+             * - The old dyn_value entry (where previous_value points into)
+             * Save previous_value before, and re-fetch value after. */
+            if (previous_value_for_change != NULL && !owns_previous_value) {
+                switch (field_type) {
+                    case COLYSEUS_FIELD_STRING: {
+                        previous_value_for_change = strdup((const char*)previous_value_for_change);
+                        owns_previous_value = true;
+                        break;
+                    }
+                    case COLYSEUS_FIELD_REF:
+                    case COLYSEUS_FIELD_ARRAY:
+                    case COLYSEUS_FIELD_MAP:
+                        /* Managed by ref_tracker, pointer stays valid */
+                        break;
+                    default: {
+                        /* Primitive: copy value (all fit in sizeof(double)) */
+                        void* copy = malloc(sizeof(double));
+                        if (copy) {
+                            memcpy(copy, previous_value_for_change, sizeof(double));
+                            previous_value_for_change = copy;
+                            owns_previous_value = true;
+                        }
+                        break;
+                    }
+                }
+            }
+
             set_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field, value);
+
+            /* Re-fetch — points into stable dynamic value storage */
+            value = get_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field);
         } else {
             set_schema_field(schema, field, value);
         }

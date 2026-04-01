@@ -1,7 +1,15 @@
 /// Create Event — initialize client and join room
+client = -1;
+colyseus_room = -1;
+callbacks = -1;
+
+// Skip room join when running GMTL tests
+if (gmtl_has_finished || gmtl_is_initializing) {
+    exit;
+}
+
 client = colyseus_client_create("http://localhost:2567");
 colyseus_room = colyseus_client_join_or_create(client, "test_room", "{}");
-callbacks = -1;
 
 // --- Room event handlers ---
 
@@ -40,11 +48,11 @@ colyseus_on_join(colyseus_room, function(_room) {
 
 colyseus_on_state_change(colyseus_room, function(_room) {
     var state = colyseus_room_get_state(_room);
-    if (state != 0) {
+    if (is_struct(state)) {
         show_debug_message("State changed");
         show_debug_message("Room session id: " + colyseus_room_get_session_id(_room));
 
-        var host = colyseus_schema_get_ref(state, "host");
+        var host = colyseus_schema_get(state, "host");
         var my_player = colyseus_map_get(state, "players", colyseus_room_get_session_id(_room));
         var is_host = (host == my_player);
         show_debug_message("Is host: " + string(is_host));

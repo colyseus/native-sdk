@@ -227,55 +227,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create extension directory
-        run: mkdir -p extension/Colyseus_SDK
-
-      - name: Download macOS binaries
+      - name: Download all build artifacts into zig-out/lib
         uses: actions/download-artifact@v4
         with:
-          name: binaries-macos
-          path: extension/Colyseus_SDK/macos
+          pattern: binaries-*
+          path: platforms/gamemaker/zig-out/lib
+          merge-multiple: false
 
-      - name: Download iOS binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-ios
-          path: extension/Colyseus_SDK/ios
-
-      - name: Download Linux binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-linux
-          path: extension/Colyseus_SDK/linux
-
-      - name: Download Windows binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-windows
-          path: extension/Colyseus_SDK/windows
-
-      - name: Download Android binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-android
-          path: extension/Colyseus_SDK/android
-
-      - name: Download WASM binaries
-        uses: actions/download-artifact@v4
-        with:
-          name: binaries-wasm
-          path: extension/Colyseus_SDK
-
-      - name: Copy extension files
+      - name: Arrange artifacts into expected directory structure
+        working-directory: platforms/gamemaker
         run: |
-          cp platforms/gamemaker/example/BlankProject/extensions/Colyseus_SDK/Colyseus_SDK.yy extension/Colyseus_SDK/
-          cp -r platforms/gamemaker/example/BlankProject/scripts extension/
+          # download-artifact creates binaries-<platform>/ subdirs
+          # Restore platform prefix: binaries-macos/* → zig-out/lib/macos/*
+          for dir in zig-out/lib/binaries-*/; do
+            platform=$(basename "$dir" | sed 's/binaries-//')
+            if [ "$platform" = "wasm" ]; then
+              mkdir -p wasm-out
+              cp "$dir"colyseus_wasm.js wasm-out/ 2>/dev/null || true
+            else
+              mkdir -p "zig-out/lib/$platform"
+              cp -r "$dir"* "zig-out/lib/$platform/" 2>/dev/null || true
+            fi
+          done
+          # Clean up artifact wrapper dirs
+          rm -rf zig-out/lib/binaries-*
 
-      - name: List all files
-        run: find extension/ -type f | sort
-
-      - name: Create release zip
-        run: zip -r colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip extension
+      - name: Package .yymps
+        working-directory: platforms/gamemaker
+        run: |
+          chmod +x package-yymps.sh
+          ./package-yymps.sh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -286,9 +267,9 @@ jobs:
             ## Colyseus GameMaker SDK v${{ needs.check-version.outputs.version }}
 
             ### Installation
-            1. Download the `colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip` file
-            2. Extract and import the extension into your GameMaker project
-            3. See the README for setup instructions
+            1. Download `colyseus-gamemaker-${{ needs.check-version.outputs.version }}.yymps`
+            2. In GameMaker, go to **Tools → Import Local Package**
+            3. Select the `.yymps` file, select all resources, and click **Import**
 
             ### Supported Platforms
             - Windows (x86_64)
@@ -297,6 +278,6 @@ jobs:
             - Linux (x86_64)
             - Android (arm64, arm32, x86_64)
             - HTML5 (WASM)
-          files: colyseus-gamemaker-${{ needs.check-version.outputs.version }}.zip
+          files: platforms/gamemaker/package-out/colyseus-gamemaker-${{ needs.check-version.outputs.version }}.yymps
           draft: false
           prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}
