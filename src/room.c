@@ -398,6 +398,7 @@ void colyseus_room_send(colyseus_room_t* room, const char* type, colyseus_messag
 
     if (encoded_data && encoded_len > 0) {
         colyseus_room_send_encoded(room, type, encoded_data, encoded_len);
+        colyseus_message_encoded_free(encoded_data, encoded_len);
     }
 }
 
@@ -409,6 +410,7 @@ void colyseus_room_send_int(colyseus_room_t* room, int type, colyseus_message_t*
 
     if (encoded_data && encoded_len > 0) {
         colyseus_room_send_int_encoded(room, type, encoded_data, encoded_len);
+        colyseus_message_encoded_free(encoded_data, encoded_len);
     }
 }
 
