@@ -63,6 +63,15 @@ export class TestRoom extends Room {
         this.state.players.delete(bot[0]);
       }
     },
+    reset_items: (client: Client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      // Splice all items and push new ones in the same tick
+      // (reproduces the UNO restart scenario: splice+push at overlapping indices)
+      player.items.splice(0, player.items.length);
+      player.items.push(new Item().assign({ name: "reset_a", value: 100 }));
+      player.items.push(new Item().assign({ name: "reset_b", value: 200 }));
+    },
   }
 
   onCreate() {
@@ -73,7 +82,7 @@ export class TestRoom extends Room {
     }, 4000);
   }
 
-  onJoin(client: Client) {
+  onJoin(client: Client, options?: any) {
     const player = new Player();
     player.items.push(new Item().assign({ name: "sword" }));
 
@@ -83,6 +92,9 @@ export class TestRoom extends Room {
     }
 
     this.state.players.set(client.sessionId, player);
+
+    // Echo join options back to the client (for SDK testing)
+    client.send("join_options", options || {});
 
     // advance turn every 2 seconds
     this.clock.setInterval(() => {
