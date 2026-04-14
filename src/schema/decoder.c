@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdio.h>
 
 /* ============================================================================
  * Type Context
@@ -1013,6 +1014,7 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
     }
 
     int ref_id = 0;
+    int previous_ref_id = 0;
     void* _ref = decoder->state;
     decode_ref_type_t current_ref_type = DECODE_REF_SCHEMA;
 
@@ -1031,9 +1033,26 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
 
             _ref = colyseus_ref_tracker_get(decoder->refs, ref_id);
             if (!_ref) {
-                /* refId not in tracker - might be from stale message during cleanup */
-                return;
+                printf("colyseus-schema: \"refId\" not found: %d (previous refId: %d)\n",
+                    ref_id, previous_ref_id);
+
+                /* Skip to next SWITCH_TO_STRUCTURE with a known refId.
+                 * Must validate the refId after each 0xFF marker to avoid
+                 * false matches on data bytes that happen to be 0xFF. */
+                while (it->offset < (int)length) {
+                    if (colyseus_decode_switch_check(bytes, it)) {
+                        colyseus_iterator_t peek = { .offset = it->offset + 1 };
+                        int potential_ref = colyseus_decode_varint(bytes, &peek);
+                        if (colyseus_ref_tracker_has(decoder->refs, potential_ref)) {
+                            break;
+                        }
+                    }
+                    it->offset++;
+                }
+                continue;
             }
+
+            previous_ref_id = ref_id;
 
             current_ref_type = get_ref_type(decoder, ref_id);
             continue;

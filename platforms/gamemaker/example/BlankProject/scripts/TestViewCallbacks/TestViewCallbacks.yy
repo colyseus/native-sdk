@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"TestViewCallbacks",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"TestViewCallbacks",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

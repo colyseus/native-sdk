@@ -784,6 +784,39 @@ colyseus_callback_handle_t colyseus_callbacks_on_change_instance(
 }
 
 /* ============================================================================
+ * onChange (collection) — deferred helper
+ * ============================================================================ */
+
+typedef struct {
+    colyseus_callbacks_t* callbacks;
+    colyseus_collection_change_callback_fn handler;
+    void* userdata;
+    colyseus_callback_handle_t property_handle;
+} deferred_change_collection_context_t;
+
+static void on_change_collection_available(void* value, void* previous_value, void* userdata) {
+    (void)previous_value;
+    deferred_change_collection_context_t* ctx = (deferred_change_collection_context_t*)userdata;
+    if (!ctx || !value) return;
+
+    /* Remove the property listener now that collection is available */
+    colyseus_callbacks_remove(ctx->callbacks, ctx->property_handle);
+
+    int collection_ref_id = COLYSEUS_REF_ID(value);
+
+    /* Register the actual onChange callback on the collection */
+    add_callback_internal(
+        ctx->callbacks,
+        collection_ref_id,
+        CALLBACK_KEY_OPERATION,
+        (int)COLYSEUS_OP_REPLACE,
+        NULL,
+        (void*)ctx->handler,
+        ctx->userdata
+    );
+}
+
+/* ============================================================================
  * onChange (collection)
  * ============================================================================ */
 
@@ -802,13 +835,13 @@ colyseus_callback_handle_t colyseus_callbacks_on_change_collection(
     if (!schema->__vtable) return COLYSEUS_INVALID_CALLBACK_HANDLE;
 
     void* collection = NULL;
-    
+
     /* Get collection from schema - handle both static and dynamic vtables */
     if (colyseus_vtable_is_dynamic(schema->__vtable)) {
         /* Dynamic schema */
         const colyseus_dynamic_field_t* dyn_field = get_dyn_field_by_name(schema->__vtable, property);
         if (!dyn_field) return COLYSEUS_INVALID_CALLBACK_HANDLE;
-        
+
         colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)schema;
         colyseus_dynamic_value_t* dyn_value = colyseus_dynamic_schema_get(dyn_schema, dyn_field->index);
         if (dyn_value) {
@@ -827,14 +860,23 @@ colyseus_callback_handle_t colyseus_callbacks_on_change_collection(
         /* Static schema */
         const colyseus_field_t* field = get_field_by_name(schema->__vtable, property);
         if (!field) return COLYSEUS_INVALID_CALLBACK_HANDLE;
-        
+
         collection = *(void**)((char*)schema + field->offset);
     }
-    
+
     if (!collection) {
-        /* Collection not available yet - would need deferred registration */
-        /* For simplicity, return invalid handle (user should wait for collection) */
-        return COLYSEUS_INVALID_CALLBACK_HANDLE;
+        /* Collection not available yet - defer registration until it arrives */
+        deferred_change_collection_context_t* ctx = malloc(sizeof(deferred_change_collection_context_t));
+        if (!ctx) return COLYSEUS_INVALID_CALLBACK_HANDLE;
+
+        ctx->callbacks = callbacks;
+        ctx->handler = handler;
+        ctx->userdata = userdata;
+        ctx->property_handle = COLYSEUS_INVALID_CALLBACK_HANDLE;
+
+        ctx->property_handle = add_callback_internal(callbacks, COLYSEUS_REF_ID(instance),
+            CALLBACK_KEY_FIELD, 0, property, (void*)on_change_collection_available, ctx);
+        return ctx->property_handle;
     }
 
     int collection_ref_id = COLYSEUS_REF_ID(collection);

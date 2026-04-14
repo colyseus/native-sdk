@@ -26,6 +26,7 @@
     {"id":{"name":"TestHttpHelpers","path":"scripts/TestHttpHelpers/TestHttpHelpers.yy",},},
     {"id":{"name":"TestHttpApi","path":"scripts/TestHttpApi/TestHttpApi.yy",},},
     {"id":{"name":"TestRoomApi","path":"scripts/TestRoomApi/TestRoomApi.yy",},},
+    {"id":{"name":"TestViewCallbacks","path":"scripts/TestViewCallbacks/TestViewCallbacks.yy",},},
     {"id":{"name":"GMTL_init","path":"scripts/GMTL_init/GMTL_init.yy",},},
     {"id":{"name":"GMTL_core_test_events","path":"scripts/GMTL_core_test_events/GMTL_core_test_events.yy",},},
     {"id":{"name":"GMTL_core_test_setup","path":"scripts/GMTL_core_test_setup/GMTL_core_test_setup.yy",},},

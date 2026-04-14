@@ -724,6 +724,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
         .{ .name = "test_messages", .file = "tests/test_messages.zig", .description = "Run message types tests (requires server)" },
+        .{ .name = "test_view_callbacks", .file = "tests/test_view_callbacks.zig", .description = "Run StateView callback tests (requires server)" },
     };
 
     // Build each Zig test
@@ -732,7 +733,8 @@ pub fn build(b: *std.Build) void {
         if (skip_integration and
             (std.mem.eql(u8, test_file.name, "test_integration") or
                 std.mem.eql(u8, test_file.name, "test_schema_callbacks") or
-                std.mem.eql(u8, test_file.name, "test_messages")))
+                std.mem.eql(u8, test_file.name, "test_messages") or
+                std.mem.eql(u8, test_file.name, "test_view_callbacks")))
         {
             continue;
         }
