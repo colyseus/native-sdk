@@ -49,6 +49,8 @@ typedef enum {
     GM_EVENT_ITEM_REMOVE = 9,
     GM_EVENT_HTTP_RESPONSE = 10,
     GM_EVENT_HTTP_ERROR = 11,
+    GM_EVENT_INSTANCE_CHANGE = 12,
+    GM_EVENT_COLLECTION_CHANGE = 13,
 } gm_event_type_t;
 
 // Event structure for the queue
@@ -99,7 +101,7 @@ typedef struct {
     int index;
     double room_handle;
     int value_type;      // colyseus_field_type_t
-    int callback_type;   // 0=listen, 1=on_add, 2=on_remove
+    int callback_type;   // 0=listen, 1=on_add, 2=on_remove, 3=on_change_instance, 4=on_change_collection
     colyseus_callback_handle_t native_handle;
 } gm_callback_entry_t;
 
@@ -456,6 +458,44 @@ static void gm_item_remove_trampoline(void* value, void* key, void* userdata) {
 
     gm_event_t event = {0};
     event.type = GM_EVENT_ITEM_REMOVE;
+    event.room_handle = entry->room_handle;
+    event.callback_handle = (double)entry->index;
+    event.schema.value_type = entry->value_type;
+
+    if (value) {
+        event.schema.instance_handle = (double)(uintptr_t)value;
+    }
+
+    if (key) {
+        if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
+            event.schema.key_index = *(int*)key;
+            snprintf(event.schema.key_string, sizeof(event.schema.key_string), "%d", *(int*)key);
+        } else {
+            strncpy(event.schema.key_string, (const char*)key,
+                    sizeof(event.schema.key_string) - 1);
+        }
+    }
+
+    event_queue_push(&event);
+}
+
+static void gm_instance_change_trampoline(void* userdata) {
+    gm_callback_entry_t* entry = (gm_callback_entry_t*)userdata;
+    if (!entry || !entry->active) return;
+
+    gm_event_t event = {0};
+    event.type = GM_EVENT_INSTANCE_CHANGE;
+    event.room_handle = entry->room_handle;
+    event.callback_handle = (double)entry->index;
+    event_queue_push(&event);
+}
+
+static void gm_collection_change_trampoline(void* key, void* value, void* userdata) {
+    gm_callback_entry_t* entry = (gm_callback_entry_t*)userdata;
+    if (!entry || !entry->active) return;
+
+    gm_event_t event = {0};
+    event.type = GM_EVENT_COLLECTION_CHANGE;
     event.room_handle = entry->room_handle;
     event.callback_handle = (double)entry->index;
     event.schema.value_type = entry->value_type;
@@ -1181,6 +1221,69 @@ GM_EXPORT double colyseus_gm_callbacks_on_remove(double callbacks_handle, double
         instance,
         property,
         gm_item_remove_trampoline,
+        entry
+    );
+
+    return (double)entry->index;
+}
+
+GM_EXPORT double colyseus_gm_callbacks_on_change_instance(double callbacks_handle, double instance_handle) {
+    gm_callbacks_wrapper_t* wrapper = (gm_callbacks_wrapper_t*)(uintptr_t)callbacks_handle;
+    if (!wrapper || !wrapper->native) return -1.0;
+
+    void* instance = NULL;
+    if (instance_handle == 0.0) {
+        instance = colyseus_room_get_state(wrapper->room);
+    } else {
+        instance = (void*)(uintptr_t)instance_handle;
+    }
+    if (!instance) return -1.0;
+
+    gm_callback_entry_t* entry = gm_find_free_callback_entry();
+    if (!entry) return -1.0;
+
+    entry->active = true;
+    entry->room_handle = (double)wrapper->room_ref;
+    entry->callback_type = 3;  // ON_CHANGE_INSTANCE
+    entry->value_type = COLYSEUS_FIELD_REF;
+
+    entry->native_handle = colyseus_callbacks_on_change_instance(
+        wrapper->native,
+        instance,
+        gm_instance_change_trampoline,
+        entry
+    );
+
+    return (double)entry->index;
+}
+
+GM_EXPORT double colyseus_gm_callbacks_on_change_collection(double callbacks_handle, double instance_handle, const char* property) {
+    gm_callbacks_wrapper_t* wrapper = (gm_callbacks_wrapper_t*)(uintptr_t)callbacks_handle;
+    if (!wrapper || !wrapper->native || !property) return -1.0;
+
+    void* instance = NULL;
+    if (instance_handle == 0.0) {
+        instance = colyseus_room_get_state(wrapper->room);
+    } else {
+        instance = (void*)(uintptr_t)instance_handle;
+    }
+    if (!instance) return -1.0;
+
+    gm_callback_entry_t* entry = gm_find_free_callback_entry();
+    if (!entry) return -1.0;
+
+    entry->active = true;
+    entry->room_handle = (double)wrapper->room_ref;
+    entry->callback_type = 4;  // ON_CHANGE_COLLECTION
+    entry->value_type = COLYSEUS_FIELD_MAP;
+
+    gm_resolve_field_type(instance, property, entry);
+
+    entry->native_handle = colyseus_callbacks_on_change_collection(
+        wrapper->native,
+        instance,
+        property,
+        gm_collection_change_trampoline,
         entry
     );
 
