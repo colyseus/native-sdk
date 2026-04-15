@@ -462,7 +462,7 @@ test "messages: send and receive message types" {
 
     c.colyseus_client_join_or_create(
         client,
-        "my_room",
+        "stub_room",
         "{}",
         onRoomSuccess,
         onError,
