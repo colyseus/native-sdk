@@ -543,6 +543,18 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
 
     if (length == 0) return;
 
+    {
+        const char* dbg = getenv("COLYSEUS_WS_DEBUG");
+        if (dbg && dbg[0] && dbg[0] != '0') {
+            size_t max = length < 64 ? length : 64;
+            fprintf(stderr, "[ROOM] transport_message len=%zu bytes:", length);
+            for (size_t i = 0; i < max; i++) fprintf(stderr, " %02x", data[i]);
+            if (length > max) fprintf(stderr, " ...");
+            fprintf(stderr, "\n");
+            fflush(stderr);
+        }
+    }
+
     colyseus_protocol_t code = (colyseus_protocol_t)data[0];
     size_t offset = 1;
 

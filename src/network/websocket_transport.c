@@ -33,13 +33,33 @@
     #define THREAD_CALL
 #endif
 
-#define WS_DEBUG 0
+/* Runtime-gated diagnostics: set COLYSEUS_WS_DEBUG=1 in the environment to enable.
+ * This keeps pre-push hooks / non-CI runs quiet while still letting Windows CI
+ * emit detailed frame-level tracing. */
+static int ws_debug_enabled(void) {
+    static int cached = -1;
+    if (cached == -1) {
+        const char* v = getenv("COLYSEUS_WS_DEBUG");
+        cached = (v && v[0] && v[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
 
-#if WS_DEBUG
-#define WS_LOG(fmt, ...) fprintf(stderr, "[WS] " fmt "\n", ##__VA_ARGS__)
-#else
-#define WS_LOG(fmt, ...)
-#endif
+#define WS_LOG(fmt, ...) do { \
+    if (ws_debug_enabled()) { fprintf(stderr, "[WS] " fmt "\n", ##__VA_ARGS__); fflush(stderr); } \
+} while (0)
+
+static void ws_hex_dump(const char* tag, const uint8_t* buf, size_t len) {
+    if (!ws_debug_enabled()) return;
+    size_t max = len < 64 ? len : 64;
+    fprintf(stderr, "[WS] %s len=%zu bytes:", tag, len);
+    for (size_t i = 0; i < max; i++) {
+        fprintf(stderr, " %02x", buf[i]);
+    }
+    if (len > max) fprintf(stderr, " ...");
+    fprintf(stderr, "\n");
+    fflush(stderr);
+}
 
 /* Forward declarations */
 static void ws_connect_impl(colyseus_transport_t* transport, const char* url);
@@ -568,11 +588,15 @@ static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data) {
     char buf[1024];
     ssize_t received = ws_socket_recv(data, (uint8_t*)buf, sizeof(buf) - 1, &would_block, &eof);
 
+    WS_LOG("handshake_receive: received=%zd would_block=%d eof=%d buffer_offset_before=%zu",
+           received, would_block, eof, data->buffer_offset);
+
     if (received > 0) {
         size_t space_left = data->buffer_size - data->buffer_offset;
         size_t to_copy = (size_t)received < space_left ? (size_t)received : space_left;
         memcpy(data->buffer + data->buffer_offset, buf, to_copy);
         data->buffer_offset += to_copy;
+        ws_hex_dump("handshake_recv_chunk", (uint8_t*)buf, (size_t)received);
     }
 
     if (would_block) {
@@ -585,27 +609,53 @@ static bool ws_http_handshake_receive(colyseus_ws_transport_data_t* data) {
         return false;
     }
 
-    // Look for end of HTTP headers
-    char* header_end = strstr((char*)data->buffer, "\r\n\r\n");
-    if (!header_end) {
+    /* Bounded search for end-of-headers (don't rely on null termination of buffer,
+     * since the server may send WebSocket binary frames in the same TCP segment
+     * right after the \r\n\r\n — those frames can contain 0x00 bytes that would
+     * truncate a strstr-based scan). */
+    size_t eoh = 0;
+    bool found_eoh = false;
+    if (data->buffer_offset >= 4) {
+        for (size_t i = 0; i + 3 < data->buffer_offset; i++) {
+            if (data->buffer[i] == '\r' && data->buffer[i+1] == '\n' &&
+                data->buffer[i+2] == '\r' && data->buffer[i+3] == '\n') {
+                eoh = i;
+                found_eoh = true;
+                break;
+            }
+        }
+    }
+
+    if (!found_eoh) {
+        WS_LOG("handshake_receive: \\r\\n\\r\\n not found yet (have %zu bytes)", data->buffer_offset);
         return false;
     }
 
-    // Check for HTTP 101
-    if (!strstr((char*)data->buffer, "HTTP/1.1 101")) {
+    // Check for HTTP 101 in the header region only (bounded)
+    bool has_101 = false;
+    if (eoh >= 12) {
+        for (size_t i = 0; i + 12 <= eoh; i++) {
+            if (memcmp(data->buffer + i, "HTTP/1.1 101", 12) == 0) {
+                has_101 = true;
+                break;
+            }
+        }
+    }
+    if (!has_101) {
         fprintf(stderr, "WebSocket handshake failed\n");
+        ws_hex_dump("handshake_headers", (uint8_t*)data->buffer, eoh);
         return false;
     }
 
-    // Calculate where headers end
-    size_t headers_length = (header_end - (char*)data->buffer) + 4; // +4 for \r\n\r\n
+    size_t headers_length = eoh + 4; // +4 for \r\n\r\n
 
-    fprintf(stdout, "Headers length: %zu, total buffered: %zu\n", headers_length, data->buffer_offset);
+    WS_LOG("handshake_receive: headers_length=%zu total_buffered=%zu", headers_length, data->buffer_offset);
 
     // Check if there's extra data after headers (WebSocket frames that came with handshake)
     if (data->buffer_offset > headers_length) {
         size_t extra_data_len = data->buffer_offset - headers_length;
-        fprintf(stdout, "Found %zu bytes of data after handshake headers\n", extra_data_len);
+        WS_LOG("handshake_receive: %zu extra bytes after headers", extra_data_len);
+        ws_hex_dump("handshake_extra", (uint8_t*)(data->buffer + headers_length), extra_data_len);
 
         // Move the extra data to the beginning of the buffer
         // This data will be read by wslay on the next recv_callback
@@ -640,11 +690,7 @@ static void ws_on_msg_recv_callback(wslay_event_context_ptr ctx, const struct ws
     } else {
         // Data frame
         if (arg->msg_length > 0) {
-            WS_LOG("Data frame - first 4 bytes: %02x %02x %02x %02x",
-                   arg->msg[0],
-                   arg->msg_length > 1 ? arg->msg[1] : 0,
-                   arg->msg_length > 2 ? arg->msg[2] : 0,
-                   arg->msg_length > 3 ? arg->msg[3] : 0);
+            ws_hex_dump("ws_data_frame", arg->msg, arg->msg_length);
         }
         if (transport->events.on_message) {
             transport->events.on_message(arg->msg, arg->msg_length, transport->events.userdata);
@@ -661,13 +707,15 @@ static ssize_t ws_recv_callback(wslay_event_context_ptr ctx, uint8_t* buf, size_
         size_t to_copy = data->buffer_offset < len ? data->buffer_offset : len;
         memcpy(buf, data->buffer, to_copy);
 
+        WS_LOG("wslay recv_callback: returning %zu buffered bytes (requested=%zu)", to_copy, len);
+        ws_hex_dump("wslay_from_buffer", buf, to_copy);
+
         // Shift remaining buffer data
         if (to_copy < data->buffer_offset) {
             memmove(data->buffer, data->buffer + to_copy, data->buffer_offset - to_copy);
         }
         data->buffer_offset -= to_copy;
 
-        WS_LOG("wslay recv_callback: returned %zu bytes from buffer", to_copy);
         return (ssize_t)to_copy;
     }
 
@@ -676,7 +724,9 @@ static ssize_t ws_recv_callback(wslay_event_context_ptr ctx, uint8_t* buf, size_
     int eof = 0;
     ssize_t ret = ws_socket_recv(data, buf, len, &would_block, &eof);
 
-    WS_LOG("wslay recv_callback: requested=%zu, received=%zd, would_block=%d, eof=%d", len, ret, would_block, eof);
+    if (ret > 0 || eof) {
+        WS_LOG("wslay recv_callback: requested=%zu, received=%zd, would_block=%d, eof=%d", len, ret, would_block, eof);
+    }
 
     if (would_block) {
         wslay_event_set_error(ctx, WSLAY_ERR_WOULDBLOCK);
