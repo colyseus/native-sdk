@@ -314,9 +314,22 @@ colyseus_array_schema_t* colyseus_array_schema_clone(colyseus_array_schema_t* ar
     clone->child_primitive_type = arr->child_primitive_type;
     clone->child_vtable = arr->child_vtable;
 
+    /*
+     * Replicate items directly instead of calling colyseus_array_schema_set().
+     * set() with COLYSEUS_OP_ADD triggers the unshift path (shift all indices
+     * up) whenever the next item's index is 0 and the clone already has items,
+     * which silently corrupts indices for any other items that followed in the
+     * source list.
+     */
     colyseus_array_item_t* item = arr->items;
     while (item) {
-        colyseus_array_schema_set(clone, item->index, item->value, COLYSEUS_OP_ADD);
+        colyseus_array_item_t* new_item = malloc(sizeof(colyseus_array_item_t));
+        if (!new_item) return clone;
+        new_item->index = item->index;
+        new_item->value = item->value;
+        new_item->next = clone->items;
+        clone->items = new_item;
+        clone->count++;
         item = item->next;
     }
 

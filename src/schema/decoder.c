@@ -919,24 +919,31 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
         /* Find index of item */
         index = array_find_index_by_ref(arr, item_by_ref);
 
+        /*
+         * Always emit the DELETE change — matches the TS reference decoder,
+         * which uses refs.get(refId) as previousValue and does not gate the
+         * change on the index lookup. If an earlier ADD_BY_REFID in the same
+         * bundle overwrote item->value, array_find_index_by_ref returns -1;
+         * we still need to fire onRemove so the user sees the deletion.
+         */
         if (index >= 0) {
             colyseus_array_schema_delete(arr, index);
-
-            int* idx_ptr = malloc(sizeof(int));
-            if (idx_ptr) *idx_ptr = index;
-
-            colyseus_data_change_t change = {
-                .ref_id = arr->__refId,
-                .op = (uint8_t)COLYSEUS_OP_DELETE,
-                .field = NULL,
-                .dynamic_index = idx_ptr,
-                .value = NULL,
-                .previous_value = item_by_ref,
-                .field_type = arr->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
-                .owns_previous_value = false
-            };
-            colyseus_changes_add(decoder->changes, &change);
         }
+
+        int* idx_ptr = malloc(sizeof(int));
+        if (idx_ptr) *idx_ptr = index;
+
+        colyseus_data_change_t change = {
+            .ref_id = arr->__refId,
+            .op = (uint8_t)COLYSEUS_OP_DELETE,
+            .field = NULL,
+            .dynamic_index = idx_ptr,
+            .value = NULL,
+            .previous_value = item_by_ref,
+            .field_type = arr->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
+            .owns_previous_value = false
+        };
+        colyseus_changes_add(decoder->changes, &change);
         return true;
     }
 
