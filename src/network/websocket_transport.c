@@ -182,7 +182,11 @@ static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
 static void ws_send_impl(colyseus_transport_t* transport, const uint8_t* data, size_t length) {
     colyseus_ws_transport_data_t* impl = (colyseus_ws_transport_data_t*)transport->impl_data;
 
+    WS_LOG("ws_send_impl called: state=%d length=%zu", impl->state, length);
+    ws_hex_dump("ws_send_impl_payload", data, length);
+
     if (impl->state != COLYSEUS_WS_CONNECTED) {
+        WS_LOG("ws_send_impl: DROPPING - not connected (state=%d)", impl->state);
         return;
     }
 
@@ -192,7 +196,8 @@ static void ws_send_impl(colyseus_transport_t* transport, const uint8_t* data, s
         .msg_length = length
     };
 
-    wslay_event_queue_msg(impl->wslay_ctx, &msg);
+    int qret = wslay_event_queue_msg(impl->wslay_ctx, &msg);
+    WS_LOG("wslay_event_queue_msg returned %d", qret);
 }
 
 static void ws_send_unreliable_impl(colyseus_transport_t* transport, const uint8_t* data, size_t length) {
@@ -683,7 +688,15 @@ static void ws_on_msg_recv_callback(wslay_event_context_ptr ctx, const struct ws
 
     if (wslay_is_ctrl_frame(arg->opcode)) {
         if (arg->opcode == WSLAY_CONNECTION_CLOSE) {
-            WS_LOG("Close frame received");
+            WS_LOG("Close frame received (payload_len=%zu)", arg->msg_length);
+            if (arg->msg_length >= 2 && ws_debug_enabled()) {
+                uint16_t code = ((uint16_t)arg->msg[0] << 8) | arg->msg[1];
+                size_t reason_len = arg->msg_length - 2;
+                fprintf(stderr, "[WS] Close code=%u reason=\"%.*s\"\n",
+                        (unsigned)code, (int)reason_len, (const char*)(arg->msg + 2));
+                fflush(stderr);
+            }
+            ws_hex_dump("close_payload", arg->msg, arg->msg_length);
             data->state = COLYSEUS_WS_REMOTE_DISCONNECT;
         }
         // wslay handles ping/pong automatically
@@ -752,8 +765,12 @@ static ssize_t ws_send_callback(wslay_event_context_ptr ctx, const uint8_t* buf,
     colyseus_transport_t* transport = (colyseus_transport_t*)user_data;
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
+    ws_hex_dump("wslay_send_to_socket", buf, len);
+
     int would_block = 0;
     ssize_t ret = ws_socket_send(data, buf, len, &would_block);
+
+    WS_LOG("wslay send_callback: requested=%zu, sent=%zd, would_block=%d", len, ret, would_block);
 
     if (ret < 0) {
         wslay_event_set_error(ctx, WSLAY_ERR_CALLBACK_FAILURE);
