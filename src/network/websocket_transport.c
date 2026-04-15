@@ -433,7 +433,7 @@ static bool ws_connect_init(colyseus_ws_transport_data_t* data) {
         data->use_tls = true;
     }
 
-    printf("Connecting to %s:%d (path=%s, TLS=%d)\n", data->url_host, data->url_port, data->url_path, data->use_tls);
+    WS_LOG("Connecting to %s:%d (path=%s, TLS=%d)", data->url_host, data->url_port, data->url_path, data->use_tls);
 
     colyseus_url_parts_free(parts);
 

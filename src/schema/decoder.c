@@ -1039,7 +1039,7 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
 
             _ref = colyseus_ref_tracker_get(decoder->refs, ref_id);
             if (!_ref) {
-                printf("colyseus-schema: \"refId\" not found: %d (previous refId: %d)\n",
+                fprintf(stderr, "colyseus-schema: \"refId\" not found: %d (previous refId: %d)\n",
                     ref_id, previous_ref_id);
 
                 /* Skip to next SWITCH_TO_STRUCTURE with a known refId.
