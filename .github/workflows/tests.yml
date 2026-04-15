@@ -74,6 +74,7 @@ jobs:
           exit 1
 
       - name: Run tests
+        timeout-minutes: 10
         env:
           COLYSEUS_WS_DEBUG: "1"
         run: zig build test
