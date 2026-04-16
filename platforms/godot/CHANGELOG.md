@@ -2,7 +2,7 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
-## 0.17.6
+## 0.17.7
 
 ### Changed
 - Renamed the native GDExtension classes to `_ColyseusClient`, `_ColyseusRoom`, and `_ColyseusCallbacks` so they are hidden from Godot editor autocomplete. Continue using the public `Colyseus.Client`, `Colyseus.Room`, and `Colyseus.Callbacks` entry points — they are unchanged.

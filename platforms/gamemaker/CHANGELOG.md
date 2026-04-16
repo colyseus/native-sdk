@@ -2,7 +2,7 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
-## 0.17.21
+## 0.17.22
 
 ### Added
 - `colyseus_on_change` GML wrapper exposing instance and collection `onChange` callbacks, matching the TypeScript SDK's `callbacks.onChange(...)` surface.
