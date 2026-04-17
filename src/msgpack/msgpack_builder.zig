@@ -22,7 +22,6 @@ const PayloadWrapper = struct {
     payload_type: PayloadType,
     payload: ?Payload = null,
     array_elements: ?std.ArrayList(Payload) = null,
-    encoded_data: ?[]u8 = null,
 
     fn deinit(self: *PayloadWrapper) void {
         if (self.array_elements) |*list| {
@@ -34,9 +33,6 @@ const PayloadWrapper = struct {
         if (self.payload) |*p| {
             p.free(allocator);
         }
-        if (self.encoded_data) |data| {
-            allocator.free(data);
-        }
     }
 };
 
@@ -46,7 +42,6 @@ fn createMapWrapper() ?*PayloadWrapper {
         .payload_type = .map,
         .payload = Payload.mapPayload(allocator),
         .array_elements = null,
-        .encoded_data = null,
     };
     return wrapper;
 }
@@ -57,7 +52,6 @@ fn createArrayWrapper() ?*PayloadWrapper {
         .payload_type = .array,
         .payload = null,
         .array_elements = .{},
-        .encoded_data = null,
     };
     return wrapper;
 }
@@ -68,7 +62,6 @@ fn createPrimitiveWrapper(payload: Payload) ?*PayloadWrapper {
         .payload_type = .primitive,
         .payload = payload,
         .array_elements = null,
-        .encoded_data = null,
     };
     return wrapper;
 }
@@ -221,18 +214,58 @@ export fn colyseus_message_array_push_msg(arr: ?*PayloadWrapper, value: ?*Payloa
 }
 
 // ============================================================================
-// Helper to get Payload for encoding
+// Encode snapshot: deep clone so zig-msgpack encode cannot alias builder heap.
 // ============================================================================
+
+fn clonePayloadForEncode(p: Payload) (Payload.Error || error{ OutOfMemory, UnsupportedNonStringMapKey })!Payload {
+    return switch (p) {
+        .nil, .bool, .int, .uint, .float, .timestamp => p,
+        .str => |s| try Payload.strToPayload(s.str, allocator),
+        .bin => |b| try Payload.binToPayload(b.bin, allocator),
+        .ext => |e| try Payload.extToPayload(e.type, e.data, allocator),
+        .arr => |items| {
+            var arr_payload = try Payload.arrPayload(items.len, allocator);
+            errdefer arr_payload.free(allocator);
+            for (items, 0..) |item, i| {
+                const cloned = try clonePayloadForEncode(item);
+                try arr_payload.setArrElement(i, cloned);
+            }
+            return arr_payload;
+        },
+        .map => |m| {
+            var new_payload = Payload.mapPayload(allocator);
+            errdefer new_payload.free(allocator);
+            var it = m.iterator();
+            while (it.next()) |entry| {
+                const key = entry.key_ptr.*;
+                switch (key) {
+                    .str => |ks| {
+                        const val = try clonePayloadForEncode(entry.value_ptr.*);
+                        try new_payload.mapPut(ks.str, val);
+                    },
+                    else => return error.UnsupportedNonStringMapKey,
+                }
+            }
+            return new_payload;
+        },
+    };
+}
 
 fn getPayloadForEncoding(wrapper: *PayloadWrapper) ?Payload {
     switch (wrapper.payload_type) {
-        .map, .primitive => return wrapper.payload,
+        .map, .primitive => {
+            const p = wrapper.payload orelse return null;
+            wrapper.payload = null;
+            return p;
+        },
         .array => {
             if (wrapper.array_elements) |list| {
                 var arr_payload = Payload.arrPayload(list.items.len, allocator) catch return null;
+                errdefer arr_payload.free(allocator);
                 for (list.items, 0..) |item, i| {
-                    arr_payload.setArrElement(i, item) catch {
-                        arr_payload.free(allocator);
+                    const cloned = clonePayloadForEncode(item) catch return null;
+                    arr_payload.setArrElement(i, cloned) catch {
+                        cloned.free(allocator);
                         return null;
                     };
                 }
@@ -253,17 +286,13 @@ export fn colyseus_message_encode(wrapper: ?*PayloadWrapper, out_len: *usize) ?[
         return null;
     }
 
-    // Free previous encoded data if exists
-    if (wrapper.?.encoded_data) |data| {
-        allocator.free(data);
-        wrapper.?.encoded_data = null;
-    }
-
     // Get the payload to encode
     const payload_to_encode = getPayloadForEncoding(wrapper.?) orelse {
         out_len.* = 0;
         return null;
     };
+    // zig-msgpack: Pack.write does not consume the payload; caller must free after write.
+    defer payload_to_encode.free(allocator);
 
     // Create buffer for encoding
     var buffer: [16384]u8 = undefined;
@@ -294,7 +323,7 @@ export fn colyseus_message_encode(wrapper: ?*PayloadWrapper, out_len: *usize) ?[
     };
     @memcpy(result, buffer[0..encoded_len]);
 
-    wrapper.?.encoded_data = result;
+    // Caller owns the returned buffer; free with colyseus_message_encoded_free.
     out_len.* = encoded_len;
     return result.ptr;
 }
