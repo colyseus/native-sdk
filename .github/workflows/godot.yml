@@ -152,6 +152,7 @@ jobs:
             ../../src/schema/dynamic_schema.c
             ../../src/utils/strUtil.c
             ../../src/utils/sha1_c.c
+            ../../src/utils/time.c
             ../../src/auth/auth.c
             ../../src/auth/secure_storage.c
             ../../src/certs/ca_bundle.c
@@ -412,6 +413,7 @@ jobs:
             ../../src/schema/dynamic_schema.c
             ../../src/utils/strUtil.c
             ../../src/utils/sha1_c.c
+            ../../src/utils/time.c
             ../../src/auth/auth.c
             ../../src/auth/secure_storage.c
             ../../src/certs/ca_bundle.c

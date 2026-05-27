@@ -2,7 +2,7 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
-## 0.17.8
+## 0.17.9
 
 ### Added
 - Automatic reconnection. After a recoverable WebSocket close (codes 1001, 1005, 1006, 4010 `MAY_TRY_RECONNECT`), the room retries with exponential backoff and replays the original `reconnectionToken` against the same room URL.
@@ -16,6 +16,8 @@ All notable changes to the Colyseus Godot SDK will be documented in this file.
 ### Fixed
 - `Colyseus.Room.send_message(type)` (single-argument form) no longer fails with an arity error against the native vararg method; the wrapper now always forwards both `type` and `data` (defaulting `data` to `null`).
 - Native build picks up the active macOS SDK via `xcrun --show-sdk-path` instead of the hard-coded Command Line Tools path, which was producing `_kSec*` / `_CF*` undefined-symbol errors when only the full Xcode SDK was available.
+- Android: the GDExtension failed to load (`dlopen`: "cannot locate symbol malloc") and matchmaking failed with `TemporaryNameServerFailure`. The Android `.so` now links bionic libc via a generated NDK libc file, which gives it a `NEEDED libc.so` (fixing the loader) and routes `std.net` DNS through bionic `getaddrinfo` instead of the nonexistent `/etc/resolv.conf` (fixing matchmaking). Minimum Android API is now 24. Reported in #22.
+- iOS: release build failed to link (`undefined symbol: _colyseus_monotonic_ms`) because `src/utils/time.c`, added for reconnection, was missing from the iOS build's source list.
 
 ### Tests
 - Added `test_reconnect.gd` covering drop → auto-reconnect, queued-message flush, and disabled-reconnection paths against `sdks-test-server`.
