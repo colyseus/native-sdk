@@ -688,7 +688,10 @@ pub fn build(b: *std.Build) void {
             lib.install_name = b.fmt("@rpath/lib{s}.framework/lib{s}", .{ lib_name, lib_name });
         } else if (is_android) {
             lib.root_module.link_libc = false;
-            http_zig_module.link_libc = false;
+            // http_zig_module.link_libc is decided below: true (with an NDK
+            // libc file) when ANDROID_NDK_HOME is available, so std.net resolves
+            // DNS via bionic getaddrinfo instead of its own /etc/resolv.conf
+            // reader (absent on Android → TemporaryNameServerFailure). See note.
             system_certs_module.link_libc = false;
             strutil_zig_module.link_libc = false;
 
@@ -699,7 +702,15 @@ pub fn build(b: *std.Build) void {
                 .aarch64 => "aarch64-linux-android",
                 else => @panic("Unsupported Android architecture"),
             };
-            const api_level = "21";
+            // Link against the API-24 bionic stubs. Zig fixes the compile-time
+            // __ANDROID_API__ at 29 (and pinning it lower via the target triple
+            // makes Zig try — and fail — to "provide libc" for bionic), so the
+            // headers emit symbols introduced after 21: stdout/stderr (API 23)
+            // and __fread_chk/__fwrite_chk (API 24, via FORTIFY). Linking the
+            // API-21 stub left those unresolved → load failure on API 21-23.
+            // API 24 (Android 7.0) covers every symbol this SDK references; the
+            // CI symbol audit guards against future drift above 24.
+            const api_level = "24";
 
             if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME")) |ndk_home| {
                 const builtin = @import("builtin");
@@ -717,6 +728,34 @@ pub fn build(b: *std.Build) void {
                 lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib/{s}/{s}", .{ ndk_sysroot, android_triple, api_level }) });
                 lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib/{s}", .{ ndk_sysroot, android_triple }) });
 
+                // Link libc properly via an NDK libc file. Zig can't *provide*
+                // libc for bionic (only glibc/musl), but pointing it at the NDK
+                // sysroot lets it link the real bionic libc. This does two things:
+                //   1. The .so gets a NEEDED libc.so, fixing the dlopen "cannot
+                //      locate symbol malloc" loader failure (Godot loads
+                //      GDExtensions with RTLD_LOCAL, so the namespace won't
+                //      borrow libc from the host process).
+                //   2. builtin.link_libc becomes true, so std.net resolves DNS
+                //      via bionic getaddrinfo instead of its own /etc/resolv.conf
+                //      reader (absent on Android → TemporaryNameServerFailure).
+                //      The WebSocket path already proves bionic getaddrinfo works.
+                // link_libc propagates from the linked http_object to the final
+                // lib, so both carry link_libc=true and the libc file. crt_dir
+                // uses api_level 24 (see note above) so the linked stubs include
+                // stdout/stderr (API 23) and __fread_chk/__fwrite_chk (API 24).
+                const android_libc_conf = b.fmt(
+                    "include_dir={s}/usr/include\n" ++
+                        "sys_include_dir={s}/usr/include/{s}\n" ++
+                        "crt_dir={s}/usr/lib/{s}/{s}\n" ++
+                        "msvc_lib_dir=\nkernel32_lib_dir=\ngcc_dir=\n",
+                    .{ ndk_sysroot, ndk_sysroot, android_triple, ndk_sysroot, android_triple, api_level },
+                );
+                const android_libc_file = b.addWriteFiles().add("android-libc.conf", android_libc_conf);
+                lib.root_module.link_libc = true;
+                lib.setLibCFile(android_libc_file);
+                http_zig_module.link_libc = true;
+                http_object.setLibCFile(android_libc_file);
+
                 // mbedtls libs:
                 mbedcrypto.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{ndk_sysroot}) });
                 mbedcrypto.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/{s}", .{ ndk_sysroot, android_triple }) });
@@ -725,9 +764,15 @@ pub fn build(b: *std.Build) void {
                 mbedtls.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{ndk_sysroot}) });
                 mbedtls.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/{s}", .{ ndk_sysroot, android_triple }) });
             } else |_| {
+                http_zig_module.link_libc = false;
                 std.debug.print("Warning: ANDROID_NDK_HOME not set for Android build\n", .{});
             }
 
+            // libc is linked via the NDK libc file above (inside the NDK block),
+            // which gives the .so its NEEDED libc.so. libdl/liblog/libandroid are
+            // ordinary system libs (not special-cased by Zig like "c"), so
+            // linkSystemLibrary works for them.
+            lib.root_module.linkSystemLibrary("dl", .{});
             lib.root_module.linkSystemLibrary("log", .{});
             lib.root_module.linkSystemLibrary("android", .{});
         } else if (os_tag == .linux) {
