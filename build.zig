@@ -505,6 +505,7 @@ pub fn build(b: *std.Build) void {
         // Utils
         "src/utils/strUtil.c",
         "src/utils/sha1_c.c",
+        "src/utils/time.c",
         // Auth
         "src/auth/auth.c",
         "src/auth/secure_storage.c",
@@ -725,6 +726,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
         .{ .name = "test_messages", .file = "tests/test_messages.zig", .description = "Run message types tests (requires server)" },
         .{ .name = "test_view_callbacks", .file = "tests/test_view_callbacks.zig", .description = "Run StateView callback tests (requires server)" },
+        .{ .name = "test_reconnect", .file = "tests/test_reconnect.zig", .description = "Run automatic reconnection tests (requires server)" },
     };
 
     // Build each Zig test
@@ -734,7 +736,8 @@ pub fn build(b: *std.Build) void {
             (std.mem.eql(u8, test_file.name, "test_integration") or
                 std.mem.eql(u8, test_file.name, "test_schema_callbacks") or
                 std.mem.eql(u8, test_file.name, "test_messages") or
-                std.mem.eql(u8, test_file.name, "test_view_callbacks")))
+                std.mem.eql(u8, test_file.name, "test_view_callbacks") or
+                std.mem.eql(u8, test_file.name, "test_reconnect")))
         {
             continue;
         }

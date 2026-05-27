@@ -51,6 +51,8 @@ typedef enum {
     GM_EVENT_HTTP_ERROR = 11,
     GM_EVENT_INSTANCE_CHANGE = 12,
     GM_EVENT_COLLECTION_CHANGE = 13,
+    GM_EVENT_ROOM_DROP = 14,
+    GM_EVENT_ROOM_RECONNECT = 15,
 } gm_event_type_t;
 
 // Event structure for the queue
@@ -568,6 +570,24 @@ static void on_room_leave(int code, const char* reason, void* userdata) {
     event_queue_push(&event);
 }
 
+static void on_room_drop(int code, const char* reason, void* userdata) {
+    int ref = (int)(intptr_t)userdata;
+    gm_event_t event = {0};
+    event.type = GM_EVENT_ROOM_DROP;
+    event.room_handle = (double)ref;
+    event.code = code;
+    strncpy(event.message, reason ? reason : "", sizeof(event.message) - 1);
+    event_queue_push(&event);
+}
+
+static void on_room_reconnect(void* userdata) {
+    int ref = (int)(intptr_t)userdata;
+    gm_event_t event = {0};
+    event.type = GM_EVENT_ROOM_RECONNECT;
+    event.room_handle = (double)ref;
+    event_queue_push(&event);
+}
+
 static void on_client_room_success(colyseus_room_t* room, void* userdata) {
     int ref = (int)(intptr_t)userdata;
     gm_room_ref_set(ref, room);
@@ -579,6 +599,8 @@ static void on_client_room_success(colyseus_room_t* room, void* userdata) {
     colyseus_room_on_message_any_with_type_encoded(room, on_room_message_with_type_encoded, ref_as_ptr);
     colyseus_room_on_error(room, on_room_error, ref_as_ptr);
     colyseus_room_on_leave(room, on_room_leave, ref_as_ptr);
+    colyseus_room_on_drop(room, on_room_drop, ref_as_ptr);
+    colyseus_room_on_reconnect(room, on_room_reconnect, ref_as_ptr);
 }
 
 static void on_client_error(int code, const char* message, void* userdata) {
@@ -853,6 +875,41 @@ GM_EXPORT double colyseus_gm_room_is_connected(double room_handle) {
         return colyseus_room_is_connected(room) ? 1.0 : 0.0;
     }
     return 0.0;
+}
+
+GM_EXPORT double colyseus_gm_room_is_reconnecting(double room_handle) {
+    colyseus_room_t* room = gm_room_ref_get((int)room_handle);
+    if (room) {
+        return colyseus_room_is_reconnecting(room) ? 1.0 : 0.0;
+    }
+    return 0.0;
+}
+
+/*
+ * Tune reconnection behaviour. Pass -1 for any parameter you want to keep
+ * unchanged. `enabled` is interpreted as: 0 = disabled, 1 = enabled, -1 =
+ * keep current.
+ */
+GM_EXPORT void colyseus_gm_room_set_reconnection_options(double room_handle,
+    double enabled,
+    double max_retries,
+    double min_delay_ms,
+    double max_delay_ms,
+    double min_uptime_ms,
+    double delay_ms,
+    double max_enqueued_messages) {
+    colyseus_room_t* room = gm_room_ref_get((int)room_handle);
+    if (!room) return;
+    colyseus_reconnection_options_t opts;
+    colyseus_room_get_reconnection_options(room, &opts);
+    if (enabled >= 0) opts.enabled = enabled > 0;
+    if (max_retries >= 0) opts.max_retries = (int)max_retries;
+    if (min_delay_ms >= 0) opts.min_delay_ms = (int)min_delay_ms;
+    if (max_delay_ms >= 0) opts.max_delay_ms = (int)max_delay_ms;
+    if (min_uptime_ms >= 0) opts.min_uptime_ms = (int)min_uptime_ms;
+    if (delay_ms >= 0) opts.delay_ms = (int)delay_ms;
+    if (max_enqueued_messages >= 0) opts.max_enqueued_messages = (int)max_enqueued_messages;
+    colyseus_room_set_reconnection_options(room, &opts);
 }
 
 // =============================================================================

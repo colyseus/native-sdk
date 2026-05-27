@@ -211,6 +211,22 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
     if (data->state == COLYSEUS_WS_DISCONNECTED) {
+        /* Already disconnected via deferred close from the tick thread.
+         * The tick thread function has returned by now (or is about to),
+         * but the OS handle hasn't been reaped yet — join it before
+         * destroy() releases the surrounding struct. */
+        if (data->tick_thread) {
+#ifdef _WIN32
+            WaitForSingleObject(data->tick_thread, INFINITE);
+            CloseHandle(data->tick_thread);
+            data->tick_thread = NULL;
+#else
+            pthread_t* thread = (pthread_t*)data->tick_thread;
+            pthread_join(*thread, NULL);
+            free(thread);
+            data->tick_thread = NULL;
+#endif
+        }
         return;
     }
 

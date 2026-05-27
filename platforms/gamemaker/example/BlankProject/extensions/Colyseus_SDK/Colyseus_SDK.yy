@@ -314,6 +314,47 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "colyseus_room_is_reconnecting",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_is_reconnecting",
+          "help": "Whether the room is currently inside an automatic reconnection cycle",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_room_is_reconnecting",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_room_set_reconnection_options",
+          "argCount": 8,
+          "args": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_set_reconnection_options",
+          "help": "Configure automatic reconnection (pass -1 to keep current values; enabled: 0=off, 1=on)",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_room_set_reconnection_options",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "colyseus_poll_event",
           "argCount": 0,
           "args": [],
@@ -1735,6 +1776,47 @@
           "hidden": false,
           "kind": 1,
           "name": "colyseus_room_is_connected",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_room_is_reconnecting",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_is_reconnecting",
+          "help": "Whether the room is currently inside an automatic reconnection cycle",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_room_is_reconnecting",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_room_set_reconnection_options",
+          "argCount": 8,
+          "args": [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_set_reconnection_options",
+          "help": "Configure automatic reconnection (pass -1 to keep current values; enabled: 0=off, 1=on)",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_room_set_reconnection_options",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2

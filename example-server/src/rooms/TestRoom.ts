@@ -72,6 +72,18 @@ export class TestRoom extends Room {
       player.items.push(new Item().assign({ name: "reset_a", value: 100 }));
       player.items.push(new Item().assign({ name: "reset_b", value: 200 }));
     },
+    // Used by reconnection tests in the native SDK: closes the underlying
+    // WebSocket with code 4010 (MAY_TRY_RECONNECT), which the client treats
+    // as a recoverable drop and starts retrying against allowReconnection.
+    force_drop: (client: Client) => {
+      client.leave(4010);
+    },
+    // Echo handler: replies with a "tagged_echo" message carrying the original
+    // payload. Reconnection tests use this to verify the post-reconnect flush
+    // delivered queued messages.
+    echo: (client: Client, message: any) => {
+      client.send("tagged_echo", message);
+    },
   }
 
   onCreate() {

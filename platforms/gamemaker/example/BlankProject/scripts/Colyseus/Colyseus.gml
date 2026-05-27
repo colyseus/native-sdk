@@ -17,6 +17,8 @@
 #macro COLYSEUS_EVENT_HTTP_ERROR      11
 #macro COLYSEUS_EVENT_INSTANCE_CHANGE 12
 #macro COLYSEUS_EVENT_COLLECTION_CHANGE 13
+#macro COLYSEUS_EVENT_ROOM_DROP        14
+#macro COLYSEUS_EVENT_ROOM_RECONNECT   15
 
 // Field type constants (matches colyseus_field_type_t)
 #macro COLYSEUS_TYPE_STRING   0
@@ -150,6 +152,25 @@ function colyseus_on_error(_room_ref, _handler) {
 function colyseus_on_leave(_room_ref, _handler) {
     var _entry = __colyseus_get_room_entry(_room_ref);
     _entry.on_leave = _handler;
+}
+
+/// @param {Real} _room_ref
+/// @param {Function} _handler  handler(code, reason)
+///   Fired when the WebSocket drops with a recoverable close code. The room
+///   will automatically attempt to reconnect; you can use this to show a
+///   "reconnecting…" UI.
+function colyseus_on_drop(_room_ref, _handler) {
+    var _entry = __colyseus_get_room_entry(_room_ref);
+    _entry.on_drop = _handler;
+}
+
+/// @param {Real} _room_ref
+/// @param {Function} _handler  handler()
+///   Fired when an automatic reconnection attempt succeeds. Any messages
+///   buffered while disconnected have already been flushed by this point.
+function colyseus_on_reconnect(_room_ref, _handler) {
+    var _entry = __colyseus_get_room_entry(_room_ref);
+    _entry.on_reconnect = _handler;
 }
 
 /// @param {Real} _room_ref
@@ -639,6 +660,21 @@ function colyseus_process() {
                         colyseus_event_get_code(),
                         colyseus_event_get_message()
                     );
+                }
+                break;
+
+            case COLYSEUS_EVENT_ROOM_DROP:
+                if (_entry != undefined && variable_struct_exists(_entry, "on_drop")) {
+                    _entry.on_drop(
+                        colyseus_event_get_code(),
+                        colyseus_event_get_message()
+                    );
+                }
+                break;
+
+            case COLYSEUS_EVENT_ROOM_RECONNECT:
+                if (_entry != undefined && variable_struct_exists(_entry, "on_reconnect")) {
+                    _entry.on_reconnect();
                 }
                 break;
 

@@ -193,6 +193,7 @@ pub fn build(b: *std.Build) void {
                 // Utils
                 "../../src/utils/strUtil.c",
                 "../../src/utils/sha1_c.c",
+                "../../src/utils/time.c",
                 // Auth
                 "../../src/auth/auth.c",
                 "../../src/auth/secure_storage.c",
@@ -406,6 +407,7 @@ pub fn build(b: *std.Build) void {
                 // Utils
                 "../../src/utils/strUtil.c",
                 "../../src/utils/sha1_c.c",
+                "../../src/utils/time.c",
                 // Auth
                 "../../src/auth/auth.c",
                 "../../src/auth/secure_storage.c",
@@ -663,10 +665,27 @@ pub fn build(b: *std.Build) void {
             } else {
                 const builtin = @import("builtin");
                 if (builtin.os.tag == .macos) {
-                    const sdk_path = "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";
-                    lib.root_module.addFrameworkPath(.{ .cwd_relative = sdk_path ++ "/System/Library/Frameworks" });
-                    lib.addSystemIncludePath(.{ .cwd_relative = sdk_path ++ "/usr/include" });
-                    lib.root_module.addLibraryPath(.{ .cwd_relative = sdk_path ++ "/usr/lib" });
+                    // Prefer the active SDK reported by `xcrun --show-sdk-path`
+                    // (full Xcode install or the Command Line Tools fallback).
+                    // Falling back to the hardcoded CLT path tickled framework
+                    // symbol resolution issues with the .tbd stubs in older
+                    // CLT SDKs.
+                    const sdk_path: []const u8 = blk: {
+                        const result = std.process.Child.run(.{
+                            .allocator = b.allocator,
+                            .argv = &.{ "xcrun", "--sdk", "macosx", "--show-sdk-path" },
+                        }) catch break :blk "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";
+                        defer b.allocator.free(result.stdout);
+                        defer b.allocator.free(result.stderr);
+                        if (result.term.Exited != 0 or result.stdout.len == 0) {
+                            break :blk "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";
+                        }
+                        const trimmed = std.mem.trimRight(u8, result.stdout, "\n\r");
+                        break :blk b.allocator.dupe(u8, trimmed) catch "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";
+                    };
+                    lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sdk_path}) });
+                    lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk_path}) });
+                    lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sdk_path}) });
                 }
             }
 
