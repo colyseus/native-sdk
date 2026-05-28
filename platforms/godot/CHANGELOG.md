@@ -2,6 +2,18 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.17.10
+
+### Fixed
+- GDScript schema parsing: `Room.set_state_type()` could crash (SIGTRAP/SIGSEGV) on Android release exports while reading `Field` objects. `parse_field_from_variant()` now reads `name`/`type`/`child_type` through a checked `Object.get()` helper and bails cleanly instead of operating on an unchecked/uninitialized Variant; it also drops a dead zero-argument `get()` call that built a Variant from a mismatched type. Reported by @pierroo in #23.
+- `PackedByteArray` message payloads were silently corrupted to all-zero bytes (of the correct length) in both directions:
+  - Encoding indexed a `Variant` cast directly to `PackedByteArray*`, so every byte read back as `0`. The concrete `PackedByteArray` is now extracted from the Variant before indexing.
+  - Decoding (`bin` → `PackedByteArray`) called `resize()` on a Variant copy but wrote the bytes into the original empty array, leaving every element `0`. Bytes are now written into the resized array, which is then returned.
+
+### Tests
+- `test_gdscript_schema.gd` — exercises `set_state_type()` with a user-defined GDScript schema covering every `Field` branch (STRING/NUMBER/BOOLEAN, MAP/ARRAY/REF + child types) and asserts the state decodes into the user's classes.
+- `test_msgpack_pba_roundtrip.gd` — echoes a `PackedByteArray` through the server (top-level, dict-nested, array-nested) and asserts the bytes survive the encode → decode round-trip intact.
+
 ## 0.17.9
 
 ### Added
