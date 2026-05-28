@@ -124,6 +124,7 @@ struct Constructors
     GDExtensionTypeFromVariantConstructorFunc int_from_variant_constructor;
     GDExtensionTypeFromVariantConstructorFunc float_from_variant_constructor;
     GDExtensionTypeFromVariantConstructorFunc string_name_from_variant_constructor;
+    GDExtensionTypeFromVariantConstructorFunc packed_byte_array_from_variant_constructor;
     GDExtensionPtrConstructor packed_byte_array_constructor;
     GDExtensionPtrConstructor dictionary_constructor;
     GDExtensionPtrConstructor array_constructor;

@@ -389,54 +389,33 @@ static bool encode_godot_string(EncoderBuffer* buf, const Variant* str_variant) 
 }
 
 static bool encode_packed_byte_array(EncoderBuffer* buf, const Variant* pba_variant) {
+    // Extract the concrete PackedByteArray from the Variant first. Indexing the
+    // Variant pointer directly (cast to PackedByteArray*) reads the wrong memory:
+    // operator_index_const returns NULL for every element, so the bytes encode as
+    // all zeros. We must build the real PackedByteArray and index that.
     PackedByteArray pba;
-    // Get PackedByteArray from variant using variant_call to get size
+    constructors.packed_byte_array_from_variant_constructor(&pba, pba_variant);
+
     int64_t size = get_array_size(pba_variant);
-    
     if (size <= 0) {
+        destructors.packed_byte_array_destructor(&pba);
         return encode_binary(buf, NULL, 0);
     }
-    
-    // Create temporary array to access bytes
-    // We need to extract PackedByteArray properly
-    GDExtensionTypeFromVariantConstructorFunc pba_from_variant = 
-        (GDExtensionTypeFromVariantConstructorFunc)constructors.array_from_variant_constructor;
-    
-    // Use packed byte array specific extraction
-    // First, get the size
+
     uint8_t* data = (uint8_t*)malloc((size_t)size);
-    if (!data) return false;
-    
-    // Extract bytes one by one using operator_index_const
-    // We need to convert variant to PackedByteArray first
-    // This is a bit awkward but necessary for the C API
-    
-    // Actually, let's use variant_call to get each byte
-    // Or better, we can directly access the packed byte array data
-    
-    // Create a local copy to work with
-    PackedByteArray local_pba;
-    constructors.packed_byte_array_constructor(&local_pba, NULL);
-    
-    // Copy from variant - use a different approach
-    // Get the internal data pointer directly
-    
-    // Actually we need to iterate or use a method
-    // Let's use the simpler approach: iterate with operator_index_const
-    
-    for (int64_t i = 0; i < size; i++) {
-        const uint8_t* byte_ptr = api.packed_byte_array_operator_index_const(
-            (const PackedByteArray*)pba_variant, (GDExtensionInt)i);
-        if (byte_ptr) {
-            data[i] = *byte_ptr;
-        } else {
-            data[i] = 0;
-        }
+    if (!data) {
+        destructors.packed_byte_array_destructor(&pba);
+        return false;
     }
-    
+
+    for (int64_t i = 0; i < size; i++) {
+        const uint8_t* byte_ptr = api.packed_byte_array_operator_index_const(&pba, (GDExtensionInt)i);
+        data[i] = byte_ptr ? *byte_ptr : 0;
+    }
+
     bool result = encode_binary(buf, data, (size_t)size);
     free(data);
-    
+    destructors.packed_byte_array_destructor(&pba);
     return result;
 }
 

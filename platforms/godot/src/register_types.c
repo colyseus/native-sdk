@@ -1569,7 +1569,8 @@ GDExtensionBool GDE_EXPORT colyseus_sdk_init(
     constructors.int_from_variant_constructor = get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_INT);
     constructors.float_from_variant_constructor = get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_FLOAT);
     constructors.string_name_from_variant_constructor = get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_STRING_NAME);
-    
+    constructors.packed_byte_array_from_variant_constructor = get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_PACKED_BYTE_ARRAY);
+
     // Get type constructors (index 0 = default constructor)
     GDExtensionInterfaceVariantGetPtrConstructor get_ptr_constructor = 
         (GDExtensionInterfaceVariantGetPtrConstructor)p_get_proc_address("variant_get_ptr_constructor");
