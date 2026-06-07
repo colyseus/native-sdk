@@ -68,9 +68,15 @@ static void ws_send_unreliable_impl(colyseus_transport_t* transport, const uint8
 static void ws_close_impl(colyseus_transport_t* transport, int code, const char* reason);
 static bool ws_is_open_impl(const colyseus_transport_t* transport);
 static void ws_destroy_impl(colyseus_transport_t* transport);
-static bool ws_tls_init(colyseus_ws_transport_data_t* data);
+static bool ws_tls_init(colyseus_ws_transport_data_t* data, const char** out_err);
 static void ws_tls_cleanup(colyseus_ws_transport_data_t* data);
-static bool ws_tls_handshake_tick(colyseus_ws_transport_data_t* data);
+
+/* ws_tls_handshake_tick result codes. Negative values are fatal and must close. */
+#define WS_TLS_HS_PENDING      0
+#define WS_TLS_HS_DONE         1
+#define WS_TLS_HS_FAILED      -1
+#define WS_TLS_HS_CERT_FAILED -2
+static int ws_tls_handshake_tick(colyseus_ws_transport_data_t* data);
 
 /* Internal functions */
 static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg);
@@ -382,8 +388,9 @@ static void ws_tick_once(colyseus_transport_t* transport) {
         if (ws_connect_tick(data)) {
             WS_LOG("TCP connected");
             if (data->use_tls) {
-                if (!ws_tls_init(data)) {
-                    ws_close_impl(transport, 1006, "TLS init failed");
+                const char* tls_err = "TLS init failed";
+                if (!ws_tls_init(data, &tls_err)) {
+                    ws_close_impl(transport, 1006, tls_err);
                     return;
                 }
                 data->state = COLYSEUS_WS_TLS_HANDSHAKE;
@@ -394,10 +401,17 @@ static void ws_tick_once(colyseus_transport_t* transport) {
         }
     }
     else if (data->state == COLYSEUS_WS_TLS_HANDSHAKE) {
-        if (ws_tls_handshake_tick(data)) {
+        int hs = ws_tls_handshake_tick(data);
+        if (hs == WS_TLS_HS_DONE) {
             WS_LOG("TLS handshake complete");
             data->state = COLYSEUS_WS_HANDSHAKE_SENDING;
             ws_http_handshake_init(data);
+        } else if (hs == WS_TLS_HS_CERT_FAILED) {
+            ws_close_impl(transport, 1015, "TLS certificate verification failed");
+            return;
+        } else if (hs == WS_TLS_HS_FAILED) {
+            ws_close_impl(transport, 1015, "TLS handshake failed");
+            return;
         }
     }
     else if (data->state == COLYSEUS_WS_HANDSHAKE_SENDING) {
@@ -937,9 +951,33 @@ static int tls_bio_recv(void* ctx, unsigned char* buf, size_t len) {
     return (int)ret;
 }
 
-static bool ws_tls_init(colyseus_ws_transport_data_t* data) {
+/* Parse one PEM CA source into the chain. mbedtls parses permissively and
+ * appends, so sources are additive. `pem` must be null-terminated with
+ * `pem_len` including the terminator. Returns 1 if at least one certificate was
+ * added, else 0 (empty/unparseable source — logged, non-fatal). */
+static int ws_tls_add_ca(mbedtls_x509_crt* chain, const unsigned char* pem,
+                         size_t pem_len, const char* source) {
+    if (!pem || pem_len == 0) return 0;
+
+    int ret = mbedtls_x509_crt_parse(chain, pem, pem_len);
+    if (ret < 0) {
+        WS_LOG("CA source '%s' failed to parse: -0x%04x", source, (unsigned int)(-ret));
+        return 0;
+    }
+    if (ret > 0) {
+        WS_LOG("CA source '%s' loaded (%d cert(s) skipped)", source, ret);
+    } else {
+        WS_LOG("CA source '%s' loaded", source);
+    }
+    return 1;
+}
+
+static bool ws_tls_init(colyseus_ws_transport_data_t* data, const char** out_err) {
     colyseus_tls_context_t* tls = malloc(sizeof(colyseus_tls_context_t));
-    if (!tls) return false;
+    if (!tls) {
+        if (out_err) *out_err = "TLS allocation failed";
+        return false;
+    }
     
     mbedtls_ssl_init(&tls->ssl);
     mbedtls_ssl_config_init(&tls->conf);
@@ -965,53 +1003,44 @@ static bool ws_tls_init(colyseus_ws_transport_data_t* data) {
         mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_NONE);
     } else {
         mbedtls_ssl_conf_authmode(&tls->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
-        
-        /* Load CA certificates with fallback chain:
-         * 1. System certificates (via Zig's rescan)
-         * 2. Bundled Mozilla CA certificates
-         * 3. Settings-provided certificates
-         */
-        const unsigned char* ca_pem = NULL;
-        size_t ca_pem_len = 0;
-        const char* ca_source = NULL;
-        
-        /* Try system certificates first */
+
+        /* Merge every available CA source into one trust chain rather than
+         * picking a single one. mbedtls appends and parses permissively, so the
+         * sources are additive. The bundled Mozilla set is always included as a
+         * device-independent baseline; the system store and any settings-
+         * provided override are layered on top for private/enterprise roots.
+         *
+         * The previous pick-one order let a device's system store shadow the
+         * bundled set (and aborted TLS entirely if that store failed to parse),
+         * which made Android release builds fail non-deterministically when the
+         * server's root was missing from the device store (#24). */
+        mbedtls_x509_crt_init(&tls->ca_chain);
+        tls->ca_chain_initialized = 1;
+
+        int sources = 0;
+
+        /* Bundled Mozilla CA — always present, deterministic baseline. */
+        sources += ws_tls_add_ca(&tls->ca_chain, colyseus_ca_bundle_pem,
+                                 colyseus_ca_bundle_pem_len, "bundled Mozilla CA");
+
+        /* System trust store — additive; picks up device/enterprise roots. */
         if (colyseus_system_certs_init()) {
-            ca_pem = colyseus_system_certs_get_pem();
-            ca_pem_len = colyseus_system_certs_get_pem_len();
-            ca_source = "system";
+            sources += ws_tls_add_ca(&tls->ca_chain, colyseus_system_certs_get_pem(),
+                                     colyseus_system_certs_get_pem_len(), "system");
         }
-        
-        /* Fall back to bundled certificates */
-        if (!ca_pem || ca_pem_len == 0) {
-            ca_pem = colyseus_ca_bundle_pem;
-            ca_pem_len = colyseus_ca_bundle_pem_len;
-            ca_source = "bundled Mozilla CA";
+
+        /* Explicit settings/override certificates — additive. */
+        sources += ws_tls_add_ca(&tls->ca_chain, data->ca_pem_data,
+                                 data->ca_pem_len, "settings");
+
+        if (sources == 0) {
+            WS_LOG("No CA certificates could be loaded - cannot verify TLS peer");
+            if (out_err) *out_err = "No CA certificates available for TLS verification";
+            ws_tls_cleanup(data);
+            return false;
         }
-        
-        /* Fall back to settings-provided certificates */
-        if ((!ca_pem || ca_pem_len == 0) && data->ca_pem_data && data->ca_pem_len > 0) {
-            ca_pem = data->ca_pem_data;
-            ca_pem_len = data->ca_pem_len;
-            ca_source = "settings";
-        }
-        
-        if (ca_pem && ca_pem_len > 0) {
-            mbedtls_x509_crt_init(&tls->ca_chain);
-            tls->ca_chain_initialized = 1;
-            
-            int ret = mbedtls_x509_crt_parse(&tls->ca_chain, ca_pem, ca_pem_len);
-            if (ret < 0) {
-                WS_LOG("Failed to parse CA certificates from %s: -0x%04x", ca_source, -ret);
-                ws_tls_cleanup(data);
-                return false;
-            }
-            
-            WS_LOG("Loaded CA certificates from %s (%d certs)", ca_source, ret == 0 ? 1 : ret);
-            mbedtls_ssl_conf_ca_chain(&tls->conf, &tls->ca_chain, NULL);
-        } else {
-            WS_LOG("No CA certificates available - verification will fail");
-        }
+
+        mbedtls_ssl_conf_ca_chain(&tls->conf, &tls->ca_chain, NULL);
     }
     
     mbedtls_ssl_conf_rng(&tls->conf, mbedtls_ctr_drbg_random, &tls->ctr_drbg);
@@ -1046,24 +1075,35 @@ static void ws_tls_cleanup(colyseus_ws_transport_data_t* data) {
     data->tls_ctx = NULL;
 }
 
-static bool ws_tls_handshake_tick(colyseus_ws_transport_data_t* data) {
-    if (!data->tls_ctx) return false;
-    
+/* Advance the TLS handshake. Returns one of WS_TLS_HS_*. A fatal result must be
+ * surfaced (close + on_close) rather than retried — the old code returned the
+ * same value for "want read/write" and fatal errors, so a verification failure
+ * spun the state machine forever instead of erroring. */
+static int ws_tls_handshake_tick(colyseus_ws_transport_data_t* data) {
+    if (!data->tls_ctx) return WS_TLS_HS_FAILED;
+
     colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
-    if (tls->handshake_done) return true;
-    
+    if (tls->handshake_done) return WS_TLS_HS_DONE;
+
     int ret = mbedtls_ssl_handshake(&tls->ssl);
-    
+
     if (ret == 0) {
         tls->handshake_done = 1;
-        return true;
+        return WS_TLS_HS_DONE;
     }
-    
-    if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-        return false;
+
+    if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+        return WS_TLS_HS_PENDING;
     }
-    
-    return false;
+
+    if (ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
+        uint32_t flags = mbedtls_ssl_get_verify_result(&tls->ssl);
+        WS_LOG("TLS certificate verification failed: flags=0x%08x", flags);
+        return WS_TLS_HS_CERT_FAILED;
+    }
+
+    WS_LOG("TLS handshake failed: -0x%04x", (unsigned int)(-ret));
+    return WS_TLS_HS_FAILED;
 }
 
 /* Public API wrapper for connecting with settings */

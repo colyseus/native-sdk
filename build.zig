@@ -727,6 +727,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_messages", .file = "tests/test_messages.zig", .description = "Run message types tests (requires server)" },
         .{ .name = "test_view_callbacks", .file = "tests/test_view_callbacks.zig", .description = "Run StateView callback tests (requires server)" },
         .{ .name = "test_reconnect", .file = "tests/test_reconnect.zig", .description = "Run automatic reconnection tests (requires server)" },
+        .{ .name = "test_tls", .file = "tests/test_tls.zig", .description = "Run WSS/TLS verification tests (requires wss echo server)" },
     };
 
     // Build each Zig test
@@ -737,7 +738,17 @@ pub fn build(b: *std.Build) void {
                 std.mem.eql(u8, test_file.name, "test_schema_callbacks") or
                 std.mem.eql(u8, test_file.name, "test_messages") or
                 std.mem.eql(u8, test_file.name, "test_view_callbacks") or
-                std.mem.eql(u8, test_file.name, "test_reconnect")))
+                std.mem.eql(u8, test_file.name, "test_reconnect") or
+                std.mem.eql(u8, test_file.name, "test_tls")))
+        {
+            continue;
+        }
+
+        // test_tls needs a self-signed wss echo-server fixture that isn't wired
+        // up on the Windows CI runner (Git-Bash openssl / process substitution).
+        // The TLS code is OS-agnostic and is exercised on Linux + macOS.
+        if (std.mem.eql(u8, test_file.name, "test_tls") and
+            target.result.os.tag == .windows)
         {
             continue;
         }

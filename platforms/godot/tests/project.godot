@@ -17,3 +17,10 @@ enabled=PackedStringArray("res://addons/gut/plugin.cfg")
 [gut]
 
 directory="res://test"
+
+[network]
+
+; Trust the self-signed test CA for the wss:// test (test_wss.gd). The cert is
+; generated on demand by tests/tls/gen-certs.sh into res://tls/ and is gitignored;
+; when absent the override load is a non-fatal no-op and other tests are unaffected.
+tls/certificate_bundle_override="res://tls/ca.pem"

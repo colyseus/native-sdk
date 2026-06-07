@@ -47,15 +47,26 @@ const colyseus_header_t = extern struct {
     hh: UT_hash_handle,
 };
 
+// Field layout must match colyseus_settings_t in include/colyseus/settings.h.
 const colyseus_settings_t = extern struct {
     server_address: [*c]u8,
     server_port: [*c]u8,
     use_secure_protocol: bool,
+    tls_skip_verification: bool,
     headers: ?*colyseus_header_t,
+    ca_pem_data: [*c]const u8,
+    ca_pem_len: usize,
 };
 
 // External C function declarations
 extern fn colyseus_settings_get_webrequest_endpoint(settings: *const colyseus_settings_t) [*c]u8;
+
+// Bundled Mozilla CA roots (src/certs/ca_bundle.c). These are C array symbols, so
+// the symbol address is the data itself — take &symbol rather than reading it as a
+// value. Used to give HTTPS matchmaking the same device-independent trust baseline
+// as the WSS transport (see ws_tls_init), instead of relying solely on the OS store.
+extern const colyseus_ca_bundle_pem: u8;
+extern const colyseus_ca_bundle_pem_len: usize;
 
 // Direct C free declaration - bypasses Zig's libc requirement check
 // For Android/iOS, libc is available at runtime but Zig can't provide it at build time
@@ -226,6 +237,62 @@ fn httpRequest(
     };
 }
 
+// base64 decoder that skips PEM line breaks/whitespace, matching std's Bundle parser.
+const pem_base64 = std.base64.standard.decoderWithIgnore(" \t\r\n");
+
+// Append every certificate in a PEM blob to an existing Certificate.Bundle. Mirrors
+// the marker-scanning loop in std.crypto.Certificate.Bundle.addCertsFromFile, but
+// reads from an in-memory slice (our CA roots are compiled-in / passed via settings,
+// not files). parseCert skips expired/duplicate/unrecognized certs internally.
+fn addCertsFromPem(cb: *std.crypto.Certificate.Bundle, gpa: Allocator, pem: []const u8) !void {
+    const begin_marker = "-----BEGIN CERTIFICATE-----";
+    const end_marker = "-----END CERTIFICATE-----";
+    const now_sec = std.time.timestamp();
+
+    var start_index: usize = 0;
+    while (std.mem.indexOfPos(u8, pem, start_index, begin_marker)) |begin_start| {
+        const cert_start = begin_start + begin_marker.len;
+        const cert_end = std.mem.indexOfPos(u8, pem, cert_start, end_marker) orelse
+            return error.MissingEndCertificateMarker;
+        start_index = cert_end + end_marker.len;
+
+        const encoded = std.mem.trim(u8, pem[cert_start..cert_end], " \t\r\n");
+        // base64 decodes to at most encoded.len bytes — a safe upper bound to reserve.
+        try cb.bytes.ensureUnusedCapacity(gpa, encoded.len);
+        const decoded_start: u32 = @intCast(cb.bytes.items.len);
+        const dest = cb.bytes.allocatedSlice()[decoded_start..];
+        cb.bytes.items.len += try pem_base64.decode(dest, encoded);
+        try cb.parseCert(gpa, decoded_start, now_sec);
+    }
+}
+
+// Populate the std.http.Client trust store to mirror the WSS transport: OS system
+// store (best-effort) + bundled Mozilla roots + any settings-provided override.
+// Without this, std.http only trusts the OS store, which is unreliable on Android
+// and can't honor certificate_bundle_override — so matchmaking HTTPS would fail
+// where the WSS connection (post-#24) succeeds.
+fn setupCaBundle(client: *http.Client, settings: *const colyseus_settings_t) void {
+    // System store first (rescan clears the bundle, so it must run before we add).
+    // Best-effort: on Android/missing-store this fails and we fall back to bundled.
+    client.ca_bundle.rescan(allocator) catch {};
+
+    const bundled_ptr: [*]const u8 = @ptrCast(&colyseus_ca_bundle_pem);
+    // Length includes the trailing NUL; drop it so the PEM scanner sees clean text.
+    const bundled_len = if (colyseus_ca_bundle_pem_len > 0) colyseus_ca_bundle_pem_len - 1 else 0;
+    addCertsFromPem(&client.ca_bundle, allocator, bundled_ptr[0..bundled_len]) catch |err|
+        std.log.warn("Failed to add bundled CA roots for HTTPS: {}", .{err});
+
+    if (settings.ca_pem_data != null and settings.ca_pem_len > 0) {
+        const override_len = if (settings.ca_pem_len > 0) settings.ca_pem_len - 1 else 0;
+        const override_pem = settings.ca_pem_data[0..override_len];
+        addCertsFromPem(&client.ca_bundle, allocator, override_pem) catch |err|
+            std.log.warn("Failed to add override CA for HTTPS: {}", .{err});
+    }
+
+    // We populated the bundle ourselves; stop fetch() from rescanning (which clears it).
+    client.next_https_rescan_certs = false;
+}
+
 fn httpRequestImpl(
     http_client: ?*colyseus_http_t,
     method: http.Method,
@@ -251,6 +318,12 @@ fn httpRequestImpl(
 
     var client: http.Client = .{ .allocator = allocator };
     defer client.deinit();
+
+    // Give HTTPS matchmaking the same trust roots as the WSS transport.
+    // Plain http:// never touches the CA bundle, so skip the setup cost there.
+    if (comptime !is_emscripten) {
+        if (h.settings.use_secure_protocol) setupCaBundle(&client, h.settings);
+    }
 
     var response_writer: std.Io.Writer.Allocating = .init(allocator);
     defer response_writer.deinit();
