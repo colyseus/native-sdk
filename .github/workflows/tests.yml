@@ -73,15 +73,21 @@ jobs:
           cat server.log
           exit 1
 
+      # test_tls / the wss echo server run on Linux + macOS only. The fixture's
+      # cert generation isn't reliable on the Windows Git-Bash runner, and the
+      # TLS code is OS-agnostic, so build.zig skips test_tls on Windows.
       - name: Generate TLS test certificates
+        if: runner.os != 'Windows'
         shell: bash
         run: bash tests/tls/gen-certs.sh
 
       - name: Start wss echo server
+        if: runner.os != 'Windows'
         shell: bash
         run: node tests/tls/wss-echo-server.mjs --port 2569 > wss.log 2>&1 &
 
       - name: Wait for wss echo server
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           for i in $(seq 1 30); do
@@ -102,6 +108,7 @@ jobs:
 
       - name: Print server logs
         if: always()
+        shell: bash
         run: |
           cat server.log || true
           cat wss.log || true

@@ -27,11 +27,16 @@ openssl req -newkey rsa:2048 -nodes \
   -keyout "$OUT_DIR/server.key" -out "$OUT_DIR/server.csr" \
   -subj "/CN=localhost" >/dev/null 2>&1
 
-# Sign server cert with the trusted CA, embedding the SAN.
+# Sign server cert with the trusted CA, embedding the SAN. Use a real temp file
+# for -extfile rather than process substitution <(...): the latter isn't usable
+# by the native openssl on the Windows Git-Bash runner.
+ext_file="$OUT_DIR/san.ext"
+printf '%s\n' "$san" > "$ext_file"
 openssl x509 -req -in "$OUT_DIR/server.csr" \
   -CA "$OUT_DIR/ca.pem" -CAkey "$OUT_DIR/ca.key" -CAcreateserial \
   -days "$DAYS" -out "$OUT_DIR/server.pem" \
-  -extfile <(printf '%s\n' "$san") >/dev/null 2>&1
+  -extfile "$ext_file" >/dev/null 2>&1
+rm -f "$ext_file"
 
 # A second, unrelated CA — trusted by nobody — for the negative test.
 openssl req -x509 -newkey rsa:2048 -nodes -days "$DAYS" \

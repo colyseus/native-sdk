@@ -744,6 +744,15 @@ pub fn build(b: *std.Build) void {
             continue;
         }
 
+        // test_tls needs a self-signed wss echo-server fixture that isn't wired
+        // up on the Windows CI runner (Git-Bash openssl / process substitution).
+        // The TLS code is OS-agnostic and is exercised on Linux + macOS.
+        if (std.mem.eql(u8, test_file.name, "test_tls") and
+            target.result.os.tag == .windows)
+        {
+            continue;
+        }
+
         const test_module = b.createModule(.{
             .root_source_file = b.path(test_file.file),
             .target = target,
