@@ -4,13 +4,19 @@ on:
   push:
     paths:
       - 'platforms/godot/**'
+      - 'src/**'
+      - 'include/**'
+      - 'third_party/**'
     branches:
       - main
   pull_request:
     paths:
       - 'platforms/godot/**'
+      - 'src/**'
+      - 'include/**'
+      - 'third_party/**'
   workflow_dispatch:
-
+  workflow_call:
 jobs:
   # Run test suite first (includes integration tests with example-server)
   test:

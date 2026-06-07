@@ -1,0 +1,24 @@
+
+// swift-tools-version: 5.9
+import PackageDescription
+
+let package = Package(
+    name: "ColyseusExample",
+    platforms: [
+        .macOS(.v13),
+        .iOS(.v15),
+    ],
+    dependencies: [
+        // Point at the local SDK package.
+        .package(path: ".."),
+    ],
+    targets: [
+        .executableTarget(
+            name: "ColyseusExample",
+            dependencies: [
+                .product(name: "Colyseus", package: "swift"),
+            ],
+            path: "ColyseusExample"
+        ),
+    ]
+)
