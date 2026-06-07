@@ -2,7 +2,7 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
-## 0.17.11-rc.1
+## 0.17.11
 
 ### Fixed
 - Android `wss://` connections could fail with a TLS certificate-bundle load failure on release builds — working for some devices/users and failing for others against the same endpoint. The SDK runs its own mbedTLS handshake and was picking a single CA source in priority order (system store → bundled Mozilla → settings override), so a device's system trust store could shadow the comprehensive bundled roots and abort TLS entirely if it lacked the server's root or failed to parse — hence the device-dependence. All available CA sources are now merged into one trust chain (bundled Mozilla roots always loaded as a device-independent baseline, with the system store and any override layered on top); TLS init only fails if the chain ends up empty. Reported by @pierroo in #24.
