@@ -37,7 +37,7 @@ void gdext_tls_certificates_init(void) {
         fflush(stdout);
 
         if (!load_certificates_from_godot_path(override_path)) {
-            fprintf(stderr, "[Colyseus] Failed to load certificate override; falling back to built-in CA roots\n");
+            fprintf(stderr, "[Colyseus] Failed to load certificate override; falling back to built-in CA roots (hint: copy a packed res:// asset to user:// first)\n");
             fflush(stderr);
         }
     }
