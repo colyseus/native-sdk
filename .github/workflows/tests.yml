@@ -73,10 +73,35 @@ jobs:
           cat server.log
           exit 1
 
+      - name: Generate TLS test certificates
+        shell: bash
+        run: bash tests/tls/gen-certs.sh
+
+      - name: Start wss echo server
+        shell: bash
+        run: node tests/tls/wss-echo-server.mjs --port 2569 > wss.log 2>&1 &
+
+      - name: Wait for wss echo server
+        shell: bash
+        run: |
+          for i in $(seq 1 30); do
+            if grep -q "listening" wss.log 2>/dev/null; then
+              echo "wss echo server is ready!"
+              exit 0
+            fi
+            echo "Waiting for wss echo server... ($i/30)"
+            sleep 1
+          done
+          echo "wss echo server failed to start"
+          cat wss.log
+          exit 1
+
       - name: Run tests
         timeout-minutes: 10
         run: zig build test
 
       - name: Print server logs
         if: always()
-        run: cat server.log || true
+        run: |
+          cat server.log || true
+          cat wss.log || true

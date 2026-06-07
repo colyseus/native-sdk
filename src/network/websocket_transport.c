@@ -70,7 +70,13 @@ static bool ws_is_open_impl(const colyseus_transport_t* transport);
 static void ws_destroy_impl(colyseus_transport_t* transport);
 static bool ws_tls_init(colyseus_ws_transport_data_t* data, const char** out_err);
 static void ws_tls_cleanup(colyseus_ws_transport_data_t* data);
-static bool ws_tls_handshake_tick(colyseus_ws_transport_data_t* data);
+
+/* ws_tls_handshake_tick result codes. Negative values are fatal and must close. */
+#define WS_TLS_HS_PENDING      0
+#define WS_TLS_HS_DONE         1
+#define WS_TLS_HS_FAILED      -1
+#define WS_TLS_HS_CERT_FAILED -2
+static int ws_tls_handshake_tick(colyseus_ws_transport_data_t* data);
 
 /* Internal functions */
 static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg);
@@ -395,10 +401,17 @@ static void ws_tick_once(colyseus_transport_t* transport) {
         }
     }
     else if (data->state == COLYSEUS_WS_TLS_HANDSHAKE) {
-        if (ws_tls_handshake_tick(data)) {
+        int hs = ws_tls_handshake_tick(data);
+        if (hs == WS_TLS_HS_DONE) {
             WS_LOG("TLS handshake complete");
             data->state = COLYSEUS_WS_HANDSHAKE_SENDING;
             ws_http_handshake_init(data);
+        } else if (hs == WS_TLS_HS_CERT_FAILED) {
+            ws_close_impl(transport, 1015, "TLS certificate verification failed");
+            return;
+        } else if (hs == WS_TLS_HS_FAILED) {
+            ws_close_impl(transport, 1015, "TLS handshake failed");
+            return;
         }
     }
     else if (data->state == COLYSEUS_WS_HANDSHAKE_SENDING) {
@@ -1062,24 +1075,35 @@ static void ws_tls_cleanup(colyseus_ws_transport_data_t* data) {
     data->tls_ctx = NULL;
 }
 
-static bool ws_tls_handshake_tick(colyseus_ws_transport_data_t* data) {
-    if (!data->tls_ctx) return false;
-    
+/* Advance the TLS handshake. Returns one of WS_TLS_HS_*. A fatal result must be
+ * surfaced (close + on_close) rather than retried — the old code returned the
+ * same value for "want read/write" and fatal errors, so a verification failure
+ * spun the state machine forever instead of erroring. */
+static int ws_tls_handshake_tick(colyseus_ws_transport_data_t* data) {
+    if (!data->tls_ctx) return WS_TLS_HS_FAILED;
+
     colyseus_tls_context_t* tls = (colyseus_tls_context_t*)data->tls_ctx;
-    if (tls->handshake_done) return true;
-    
+    if (tls->handshake_done) return WS_TLS_HS_DONE;
+
     int ret = mbedtls_ssl_handshake(&tls->ssl);
-    
+
     if (ret == 0) {
         tls->handshake_done = 1;
-        return true;
+        return WS_TLS_HS_DONE;
     }
-    
-    if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-        return false;
+
+    if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+        return WS_TLS_HS_PENDING;
     }
-    
-    return false;
+
+    if (ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
+        uint32_t flags = mbedtls_ssl_get_verify_result(&tls->ssl);
+        WS_LOG("TLS certificate verification failed: flags=0x%08x", flags);
+        return WS_TLS_HS_CERT_FAILED;
+    }
+
+    WS_LOG("TLS handshake failed: -0x%04x", (unsigned int)(-ret));
+    return WS_TLS_HS_FAILED;
 }
 
 /* Public API wrapper for connecting with settings */
