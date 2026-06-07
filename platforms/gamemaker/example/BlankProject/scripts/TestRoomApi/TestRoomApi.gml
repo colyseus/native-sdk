@@ -416,6 +416,111 @@ suite(function() {
             expect(global.__rt.turn_changed).toBeTruthy();
             expect(string_length(global.__rt.turn_value)).toBeGreaterThan(0);
         });
+
+    });
+
+    // =========================================================================
+    // Section 3b: Schema onChange Callbacks — targets test_room (TestRoom schema)
+    // =========================================================================
+    describe("Schema onChange Callbacks", function() {
+
+        beforeEach(function() {
+            test_drain_events();
+            global.__rt = { done: false, room: -1, client: -1, callbacks: -1 };
+            global.__rt.client = colyseus_client_create("http://127.0.0.1:2567");
+            global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "test_room", "{}");
+
+            global.__rt.done = false;
+            colyseus_on_join(global.__rt.room, function(_room) {
+                global.__rt.done = true;
+            });
+            test_poll_until(global.__rt, 5000);
+
+            global.__rt.callbacks = colyseus_callbacks_create(global.__rt.room);
+        });
+
+        afterEach(function() {
+            if (global.__rt.callbacks != -1) {
+                colyseus_callbacks_free(global.__rt.callbacks);
+                global.__rt.callbacks = -1;
+            }
+            if (global.__rt.room != -1) {
+                colyseus_room_leave(global.__rt.room);
+                var _start = current_time;
+                while (current_time - _start < 500) { colyseus_process(); }
+                colyseus_room_free(global.__rt.room);
+                global.__rt.room = -1;
+            }
+            if (global.__rt.client != -1) {
+                colyseus_client_free(global.__rt.client);
+                global.__rt.client = -1;
+            }
+            test_drain_events();
+        });
+
+        test("on_change (instance) fires when player property changes", function() {
+            global.__rt.instance_change_count = 0;
+            global.__rt.player_captured = false;
+            global.__rt.my_session = colyseus_room_get_session_id(global.__rt.room);
+
+            colyseus_on_add(global.__rt.callbacks, "players", function(_instance, _key) {
+                if (_key != global.__rt.my_session) exit;
+                if (global.__rt.player_captured) exit;
+                global.__rt.player_captured = true;
+                colyseus_on_change(global.__rt.callbacks, _instance, function() {
+                    global.__rt.instance_change_count += 1;
+                });
+            });
+
+            // Let on_add fire for the existing player and register the listener
+            var _start = current_time;
+            while (!global.__rt.player_captured && current_time - _start < 2000) {
+                colyseus_process();
+            }
+            expect(global.__rt.player_captured).toBeTruthy();
+
+            // Send a move → player x/y change should trigger instance onChange
+            colyseus_send(global.__rt.room, "move", { x: 42, y: 99 });
+
+            _start = current_time;
+            while (global.__rt.instance_change_count < 1 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            expect(global.__rt.instance_change_count).toBeGreaterThan(0);
+
+            // Second move → second fire
+            var _prev_count = global.__rt.instance_change_count;
+            colyseus_send(global.__rt.room, "move", { x: 10, y: 20 });
+            _start = current_time;
+            while (global.__rt.instance_change_count <= _prev_count && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            expect(global.__rt.instance_change_count).toBeGreaterThan(_prev_count);
+        });
+
+        test("on_change (collection) fires with key and value on players map", function() {
+            global.__rt.coll_change_count = 0;
+            global.__rt.coll_change_key = "";
+            global.__rt.coll_change_value = undefined;
+
+            colyseus_on_change(global.__rt.callbacks, "players", function(_key, _value) {
+                global.__rt.coll_change_count += 1;
+                global.__rt.coll_change_key = _key;
+                global.__rt.coll_change_value = _value;
+            });
+
+            // Trigger a collection change by adding a bot
+            colyseus_send(global.__rt.room, "add_bot", true);
+
+            var _start = current_time;
+            while (global.__rt.coll_change_count < 1 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+
+            expect(global.__rt.coll_change_count).toBeGreaterThan(0);
+            expect(string_length(global.__rt.coll_change_key)).toBeGreaterThan(0);
+            expect(is_struct(global.__rt.coll_change_value)).toBeTruthy();
+        });
     });
 
     // =========================================================================

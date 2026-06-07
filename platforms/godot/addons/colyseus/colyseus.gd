@@ -578,6 +578,8 @@ class Room extends RefCounted:
 	signal message_received(type: Variant, data: Variant)
 	signal error(code: int, message: String)
 	signal left(code: int, reason: String)
+	signal dropped(code: int, reason: String)
+	signal reconnected()
 
 	var _native
 
@@ -588,12 +590,14 @@ class Room extends RefCounted:
 		_native.message_received.connect(func(type, data): message_received.emit(type, data))
 		_native.error.connect(func(code, msg): error.emit(code, msg))
 		_native.left.connect(func(code, reason): left.emit(code, reason))
+		_native.dropped.connect(func(code, reason): dropped.emit(code, reason))
+		_native.reconnected.connect(func(): reconnected.emit())
 
 	func send_message(type, data = null):
-		if data == null:
-			_native.send_message(type)
-		else:
-			_native.send_message(type, data)
+		# Native method is registered with two required args (type, data) and
+		# decoded via call_vararg; always pass both, using a null variant for
+		# empty payloads.
+		_native.send_message(type, data)
 
 	func leave() -> void:
 		_native.leave()
@@ -609,6 +613,17 @@ class Room extends RefCounted:
 
 	var connected: bool:
 		get: return _native.is_connected()
+
+	var reconnecting: bool:
+		get: return _native.is_reconnecting()
+
+	## Tune automatic reconnection. Pass any subset of the following keys:
+	##   enabled: bool, max_retries: int, min_delay_ms: int, max_delay_ms: int,
+	##   min_uptime_ms: int, delay_ms: int, max_enqueued_messages: int.
+	## Omitted keys keep their current value. Defaults match the @colyseus/sdk
+	## TypeScript SDK.
+	func set_reconnection_options(options: Dictionary) -> void:
+		_native.set_reconnection_options(options)
 
 	func get_state() -> Variant:
 		return _native.get_state()

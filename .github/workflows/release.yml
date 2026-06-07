@@ -173,12 +173,16 @@ jobs:
 
       - name: Package source code
         run: |
-          tar -czvf colyseus-source-${{ steps.version.outputs.version }}.tar.gz \
+          # Write the archive to the parent directory so tar doesn't see
+          # its own output file (or the directory's mtime change) while
+          # reading "." — that triggers "file changed as we read it".
+          tar -czf "${RUNNER_TEMP}/colyseus-source-${{ steps.version.outputs.version }}.tar.gz" \
             --exclude=platforms \
             --exclude=example-server \
             --exclude=.git \
             --exclude='*.tar.gz' \
             .
+          mv "${RUNNER_TEMP}/colyseus-source-${{ steps.version.outputs.version }}.tar.gz" .
 
       - name: Package all-targets bundle
         run: |

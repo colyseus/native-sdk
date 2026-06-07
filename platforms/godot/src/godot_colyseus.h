@@ -124,6 +124,7 @@ struct Constructors
     GDExtensionTypeFromVariantConstructorFunc int_from_variant_constructor;
     GDExtensionTypeFromVariantConstructorFunc float_from_variant_constructor;
     GDExtensionTypeFromVariantConstructorFunc string_name_from_variant_constructor;
+    GDExtensionTypeFromVariantConstructorFunc packed_byte_array_from_variant_constructor;
     GDExtensionPtrConstructor packed_byte_array_constructor;
     GDExtensionPtrConstructor dictionary_constructor;
     GDExtensionPtrConstructor array_constructor;
@@ -282,6 +283,8 @@ void gdext_colyseus_room_get_id(void* p_method_userdata, GDExtensionClassInstanc
 void gdext_colyseus_room_get_session_id(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 void gdext_colyseus_room_get_name(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 void gdext_colyseus_room_is_connected(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_room_is_reconnecting(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+void gdext_colyseus_room_set_reconnection_options(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 
 // get_state() - returns current state as Dictionary (uses ptrcall signature like other methods)
 void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);

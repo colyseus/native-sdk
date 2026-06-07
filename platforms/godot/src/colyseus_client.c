@@ -39,6 +39,8 @@ typedef enum {
     ROOM_EVENT_ERROR,
     ROOM_EVENT_LEAVE,
     ROOM_EVENT_MESSAGE,
+    ROOM_EVENT_DROP,
+    ROOM_EVENT_RECONNECT,
 } gdext_room_event_type_t;
 
 typedef struct gdext_room_event {
@@ -415,6 +417,30 @@ static void on_room_leave(int code, const char* reason, void* userdata) {
     room_event_push(event);
 }
 
+static void on_room_drop(int code, const char* reason, void* userdata) {
+    ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
+    if (!room_wrapper || !room_wrapper->godot_object) return;
+
+    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
+    if (!event) return;
+    event->type = ROOM_EVENT_DROP;
+    event->room_object = room_wrapper->godot_object;
+    event->code = code;
+    event->str_data = reason ? strdup(reason) : strdup("");
+    room_event_push(event);
+}
+
+static void on_room_reconnect(void* userdata) {
+    ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
+    if (!room_wrapper || !room_wrapper->godot_object) return;
+
+    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
+    if (!event) return;
+    event->type = ROOM_EVENT_RECONNECT;
+    event->room_object = room_wrapper->godot_object;
+    room_event_push(event);
+}
+
 // Matchmaking success callback (shared by all matchmaking methods)
 static void on_matchmaking_success(colyseus_room_t* room, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
@@ -433,6 +459,8 @@ static void on_matchmaking_success(colyseus_room_t* room, void* userdata) {
     colyseus_room_on_state_change(room, on_room_state_change, room_wrapper);
     colyseus_room_on_error(room, on_room_error, room_wrapper);
     colyseus_room_on_leave(room, on_room_leave, room_wrapper);
+    colyseus_room_on_drop(room, on_room_drop, room_wrapper);
+    colyseus_room_on_reconnect(room, on_room_reconnect, room_wrapper);
     colyseus_room_on_message_any_with_type_encoded(room, on_room_message_with_type, room_wrapper);
 }
 
@@ -1007,6 +1035,28 @@ void gdext_room_process_events(void) {
                 destructors.variant_destroy(&reason_variant);
                 break;
             }
+
+            case ROOM_EVENT_DROP: {
+                int64_t code = event->code;
+                Variant code_variant;
+                constructors.variant_from_int_constructor(&code_variant, &code);
+                String reason;
+                string_from_c_str(&reason, event->str_data ? event->str_data : "");
+                Variant reason_variant;
+                constructors.variant_from_string_constructor(&reason_variant, &reason);
+
+                GDExtensionConstVariantPtr args[2] = { &code_variant, &reason_variant };
+                emit_signal_direct(event->room_object, "dropped", args, 2);
+
+                destructors.variant_destroy(&code_variant);
+                destructors.string_destructor(&reason);
+                destructors.variant_destroy(&reason_variant);
+                break;
+            }
+
+            case ROOM_EVENT_RECONNECT:
+                emit_signal_direct(event->room_object, "reconnected", NULL, 0);
+                break;
 
             case ROOM_EVENT_MESSAGE: {
                 // Decode msgpack on main thread

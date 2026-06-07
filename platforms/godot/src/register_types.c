@@ -1017,9 +1017,11 @@ static void register_colyseus_room(void) {
     // Register signals using helper functions
     bind_signal_0("_ColyseusRoom", "joined");
     bind_signal_0("_ColyseusRoom", "state_changed");
+    bind_signal_0("_ColyseusRoom", "reconnected");
     bind_signal_2("_ColyseusRoom", "message_received", "type", GDEXTENSION_VARIANT_TYPE_NIL, "data", GDEXTENSION_VARIANT_TYPE_NIL);
     bind_signal_2("_ColyseusRoom", "error", "code", GDEXTENSION_VARIANT_TYPE_INT, "message", GDEXTENSION_VARIANT_TYPE_STRING);
     bind_signal_2("_ColyseusRoom", "left", "code", GDEXTENSION_VARIANT_TYPE_INT, "reason", GDEXTENSION_VARIANT_TYPE_STRING);
+    bind_signal_2("_ColyseusRoom", "dropped", "code", GDEXTENSION_VARIANT_TYPE_INT, "reason", GDEXTENSION_VARIANT_TYPE_STRING);
 
     // Register send_message methods using vararg interface (accepts any Variant type for data)
     {
@@ -1135,6 +1137,51 @@ static void register_colyseus_room(void) {
         gdext_colyseus_room_is_connected,
         GDEXTENSION_VARIANT_TYPE_BOOL
     );
+
+    bind_method_0_with_ret(
+        "_ColyseusRoom",
+        "is_reconnecting",
+        gdext_colyseus_room_is_reconnecting,
+        GDEXTENSION_VARIANT_TYPE_BOOL
+    );
+
+    // set_reconnection_options(options: Dictionary) — vararg to accept Dictionary
+    {
+        StringName method_name_string;
+        constructors.string_name_new_with_latin1_chars(&method_name_string, "set_reconnection_options", false);
+
+        GDExtensionPropertyInfo args_info[] = {
+            make_property(GDEXTENSION_VARIANT_TYPE_DICTIONARY, "options"),
+        };
+        GDExtensionClassMethodArgumentMetadata args_metadata[] = {
+            GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+        };
+
+        GDExtensionClassMethodInfo method_info = {
+            .name = &method_name_string,
+            .method_userdata = (void*)gdext_colyseus_room_set_reconnection_options,
+            .call_func = call_vararg,
+            .ptrcall_func = NULL,
+            .method_flags = GDEXTENSION_METHOD_FLAG_NORMAL,
+            .has_return_value = false,
+            .return_value_info = NULL,
+            .return_value_metadata = GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+            .argument_count = 1,
+            .arguments_info = args_info,
+            .arguments_metadata = args_metadata,
+            .default_argument_count = 0,
+            .default_arguments = NULL
+        };
+
+        StringName class_name_string;
+        constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusRoom", false);
+
+        api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
+
+        destructors.string_name_destructor(&method_name_string);
+        destructors.string_name_destructor(&class_name_string);
+        destruct_property(&args_info[0]);
+    }
 
     // get_state - returns Dictionary with current state
     // Uses bind_method_0_with_ret like other working methods (is_connected, get_id, etc.)
@@ -1522,7 +1569,8 @@ GDExtensionBool GDE_EXPORT colyseus_sdk_init(
     constructors.int_from_variant_constructor = get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_INT);
     constructors.float_from_variant_constructor = get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_FLOAT);
     constructors.string_name_from_variant_constructor = get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_STRING_NAME);
-    
+    constructors.packed_byte_array_from_variant_constructor = get_variant_to_type_constructor(GDEXTENSION_VARIANT_TYPE_PACKED_BYTE_ARRAY);
+
     // Get type constructors (index 0 = default constructor)
     GDExtensionInterfaceVariantGetPtrConstructor get_ptr_constructor = 
         (GDExtensionInterfaceVariantGetPtrConstructor)p_get_proc_address("variant_get_ptr_constructor");

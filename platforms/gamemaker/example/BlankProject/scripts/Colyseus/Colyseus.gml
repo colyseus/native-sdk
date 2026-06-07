@@ -15,6 +15,10 @@
 #macro COLYSEUS_EVENT_ITEM_REMOVE     9
 #macro COLYSEUS_EVENT_HTTP_RESPONSE   10
 #macro COLYSEUS_EVENT_HTTP_ERROR      11
+#macro COLYSEUS_EVENT_INSTANCE_CHANGE 12
+#macro COLYSEUS_EVENT_COLLECTION_CHANGE 13
+#macro COLYSEUS_EVENT_ROOM_DROP        14
+#macro COLYSEUS_EVENT_ROOM_RECONNECT   15
 
 // Field type constants (matches colyseus_field_type_t)
 #macro COLYSEUS_TYPE_STRING   0
@@ -151,6 +155,25 @@ function colyseus_on_leave(_room_ref, _handler) {
 }
 
 /// @param {Real} _room_ref
+/// @param {Function} _handler  handler(code, reason)
+///   Fired when the WebSocket drops with a recoverable close code. The room
+///   will automatically attempt to reconnect; you can use this to show a
+///   "reconnecting…" UI.
+function colyseus_on_drop(_room_ref, _handler) {
+    var _entry = __colyseus_get_room_entry(_room_ref);
+    _entry.on_drop = _handler;
+}
+
+/// @param {Real} _room_ref
+/// @param {Function} _handler  handler()
+///   Fired when an automatic reconnection attempt succeeds. Any messages
+///   buffered while disconnected have already been flushed by this point.
+function colyseus_on_reconnect(_room_ref, _handler) {
+    var _entry = __colyseus_get_room_entry(_room_ref);
+    _entry.on_reconnect = _handler;
+}
+
+/// @param {Real} _room_ref
 /// @param {Function} _handler  handler(room_ref, type_string, data)
 ///   data is auto-decoded: struct for maps, string/number/bool for primitives, undefined for nil/binary.
 function colyseus_on_message(_room_ref, _handler) {
@@ -221,6 +244,32 @@ function colyseus_on_remove(_callbacks, _instance_or_property, _property_or_hand
     } else {
         var _inst = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
         var _handle = colyseus_callbacks_on_remove(_callbacks, _inst, _property_or_handler);
+    }
+    if (_handle >= 0) {
+        global.__colyseus_schema_handlers[_handle] = _handler;
+    }
+    return _handle;
+}
+
+/// Listen for changes on a schema instance or collection.
+/// Usage: colyseus_on_change(callbacks, instance, handler)          — instance onChange: handler()
+///        colyseus_on_change(callbacks, "field", handler)           — collection onChange on root: handler(key, value)
+///        colyseus_on_change(callbacks, instance, "field", handler) — collection onChange on child: handler(key, value)
+function colyseus_on_change(_callbacks, _instance_or_property, _property_or_handler, _handler = undefined) {
+    var _handle;
+    if (is_string(_instance_or_property)) {
+        // Collection on root: (callbacks, "field", handler)
+        _handler = _property_or_handler;
+        _handle = colyseus_callbacks_on_change_collection(_callbacks, 0, _instance_or_property);
+    } else if (is_string(_property_or_handler)) {
+        // Collection on child: (callbacks, instance, "field", handler)
+        var _inst = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        _handle = colyseus_callbacks_on_change_collection(_callbacks, _inst, _property_or_handler);
+    } else {
+        // Instance onChange: (callbacks, instance, handler)
+        var _inst = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        _handler = _property_or_handler;
+        _handle = colyseus_callbacks_on_change_instance(_callbacks, _inst);
     }
     if (_handle >= 0) {
         global.__colyseus_schema_handlers[_handle] = _handler;
@@ -614,6 +663,21 @@ function colyseus_process() {
                 }
                 break;
 
+            case COLYSEUS_EVENT_ROOM_DROP:
+                if (_entry != undefined && variable_struct_exists(_entry, "on_drop")) {
+                    _entry.on_drop(
+                        colyseus_event_get_code(),
+                        colyseus_event_get_message()
+                    );
+                }
+                break;
+
+            case COLYSEUS_EVENT_ROOM_RECONNECT:
+                if (_entry != undefined && variable_struct_exists(_entry, "on_reconnect")) {
+                    _entry.on_reconnect();
+                }
+                break;
+
             case COLYSEUS_EVENT_PROPERTY_CHANGE:
                 var _cb = colyseus_event_get_callback_handle();
                 var _handler = global.__colyseus_schema_handlers[_cb];
@@ -674,6 +738,26 @@ function colyseus_process() {
                     if (_ref != 0 && ds_map_exists(global.__colyseus_schema_structs, _ref)) {
                         ds_map_delete(global.__colyseus_schema_structs, _ref);
                     }
+                }
+                break;
+
+            case COLYSEUS_EVENT_INSTANCE_CHANGE:
+                var _cb = colyseus_event_get_callback_handle();
+                var _handler = global.__colyseus_schema_handlers[_cb];
+                if (_handler != undefined) {
+                    _handler();
+                }
+                break;
+
+            case COLYSEUS_EVENT_COLLECTION_CHANGE:
+                var _cb = colyseus_event_get_callback_handle();
+                var _handler = global.__colyseus_schema_handlers[_cb];
+                if (_handler != undefined) {
+                    var _ref = colyseus_event_get_instance();
+                    _handler(
+                        colyseus_event_get_key_string(),
+                        (_ref != 0) ? __colyseus_schema_to_struct(_ref) : _ref
+                    );
                 }
                 break;
 

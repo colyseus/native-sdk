@@ -919,24 +919,31 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
         /* Find index of item */
         index = array_find_index_by_ref(arr, item_by_ref);
 
+        /*
+         * Always emit the DELETE change — matches the TS reference decoder,
+         * which uses refs.get(refId) as previousValue and does not gate the
+         * change on the index lookup. If an earlier ADD_BY_REFID in the same
+         * bundle overwrote item->value, array_find_index_by_ref returns -1;
+         * we still need to fire onRemove so the user sees the deletion.
+         */
         if (index >= 0) {
             colyseus_array_schema_delete(arr, index);
-
-            int* idx_ptr = malloc(sizeof(int));
-            if (idx_ptr) *idx_ptr = index;
-
-            colyseus_data_change_t change = {
-                .ref_id = arr->__refId,
-                .op = (uint8_t)COLYSEUS_OP_DELETE,
-                .field = NULL,
-                .dynamic_index = idx_ptr,
-                .value = NULL,
-                .previous_value = item_by_ref,
-                .field_type = arr->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
-                .owns_previous_value = false
-            };
-            colyseus_changes_add(decoder->changes, &change);
         }
+
+        int* idx_ptr = malloc(sizeof(int));
+        if (idx_ptr) *idx_ptr = index;
+
+        colyseus_data_change_t change = {
+            .ref_id = arr->__refId,
+            .op = (uint8_t)COLYSEUS_OP_DELETE,
+            .field = NULL,
+            .dynamic_index = idx_ptr,
+            .value = NULL,
+            .previous_value = item_by_ref,
+            .field_type = arr->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
+            .owns_previous_value = false
+        };
+        colyseus_changes_add(decoder->changes, &change);
         return true;
     }
 
@@ -1013,6 +1020,7 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
     }
 
     int ref_id = 0;
+    int previous_ref_id = 0;
     void* _ref = decoder->state;
     decode_ref_type_t current_ref_type = DECODE_REF_SCHEMA;
 
@@ -1031,9 +1039,26 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
 
             _ref = colyseus_ref_tracker_get(decoder->refs, ref_id);
             if (!_ref) {
-                /* refId not in tracker - might be from stale message during cleanup */
-                return;
+                fprintf(stderr, "colyseus-schema: \"refId\" not found: %d (previous refId: %d)\n",
+                    ref_id, previous_ref_id);
+
+                /* Skip to next SWITCH_TO_STRUCTURE with a known refId.
+                 * Must validate the refId after each 0xFF marker to avoid
+                 * false matches on data bytes that happen to be 0xFF. */
+                while (it->offset < (int)length) {
+                    if (colyseus_decode_switch_check(bytes, it)) {
+                        colyseus_iterator_t peek = { .offset = it->offset + 1 };
+                        int potential_ref = colyseus_decode_varint(bytes, &peek);
+                        if (colyseus_ref_tracker_has(decoder->refs, potential_ref)) {
+                            break;
+                        }
+                    }
+                    it->offset++;
+                }
+                continue;
             }
+
+            previous_ref_id = ref_id;
 
             current_ref_type = get_ref_type(decoder, ref_id);
             continue;

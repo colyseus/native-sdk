@@ -28,6 +28,8 @@ typedef enum {
     GM_EVENT_CLIENT_ERROR = 6,
     GM_EVENT_HTTP_RESPONSE = 10,
     GM_EVENT_HTTP_ERROR = 11,
+    GM_EVENT_ROOM_DROP = 14,
+    GM_EVENT_ROOM_RECONNECT = 15,
 } gm_event_type_t;
 
 // =============================================================================
@@ -160,6 +162,30 @@ GM_EXPORT const char* colyseus_gm_room_get_name(double room_handle);
  * @return 1.0 if connected, 0.0 otherwise
  */
 GM_EXPORT double colyseus_gm_room_is_connected(double room_handle);
+
+/**
+ * Whether the room is currently inside an automatic reconnection cycle
+ * (after a recoverable drop, before the worker has given up or succeeded).
+ * @param room_handle Room handle
+ * @return 1.0 if reconnecting, 0.0 otherwise
+ */
+GM_EXPORT double colyseus_gm_room_is_reconnecting(double room_handle);
+
+/**
+ * Configure automatic reconnection. Pass -1 for any parameter to keep its
+ * current value; for `enabled`, 0 disables and 1 enables. Defaults match
+ * the @colyseus/sdk TypeScript SDK (enabled=1, max_retries=15,
+ * min_delay_ms=100, max_delay_ms=5000, min_uptime_ms=5000, delay_ms=100,
+ * max_enqueued_messages=10).
+ */
+GM_EXPORT void colyseus_gm_room_set_reconnection_options(double room_handle,
+    double enabled,
+    double max_retries,
+    double min_delay_ms,
+    double max_delay_ms,
+    double min_uptime_ms,
+    double delay_ms,
+    double max_enqueued_messages);
 
 // =============================================================================
 // Event Polling Functions

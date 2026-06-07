@@ -298,16 +298,14 @@ static colyseus_dynamic_vtable_t* build_vtable_from_reflection_type(
     if (ref_type->fields) {
         colyseus_array_item_t* field_item = ref_type->fields->items;
         
-        printf("[Reflection] Processing type %d with %d fields\n", type_id, ref_type->fields->count);
-        fflush(stdout);
-        
+        fprintf(stderr, "[Reflection] Processing type %d with %d fields\n", type_id, ref_type->fields->count);
+
         while (field_item) {
             reflection_field_t* ref_field = (reflection_field_t*)field_item->value;
-            printf("[Reflection]   field_item index=%d, name=%s, type=%s\n", 
-                field_item->index, 
-                ref_field && ref_field->name ? ref_field->name : "(null)", 
+            fprintf(stderr, "[Reflection]   field_item index=%d, name=%s, type=%s\n",
+                field_item->index,
+                ref_field && ref_field->name ? ref_field->name : "(null)",
                 ref_field && ref_field->type ? ref_field->type : "(null)");
-            fflush(stdout);
             if (ref_field && ref_field->name && ref_field->type) {
                 colyseus_field_type_t field_type = colyseus_field_type_from_string(ref_field->type);
                 
@@ -344,9 +342,8 @@ static colyseus_dynamic_vtable_t* build_vtable_from_reflection_type(
                     }
                     
                     colyseus_dynamic_vtable_add_field(vtable, dyn_field);
-                    printf("[Reflection]   Added field '%s' at index %d, type=%s\n", 
+                    fprintf(stderr, "[Reflection]   Added field '%s' at index %d, type=%s\n",
                         ref_field->name, field_index, ref_field->type);
-                    fflush(stdout);
                 }
             }
             field_item = field_item->next;

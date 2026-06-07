@@ -67,6 +67,25 @@ static int64_t get_array_size_from_variant(Variant* arr_variant) {
     return size;
 }
 
+/* Helper to read a named property off an object Variant via Object.get(name).
+ * Returns true and fills *out_value on success; on failure returns false and the
+ * caller must NOT read or destroy *out_value (mirrors get_array_element_at). */
+static bool get_variant_property(Variant* object_variant, const char* property_name, Variant* out_value) {
+    String property_string;
+    constructors.string_new_with_utf8_chars(&property_string, property_name);
+
+    Variant property_variant;
+    constructors.variant_from_string_constructor(&property_variant, &property_string);
+
+    GDExtensionConstVariantPtr args[1] = { &property_variant };
+    bool success = variant_call_method(object_variant, "get", args, 1, out_value);
+
+    destructors.variant_destroy(&property_variant);
+    destructors.string_destructor(&property_string);
+
+    return success;
+}
+
 /* Helper to get array element at index */
 static bool get_array_element_at(Variant* arr_variant, int64_t index, Variant* out_element) {
     Variant index_variant;
@@ -90,110 +109,72 @@ static bool get_array_element_at(Variant* arr_variant, int64_t index, Variant* o
 static colyseus_dynamic_field_t* parse_field_from_variant(Variant* field_variant, int field_index,
     gdscript_schema_context_t** child_contexts, int* child_context_count) {
     
-    /* Get field.name */
-    Variant name_variant;
-    if (!variant_call_method(field_variant, "get", NULL, 0, &name_variant)) {
-        /* Try accessing property directly */
-        StringName name_prop;
-        create_string_name(&name_prop, "name");
-        
-        GDExtensionConstVariantPtr args[1] = { NULL };
-        Variant prop_name_variant;
-        constructors.variant_from_string_constructor(&prop_name_variant, &name_prop);
-        args[0] = &prop_name_variant;
-        
-        if (!variant_call_method(field_variant, "get", args, 1, &name_variant)) {
-            /* Fallback: assume it's directly accessible */
-        }
-        destructors.variant_destroy(&prop_name_variant);
-        destructors.string_name_destructor(&name_prop);
-    }
-    
-    /* Actually, for GDScript objects, we need to use the property access pattern */
-    /* Let's use variant_call to call the getter for "name" property */
-    
-    /* Access 'name' property */
-    String name_str_prop;
-    constructors.string_new_with_utf8_chars(&name_str_prop, "name");
-    Variant name_prop_variant;
-    constructors.variant_from_string_constructor(&name_prop_variant, &name_str_prop);
-    
-    GDExtensionConstVariantPtr name_args[1] = { &name_prop_variant };
+    /* Read required 'name' property. Bail cleanly (rather than operate on an
+     * unchecked/uninitialized Variant) if it cannot be read — this is what
+     * tripped Android release builds during Room.set_state_type(). */
     Variant field_name_variant;
-    variant_call_method(field_variant, "get", name_args, 1, &field_name_variant);
-    
+    if (!get_variant_property(field_variant, "name", &field_name_variant)) {
+        fprintf(stderr, "[colyseus] schema field %d: could not read 'name'; skipping\n", field_index);
+        return NULL;
+    }
     char* field_name = variant_to_cstr(&field_name_variant);
     destructors.variant_destroy(&field_name_variant);
-    destructors.variant_destroy(&name_prop_variant);
-    destructors.string_destructor(&name_str_prop);
-    
-    /* Access 'type' property */
-    String type_str_prop;
-    constructors.string_new_with_utf8_chars(&type_str_prop, "type");
-    Variant type_prop_variant;
-    constructors.variant_from_string_constructor(&type_prop_variant, &type_str_prop);
-    
-    GDExtensionConstVariantPtr type_args[1] = { &type_prop_variant };
+
+    /* Read required 'type' property */
     Variant field_type_variant;
-    variant_call_method(field_variant, "get", type_args, 1, &field_type_variant);
-    
+    if (!get_variant_property(field_variant, "type", &field_type_variant)) {
+        fprintf(stderr, "[colyseus] schema field '%s': could not read 'type'; skipping\n", field_name);
+        free(field_name);
+        return NULL;
+    }
     char* field_type_str = variant_to_cstr(&field_type_variant);
     destructors.variant_destroy(&field_type_variant);
-    destructors.variant_destroy(&type_prop_variant);
-    destructors.string_destructor(&type_str_prop);
-    
+
     /* Determine the field type enum */
     colyseus_field_type_t field_type = colyseus_field_type_from_string(field_type_str);
-    
+
     /* Create the dynamic field */
     colyseus_dynamic_field_t* field = colyseus_dynamic_field_create(
         field_index, field_name, field_type, field_type_str);
-    
-    /* For collection types (map/array) or ref, check for child_type */
-    if (field_type == COLYSEUS_FIELD_MAP || field_type == COLYSEUS_FIELD_ARRAY || 
+
+    /* For collection types (map/array) or ref, read the optional 'child_type'.
+     * Only inspect/destroy the returned Variant if the read actually succeeded. */
+    if (field_type == COLYSEUS_FIELD_MAP || field_type == COLYSEUS_FIELD_ARRAY ||
         field_type == COLYSEUS_FIELD_REF) {
-        
-        String child_str_prop;
-        constructors.string_new_with_utf8_chars(&child_str_prop, "child_type");
-        Variant child_prop_variant;
-        constructors.variant_from_string_constructor(&child_prop_variant, &child_str_prop);
-        
-        GDExtensionConstVariantPtr child_args[1] = { &child_prop_variant };
+
         Variant child_type_variant;
-        variant_call_method(field_variant, "get", child_args, 1, &child_type_variant);
-        
-        GDExtensionVariantType child_variant_type = api.variant_get_type(&child_type_variant);
-        
-        if (child_variant_type == GDEXTENSION_VARIANT_TYPE_OBJECT) {
-            /* Child type is a GDScript class - parse it recursively */
-            gdscript_schema_context_t* child_ctx = gdscript_schema_context_create(&child_type_variant);
-            if (child_ctx && child_ctx->vtable) {
-                field->child_vtable = child_ctx->vtable;
-                
-                /* Store child context for cleanup */
-                if (child_contexts && child_context_count) {
-                    *child_contexts = realloc(*child_contexts, 
-                        (*child_context_count + 1) * sizeof(gdscript_schema_context_t));
-                    if (*child_contexts) {
-                        (*child_contexts)[*child_context_count] = *child_ctx;
-                        (*child_context_count)++;
+        if (get_variant_property(field_variant, "child_type", &child_type_variant)) {
+            GDExtensionVariantType child_variant_type = api.variant_get_type(&child_type_variant);
+
+            if (child_variant_type == GDEXTENSION_VARIANT_TYPE_OBJECT) {
+                /* Child type is a GDScript class - parse it recursively */
+                gdscript_schema_context_t* child_ctx = gdscript_schema_context_create(&child_type_variant);
+                if (child_ctx && child_ctx->vtable) {
+                    field->child_vtable = child_ctx->vtable;
+
+                    /* Store child context for cleanup */
+                    if (child_contexts && child_context_count) {
+                        *child_contexts = realloc(*child_contexts,
+                            (*child_context_count + 1) * sizeof(gdscript_schema_context_t));
+                        if (*child_contexts) {
+                            (*child_contexts)[*child_context_count] = *child_ctx;
+                            (*child_context_count)++;
+                        }
                     }
                 }
+            } else if (child_variant_type == GDEXTENSION_VARIANT_TYPE_STRING) {
+                /* Child type is a primitive type string */
+                char* child_primitive = variant_to_cstr(&child_type_variant);
+                field->child_primitive_type = child_primitive;
             }
-        } else if (child_variant_type == GDEXTENSION_VARIANT_TYPE_STRING) {
-            /* Child type is a primitive type string */
-            char* child_primitive = variant_to_cstr(&child_type_variant);
-            field->child_primitive_type = child_primitive;
+
+            destructors.variant_destroy(&child_type_variant);
         }
-        
-        destructors.variant_destroy(&child_type_variant);
-        destructors.variant_destroy(&child_prop_variant);
-        destructors.string_destructor(&child_str_prop);
     }
-    
+
     free(field_name);
     free(field_type_str);
-    
+
     return field;
 }
 

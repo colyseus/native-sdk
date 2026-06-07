@@ -313,6 +313,100 @@ void gdext_colyseus_room_is_connected(void* p_method_userdata, GDExtensionClassI
     }
 }
 
+void gdext_colyseus_room_is_reconnecting(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+    (void)p_method_userdata;
+    (void)p_args;
+
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
+    if (wrapper && wrapper->native_room && r_ret) {
+        bool reconnecting = colyseus_room_is_reconnecting(wrapper->native_room);
+        *(GDExtensionBool*)r_ret = reconnecting ? 1 : 0;
+    }
+}
+
+/*
+ * set_reconnection_options(options: Dictionary)
+ *
+ * Accepts a Dictionary with any subset of the following keys (omitted keys
+ * keep their current value):
+ *   enabled: bool
+ *   max_retries: int
+ *   min_delay_ms: int
+ *   max_delay_ms: int
+ *   min_uptime_ms: int
+ *   delay_ms: int
+ *   max_enqueued_messages: int
+ */
+void gdext_colyseus_room_set_reconnection_options(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
+    const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count,
+    GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
+    (void)p_method_userdata;
+    (void)r_return;
+
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
+    if (!wrapper || !wrapper->native_room || p_argument_count < 1) {
+        if (r_error) r_error->error = GDEXTENSION_CALL_OK;
+        return;
+    }
+
+    colyseus_reconnection_options_t opts;
+    colyseus_room_get_reconnection_options(wrapper->native_room, &opts);
+
+    Dictionary dict;
+    constructors.dictionary_from_variant_constructor(&dict, (GDExtensionVariantPtr)p_args[0]);
+
+    /* dictionary_operator_index returns a writable Variant pointer; if the
+     * key does not exist it returns a NIL Variant. Read its type to decide
+     * whether to apply the field. */
+    #define READ_INT_FIELD(KEY, FIELD) do {                              \
+        String key_s;                                                    \
+        constructors.string_new_with_utf8_chars(&key_s, KEY);            \
+        Variant key_v;                                                   \
+        constructors.variant_from_string_constructor(&key_v, &key_s);    \
+        GDExtensionVariantPtr val = api.dictionary_operator_index(       \
+            &dict, &key_v);                                              \
+        if (val && api.variant_get_type(val) != GDEXTENSION_VARIANT_TYPE_NIL) { \
+            int64_t tmp = 0;                                             \
+            constructors.int_from_variant_constructor(&tmp, val);        \
+            FIELD = (int)tmp;                                            \
+        }                                                                \
+        destructors.string_destructor(&key_s);                           \
+        destructors.variant_destroy(&key_v);                             \
+    } while (0)
+
+    #define READ_BOOL_FIELD(KEY, FIELD) do {                             \
+        String key_s;                                                    \
+        constructors.string_new_with_utf8_chars(&key_s, KEY);            \
+        Variant key_v;                                                   \
+        constructors.variant_from_string_constructor(&key_v, &key_s);    \
+        GDExtensionVariantPtr val = api.dictionary_operator_index(       \
+            &dict, &key_v);                                              \
+        if (val && api.variant_get_type(val) != GDEXTENSION_VARIANT_TYPE_NIL) { \
+            GDExtensionBool tmp = 0;                                     \
+            constructors.bool_from_variant_constructor(&tmp, val);       \
+            FIELD = tmp ? true : false;                                  \
+        }                                                                \
+        destructors.string_destructor(&key_s);                           \
+        destructors.variant_destroy(&key_v);                             \
+    } while (0)
+
+    READ_BOOL_FIELD("enabled", opts.enabled);
+    READ_INT_FIELD("max_retries", opts.max_retries);
+    READ_INT_FIELD("min_delay_ms", opts.min_delay_ms);
+    READ_INT_FIELD("max_delay_ms", opts.max_delay_ms);
+    READ_INT_FIELD("min_uptime_ms", opts.min_uptime_ms);
+    READ_INT_FIELD("delay_ms", opts.delay_ms);
+    READ_INT_FIELD("max_enqueued_messages", opts.max_enqueued_messages);
+
+    #undef READ_INT_FIELD
+    #undef READ_BOOL_FIELD
+
+    colyseus_room_set_reconnection_options(wrapper->native_room, &opts);
+    destructors.dictionary_destructor(&dict);
+
+    if (r_error) r_error->error = GDEXTENSION_CALL_OK;
+}
+
 /*
  * get_state() - Returns the room state
  * 

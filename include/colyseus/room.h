@@ -24,6 +24,34 @@ typedef void (*colyseus_room_on_join_fn)(void* userdata);
 typedef void (*colyseus_room_on_state_change_fn)(void* userdata);
 typedef void (*colyseus_room_on_error_fn)(int code, const char* message, void* userdata);
 typedef void (*colyseus_room_on_leave_fn)(int code, const char* reason, void* userdata);
+typedef void (*colyseus_room_on_drop_fn)(int code, const char* reason, void* userdata);
+typedef void (*colyseus_room_on_reconnect_fn)(void* userdata);
+
+/* Reconnection configuration.
+ *
+ * Defaults match the @colyseus/sdk TypeScript SDK:
+ *   enabled              true
+ *   max_retries          15
+ *   min_delay_ms         100
+ *   max_delay_ms         5000
+ *   min_uptime_ms        5000
+ *   delay_ms             100   (base delay for backoff)
+ *   max_enqueued_messages 10
+ *
+ * Delay for attempt N is computed as:
+ *   clamp(min_delay_ms, max_delay_ms, (1 << N) * delay_ms)
+ */
+typedef struct {
+    bool enabled;
+    int max_retries;
+    int min_delay_ms;
+    int max_delay_ms;
+    int min_uptime_ms;
+    int delay_ms;
+    int max_enqueued_messages;
+} colyseus_reconnection_options_t;
+
+void colyseus_reconnection_options_init_defaults(colyseus_reconnection_options_t* options);
 
 /* Message callbacks - default (message reader, auto-decoded) */
 typedef void (*colyseus_room_on_message_fn)(colyseus_message_reader_t* reader, void* userdata);
@@ -56,6 +84,30 @@ typedef struct {
     UT_hash_handle hh;
 } colyseus_message_handler_t;
 
+/* Pending outbound message buffered while disconnected. */
+typedef struct colyseus_pending_msg {
+    uint8_t* data;
+    size_t length;
+    struct colyseus_pending_msg* next;
+} colyseus_pending_msg_t;
+
+/* Reconnection runtime state. Internal — do not modify directly. */
+typedef struct {
+    colyseus_reconnection_options_t options;
+    int retry_count;
+    bool is_reconnecting;
+    bool cancelled;
+
+    /* FIFO queue of messages buffered while disconnected. */
+    colyseus_pending_msg_t* queue_head;
+    colyseus_pending_msg_t* queue_tail;
+    int queue_count;
+
+    /* Worker thread + condvar. Defined opaquely to keep platform headers out
+     * of this public header. Implementation file allocates and casts. */
+    void* worker;
+} colyseus_reconnection_state_t;
+
 /* Room structure */
 struct colyseus_room {
     char* name;
@@ -67,6 +119,12 @@ struct colyseus_room {
 
     colyseus_transport_t* transport;
     colyseus_transport_factory_fn transport_factory;
+
+    /* Saved for automatic reconnection */
+    char* endpoint_url;
+    const colyseus_settings_t* settings;
+    uint64_t joined_at_ms;
+    colyseus_reconnection_state_t reconnection;
 
     /* Schema serializer */
     colyseus_schema_serializer_t* serializer;
@@ -89,6 +147,12 @@ struct colyseus_room {
 
     colyseus_room_on_leave_fn on_leave;
     void* on_leave_userdata;
+
+    colyseus_room_on_drop_fn on_drop;
+    void* on_drop_userdata;
+
+    colyseus_room_on_reconnect_fn on_reconnect;
+    void* on_reconnect_userdata;
 
     /* Message handlers hash map */
     colyseus_message_handler_t* message_handlers;
@@ -151,6 +215,14 @@ void colyseus_room_on_join(colyseus_room_t* room, colyseus_room_on_join_fn callb
 void colyseus_room_on_state_change(colyseus_room_t* room, colyseus_room_on_state_change_fn callback, void* userdata);
 void colyseus_room_on_error(colyseus_room_t* room, colyseus_room_on_error_fn callback, void* userdata);
 void colyseus_room_on_leave(colyseus_room_t* room, colyseus_room_on_leave_fn callback, void* userdata);
+void colyseus_room_on_drop(colyseus_room_t* room, colyseus_room_on_drop_fn callback, void* userdata);
+void colyseus_room_on_reconnect(colyseus_room_t* room, colyseus_room_on_reconnect_fn callback, void* userdata);
+
+/* Reconnection options. Pass NULL to read-only fetch via the getter.
+ * Setting options replaces all fields atomically. */
+void colyseus_room_set_reconnection_options(colyseus_room_t* room, const colyseus_reconnection_options_t* options);
+void colyseus_room_get_reconnection_options(const colyseus_room_t* room, colyseus_reconnection_options_t* out_options);
+bool colyseus_room_is_reconnecting(const colyseus_room_t* room);
 
 /* Message handlers - default (msgpack reader, auto-decoded) */
 void colyseus_room_on_message(colyseus_room_t* room, const char* type, colyseus_room_on_message_fn callback, void* userdata);

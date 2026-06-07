@@ -189,13 +189,12 @@ static void msgpack_value_cb(
             // Create PackedByteArray for binary data
             PackedByteArray byte_array;
             constructors.packed_byte_array_constructor(&byte_array, NULL);
-            
+
             if (data_ptr && data_len > 0) {
-                // Convert to variant for method calls
+                // Resize via a Variant method call (no direct PBA resize in the C API).
                 Variant ba_variant;
                 constructors.variant_from_packed_byte_array_constructor(&ba_variant, &byte_array);
-                
-                // Resize
+
                 StringName resize_method;
                 constructors.string_name_new_with_latin1_chars(&resize_method, "resize", false);
                 int64_t size_val = (int64_t)data_len;
@@ -208,18 +207,28 @@ static void msgpack_value_cb(
                 destructors.string_name_destructor(&resize_method);
                 destructors.variant_destroy(&size_variant);
                 destructors.variant_destroy(&resize_return);
-                
-                // Copy data
+
+                // resize() mutated the Variant's internal copy, not the original
+                // empty `byte_array`. Pull the resized array back out and write
+                // bytes into THAT, then build the result from it. (Writing to the
+                // pre-resize byte_array left every element untouched -> all zeros.)
+                PackedByteArray resized;
+                constructors.packed_byte_array_from_variant_constructor(&resized, &ba_variant);
+                destructors.variant_destroy(&ba_variant);
+                destructors.packed_byte_array_destructor(&byte_array);
+
                 for (size_t i = 0; i < data_len; i++) {
-                    uint8_t* ptr = api.packed_byte_array_operator_index(&byte_array, (GDExtensionInt)i);
+                    uint8_t* ptr = api.packed_byte_array_operator_index(&resized, (GDExtensionInt)i);
                     if (ptr) {
                         *ptr = data_ptr[i];
                     }
                 }
-                
-                value = ba_variant;
+
+                constructors.variant_from_packed_byte_array_constructor(&value, &resized);
+                destructors.packed_byte_array_destructor(&resized);
             } else {
                 constructors.variant_from_packed_byte_array_constructor(&value, &byte_array);
+                destructors.packed_byte_array_destructor(&byte_array);
             }
             break;
         }
