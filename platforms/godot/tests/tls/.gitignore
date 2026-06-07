@@ -1,0 +1,4 @@
+# Generated test certificates — regenerated on demand by tests/tls/gen-certs.sh
+*.pem
+*.key
+*.srl

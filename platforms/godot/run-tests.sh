@@ -49,6 +49,31 @@ fi
 log "Build complete"
 
 # ---------------------------------------------------------------------------
+# TLS fixtures for the wss:// test (test_wss.gd)
+#   - generate the self-signed CA/server cert (gitignored)
+#   - start a TLS proxy fronting example-server (2567) on wss://localhost:2568
+# The proxy is stopped on exit. example-server must already be running on 2567.
+# ---------------------------------------------------------------------------
+TLS_DIR="$TEST_DIR/tls"
+if [[ ! -f "$TLS_DIR/server.pem" ]]; then
+    log "Generating TLS test certificates..."
+    bash "$ROOT_DIR/../../tests/tls/gen-certs.sh" "$TLS_DIR" >/dev/null
+fi
+
+tls_proxy_pid=""
+cleanup() { [[ -n "$tls_proxy_pid" ]] && kill "$tls_proxy_pid" 2>/dev/null || true; }
+trap cleanup EXIT
+
+if command -v node &>/dev/null; then
+    log "Starting TLS proxy on wss://localhost:2568 -> 127.0.0.1:2567..."
+    node "$TEST_DIR/tls-proxy.mjs" --port 2568 --target 2567 > /tmp/colyseus_tls_proxy.log 2>&1 &
+    tls_proxy_pid=$!
+    sleep 1
+else
+    warn "node not found — skipping TLS proxy; test_wss.gd will fail to connect"
+fi
+
+# ---------------------------------------------------------------------------
 # Import project (needed on first run to generate .godot/ cache)
 # ---------------------------------------------------------------------------
 if [[ ! -d "$TEST_DIR/.godot" ]]; then
