@@ -2,6 +2,18 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.17.11-rc.1
+
+### Fixed
+- Android `wss://` connections could fail with a TLS certificate-bundle load failure on release builds — working for some devices/users and failing for others against the same endpoint. The SDK runs its own mbedTLS handshake and was picking a single CA source in priority order (system store → bundled Mozilla → settings override), so a device's system trust store could shadow the comprehensive bundled roots and abort TLS entirely if it lacked the server's root or failed to parse — hence the device-dependence. All available CA sources are now merged into one trust chain (bundled Mozilla roots always loaded as a device-independent baseline, with the system store and any override layered on top); TLS init only fails if the chain ends up empty. Reported by @pierroo in #24.
+- HTTPS matchmaking (`join_or_create`) used a separate trust store from the `wss://` socket and only trusted the OS system store — so it ignored both the bundled Mozilla roots and `network/tls/certificate_bundle_override`, and had the same Android exposure *before* the WebSocket even connected. Matchmaking now shares the same merged trust roots as the WSS transport.
+- A failed TLS handshake (e.g. certificate verification failure) spun the connection state machine forever instead of erroring, so the failure surfaced as a silent hang. It now closes with code `1015` and a specific reason (`"TLS certificate verification failed"`).
+- `network/tls/certificate_bundle_override` set to a `res://` or `user://` path is now honored: the native extension resolves Godot virtual paths via `ProjectSettings.globalize_path()` before reading (previously a raw `fopen()` couldn't open them, which is why a `user://` override silently fell back to the built-in roots on Android).
+
+### Tests
+- `tests/test_tls.zig` — drives the WebSocket transport directly against a self-signed `wss://` echo server (no matchmaking) and asserts a trusted CA supplied via settings is honored, a wrong/absent CA fails verification, and `tls_skip_verification` connects regardless.
+- `test_wss.gd` — joins a room over `wss://` end-to-end through a self-signed TLS proxy, exercising the override loader, HTTPS matchmaking trust, and the WSS handshake together.
+
 ## 0.17.10
 
 ### Fixed
