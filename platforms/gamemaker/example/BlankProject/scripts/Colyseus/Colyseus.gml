@@ -19,6 +19,9 @@
 #macro COLYSEUS_EVENT_COLLECTION_CHANGE 13
 #macro COLYSEUS_EVENT_ROOM_DROP        14
 #macro COLYSEUS_EVENT_ROOM_RECONNECT   15
+#macro COLYSEUS_EVENT_LATENCY_RESPONSE 16
+#macro COLYSEUS_EVENT_LATENCY_ERROR    17
+#macro COLYSEUS_EVENT_LATENCY_SELECTED 18
 
 // Field type constants (matches colyseus_field_type_t)
 #macro COLYSEUS_TYPE_STRING   0
@@ -54,6 +57,7 @@ global.__colyseus_room_handlers = ds_map_create();  // keyed by room_ref (real)
 global.__colyseus_schema_handlers = array_create(256, undefined);
 global.__colyseus_schema_meta = array_create(256, undefined);  // callback index → { parent_handle, field }
 global.__colyseus_http_handlers = ds_map_create();  // keyed by request handle (real)
+global.__colyseus_latency_handlers = ds_map_create();  // keyed by request handle (real)
 global.__colyseus_schema_structs = ds_map_create();  // keyed by instance handle (real) → GML struct
 global.__colyseus_current_room_ref = -1;  // set during event processing / state access for room tagging
 
@@ -512,6 +516,37 @@ function colyseus_http_patch(_client, _path, _body, _callback) {
     return _handle;
 }
 
+// =============================================================================
+// Latency measurement — callback(err, result) style
+// =============================================================================
+
+/// Measure latency to a single endpoint.
+/// @param {Real} _client  Client handle
+/// @param {String} _endpoint  ws:// or wss:// URL
+/// @param {Function} _callback  callback(err, latency_ms) — err is undefined on success
+/// @param {Real} [_timeout_ms]  measurement timeout in ms (0 = default 1500)
+function colyseus_get_latency(_client, _endpoint, _callback, _timeout_ms = 0) {
+    var _handle = __colyseus_gm_get_latency(_client, _endpoint, _timeout_ms);
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_latency_handlers, _handle, _callback);
+    }
+    return _handle;
+}
+
+/// Measure several endpoints and select the lowest-latency one.
+/// @param {Real} _client  Client handle
+/// @param {Array<String>} _endpoints  array of ws:// / wss:// URLs
+/// @param {Function} _callback  callback(err, result) — result = { endpoint, latency_ms, results }
+/// @param {Real} [_timeout_ms]  per-endpoint timeout in ms (0 = default 1500)
+function colyseus_select_by_latency(_client, _endpoints, _callback, _timeout_ms = 0) {
+    var _json = json_stringify(_endpoints);
+    var _handle = __colyseus_gm_select_by_latency(_client, _json, _timeout_ms);
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_latency_handlers, _handle, _callback);
+    }
+    return _handle;
+}
+
 /// Set auth token for HTTP requests (sent as Bearer token).
 /// Automatically persists the token to disk for future sessions.
 /// @param {Real} _client  Client handle
@@ -784,6 +819,41 @@ function colyseus_process() {
                         message: colyseus_event_get_message()
                     };
                     _handler(_err, undefined);
+                }
+                break;
+
+            case COLYSEUS_EVENT_LATENCY_RESPONSE:
+                var _cb = colyseus_event_get_callback_handle();
+                if (ds_map_exists(global.__colyseus_latency_handlers, _cb)) {
+                    var _handler = ds_map_find_value(global.__colyseus_latency_handlers, _cb);
+                    ds_map_delete(global.__colyseus_latency_handlers, _cb);
+                    _handler(undefined, colyseus_event_get_latency());
+                }
+                break;
+
+            case COLYSEUS_EVENT_LATENCY_ERROR:
+                var _cb = colyseus_event_get_callback_handle();
+                if (ds_map_exists(global.__colyseus_latency_handlers, _cb)) {
+                    var _handler = ds_map_find_value(global.__colyseus_latency_handlers, _cb);
+                    ds_map_delete(global.__colyseus_latency_handlers, _cb);
+                    _handler({ code: colyseus_event_get_code(), message: colyseus_event_get_message() }, undefined);
+                }
+                break;
+
+            case COLYSEUS_EVENT_LATENCY_SELECTED:
+                var _cb = colyseus_event_get_callback_handle();
+                if (ds_map_exists(global.__colyseus_latency_handlers, _cb)) {
+                    var _handler = ds_map_find_value(global.__colyseus_latency_handlers, _cb);
+                    ds_map_delete(global.__colyseus_latency_handlers, _cb);
+                    var _endpoint = colyseus_event_get_message();
+                    if (_endpoint == "") {
+                        _handler({ code: 0, message: "all endpoints failed to respond" }, undefined);
+                    } else {
+                        _handler(undefined, {
+                            endpoint: _endpoint,
+                            latency_ms: colyseus_event_get_latency()
+                        });
+                    }
                 }
                 break;
         }

@@ -179,6 +179,7 @@ pub fn build(b: *std.Build) void {
                 "../../src/common/settings.c",
                 "../../src/client.c",
                 "../../src/room.c",
+                "../../src/network/latency.c",
                 // Network (web-specific - browser handles WebSocket/HTTP)
                 "../../src/network/websocket_transport_web.c",
                 "../../src/network/http_web.c",
@@ -394,6 +395,7 @@ pub fn build(b: *std.Build) void {
                 "../../src/common/settings.c",
                 "../../src/client.c",
                 "../../src/room.c",
+                "../../src/network/latency.c",
                 // Network (native websocket with wslay)
                 "../../src/network/websocket_transport.c",
                 // Schema

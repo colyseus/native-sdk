@@ -19,6 +19,8 @@ extern "C" {
         COLYSEUS_PROTOCOL_ROOM_STATE_PATCH = 15,
         COLYSEUS_PROTOCOL_ROOM_DATA_SCHEMA = 16,
         COLYSEUS_PROTOCOL_ROOM_DATA_BYTES = 17,
+        COLYSEUS_PROTOCOL_PING = 18,  /* latency probe (client -> server) */
+        COLYSEUS_PROTOCOL_PONG = 19,  /* latency probe reply (server -> client) */
     } colyseus_protocol_t;
 
     /* Close codes */

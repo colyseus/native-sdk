@@ -6,6 +6,7 @@
 #include "../../../include/colyseus/schema/dynamic_schema.h"
 #include "../../../include/colyseus/schema/collections.h"
 #include "../../../include/colyseus/messages.h"
+#include "cJSON.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -53,14 +54,18 @@ typedef enum {
     GM_EVENT_COLLECTION_CHANGE = 13,
     GM_EVENT_ROOM_DROP = 14,
     GM_EVENT_ROOM_RECONNECT = 15,
+    GM_EVENT_LATENCY_RESPONSE = 16,  // get_latency success
+    GM_EVENT_LATENCY_ERROR = 17,     // get_latency failure
+    GM_EVENT_LATENCY_SELECTED = 18,  // select_by_latency complete
 } gm_event_type_t;
 
 // Event structure for the queue
 typedef struct {
     gm_event_type_t type;
     double room_handle;  // Room pointer as double (for GameMaker)
-    double callback_handle;  // Shared across schema & HTTP events
+    double callback_handle;  // Shared across schema & HTTP & latency (request id) events
     int code;
+    double latency_ms;   // latency events: measured / best round-trip ms
     char message[1024];
 
     union {
@@ -1854,6 +1859,121 @@ GM_EXPORT const char* colyseus_gm_event_get_http_body(void) {
 }
 
 // =============================================================================
+// Latency — trampolines + exported functions
+// The C SDK runs its own worker threads; we just push results to the event
+// queue (mirrors the HTTP pattern). Results are read on the GML side via the
+// existing accessors (callback_handle = request id, message = endpoint/error,
+// code = error code) plus colyseus_gm_event_get_latency() and, for selection,
+// colyseus_gm_event_get_http_body() (the per-endpoint results JSON).
+// =============================================================================
+
+typedef struct { double request_id; } gm_latency_req_t;
+
+static void on_gm_get_latency(const colyseus_latency_result_t* r, void* userdata) {
+    gm_latency_req_t* req = (gm_latency_req_t*)userdata;
+    gm_event_t event = {0};
+    event.callback_handle = req->request_id;
+    event.latency_ms = r->latency_ms;
+    if (r->ok) {
+        event.type = GM_EVENT_LATENCY_RESPONSE;
+        if (r->endpoint) strncpy(event.message, r->endpoint, sizeof(event.message) - 1);
+    } else {
+        event.type = GM_EVENT_LATENCY_ERROR;
+        event.code = r->error_code;
+        if (r->error) strncpy(event.message, r->error, sizeof(event.message) - 1);
+    }
+    event_queue_push(&event);
+    free(req);
+}
+
+static void on_gm_select_by_latency(const char* best_endpoint, double best_latency_ms, void* userdata) {
+    gm_latency_req_t* req = (gm_latency_req_t*)userdata;
+    gm_event_t event = {0};
+    event.type = GM_EVENT_LATENCY_SELECTED;
+    event.callback_handle = req->request_id;
+    if (best_endpoint && best_endpoint[0]) {
+        strncpy(event.message, best_endpoint, sizeof(event.message) - 1);
+        event.latency_ms = best_latency_ms;
+    } else {
+        event.latency_ms = -1.0;
+    }
+    event_queue_push(&event);
+    free(req);
+}
+
+static void gm_latency_fill_tls(colyseus_client_t* client, colyseus_latency_options_t* opt) {
+    if (client && client->settings) {
+        opt->use_secure = client->settings->use_secure_protocol;
+        opt->tls_skip_verification = client->settings->tls_skip_verification;
+        opt->ca_pem_data = client->settings->ca_pem_data;
+        opt->ca_pem_len = client->settings->ca_pem_len;
+    }
+}
+
+GM_EXPORT double colyseus_gm_get_latency(double client_handle, const char* endpoint, double timeout_ms) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !endpoint) return 0.0;
+
+    g_http_request_counter += 1.0;
+    double rid = g_http_request_counter;
+    gm_latency_req_t* req = (gm_latency_req_t*)calloc(1, sizeof(*req));
+    if (!req) return 0.0;
+    req->request_id = rid;
+
+    colyseus_latency_options_t opt = {0};
+    if (timeout_ms > 0) opt.timeout_ms = (int)timeout_ms;
+    gm_latency_fill_tls(client, &opt);
+
+    colyseus_get_latency(endpoint, &opt, on_gm_get_latency, req);
+    return rid;
+}
+
+// endpoints_json: a JSON array of endpoint strings (GML: json_stringify(array))
+GM_EXPORT double colyseus_gm_select_by_latency(double client_handle, const char* endpoints_json, double timeout_ms) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !endpoints_json) return 0.0;
+
+    cJSON* arr = cJSON_Parse(endpoints_json);
+    if (!arr || !cJSON_IsArray(arr)) { cJSON_Delete(arr); return 0.0; }
+
+    int n = cJSON_GetArraySize(arr);
+    if (n <= 0) { cJSON_Delete(arr); return 0.0; }
+
+    const char** endpoints = (const char**)calloc((size_t)n, sizeof(char*));
+    int count = 0;
+    cJSON* item = NULL;
+    cJSON_ArrayForEach(item, arr) {
+        if (cJSON_IsString(item) && item->valuestring) endpoints[count++] = item->valuestring;
+    }
+
+    double rid = 0.0;
+    if (count > 0) {
+        g_http_request_counter += 1.0;
+        rid = g_http_request_counter;
+        gm_latency_req_t* req = (gm_latency_req_t*)calloc(1, sizeof(*req));
+        if (req) {
+            req->request_id = rid;
+            colyseus_latency_options_t opt = {0};
+            if (timeout_ms > 0) opt.timeout_ms = (int)timeout_ms;
+            gm_latency_fill_tls(client, &opt);
+            // select_by_latency strdups each endpoint synchronously, so freeing the
+            // cJSON tree right after the call returns is safe.
+            colyseus_select_by_latency(endpoints, (size_t)count, &opt, on_gm_select_by_latency, req);
+        } else {
+            rid = 0.0;
+        }
+    }
+
+    free(endpoints);
+    cJSON_Delete(arr);
+    return rid;
+}
+
+GM_EXPORT double colyseus_gm_event_get_latency(void) {
+    return g_current_event.latency_ms;
+}
+
+// =============================================================================
 // HTTP Push Helpers (for WASM shim — JS calls these to push HTTP events)
 // =============================================================================
 
@@ -1875,6 +1995,35 @@ GM_EXPORT void colyseus_gm_http_push_error(double request_id, double code, const
         strncpy(event.message, message, sizeof(event.message) - 1);
     }
     event.http.body = NULL;
+    event_queue_push(&event);
+}
+
+// Latency push helpers (WASM shim + tests — synthesize latency events)
+GM_EXPORT void colyseus_gm_latency_push_response(double request_id, double latency_ms, const char* endpoint) {
+    gm_event_t event = {0};
+    event.type = GM_EVENT_LATENCY_RESPONSE;
+    event.callback_handle = request_id;
+    event.latency_ms = latency_ms;
+    if (endpoint) strncpy(event.message, endpoint, sizeof(event.message) - 1);
+    event_queue_push(&event);
+}
+
+GM_EXPORT void colyseus_gm_latency_push_error(double request_id, double code, const char* message) {
+    gm_event_t event = {0};
+    event.type = GM_EVENT_LATENCY_ERROR;
+    event.callback_handle = request_id;
+    event.code = (int)code;
+    if (message) strncpy(event.message, message, sizeof(event.message) - 1);
+    event_queue_push(&event);
+}
+
+GM_EXPORT void colyseus_gm_latency_push_selected(double request_id, const char* best_endpoint,
+                                                 double latency_ms) {
+    gm_event_t event = {0};
+    event.type = GM_EVENT_LATENCY_SELECTED;
+    event.callback_handle = request_id;
+    event.latency_ms = latency_ms;
+    if (best_endpoint) strncpy(event.message, best_endpoint, sizeof(event.message) - 1);
     event_queue_push(&event);
 }
 

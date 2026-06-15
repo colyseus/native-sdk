@@ -745,6 +745,7 @@ extern void colyseus_ws_poll(void);
 // Process queued events and emit signals on main thread
 extern void gdext_http_process_events(void);
 extern void gdext_room_process_events(void);
+extern void gdext_latency_process_events(void);
 
 static void gdext_colyseus_client_poll_call(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
     const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count,
@@ -755,6 +756,7 @@ static void gdext_colyseus_client_poll_call(void* p_method_userdata, GDExtension
     colyseus_ws_poll();
     gdext_http_process_events();
     gdext_room_process_events();
+    gdext_latency_process_events();
 }
 
 static void gdext_colyseus_client_poll_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
@@ -764,6 +766,7 @@ static void gdext_colyseus_client_poll_ptrcall(void* p_method_userdata, GDExtens
     colyseus_ws_poll();
     gdext_http_process_events();
     gdext_room_process_events();
+    gdext_latency_process_events();
 }
 
 static void register_colyseus_client(void) {
@@ -937,6 +940,58 @@ static void register_colyseus_client(void) {
             GDExtensionClassMethodInfo method_info = {
                 .name = &method_name_string,
                 .method_userdata = http_funcs[i],
+                .call_func = call_vararg,
+                .ptrcall_func = NULL,
+                .method_flags = GDEXTENSION_METHOD_FLAG_VARARG,
+                .has_return_value = true,
+                .return_value_info = &return_info,
+                .return_value_metadata = GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+                .argument_count = 0,
+                .arguments_info = NULL,
+                .arguments_metadata = NULL,
+                .default_argument_count = 0,
+                .default_arguments = NULL
+            };
+
+            StringName class_name_string;
+            constructors.string_name_new_with_latin1_chars(&class_name_string, "_ColyseusClient", false);
+            api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
+
+            destructors.string_name_destructor(&method_name_string);
+            destructors.string_name_destructor(&class_name_string);
+            destruct_property(&return_info);
+        }
+    }
+
+    // Register latency signals on ColyseusClient
+    bind_signal_3("_ColyseusClient", "_latency_response",
+        "request_id", GDEXTENSION_VARIANT_TYPE_INT,
+        "latency_ms", GDEXTENSION_VARIANT_TYPE_FLOAT,
+        "endpoint", GDEXTENSION_VARIANT_TYPE_STRING);
+    bind_signal_3("_ColyseusClient", "_latency_error",
+        "request_id", GDEXTENSION_VARIANT_TYPE_INT,
+        "code", GDEXTENSION_VARIANT_TYPE_INT,
+        "message", GDEXTENSION_VARIANT_TYPE_STRING);
+    bind_signal_3("_ColyseusClient", "_latency_selected",
+        "request_id", GDEXTENSION_VARIANT_TYPE_INT,
+        "best_endpoint", GDEXTENSION_VARIANT_TYPE_STRING,
+        "best_latency_ms", GDEXTENSION_VARIANT_TYPE_FLOAT);
+
+    // Register latency methods (call_vararg — functions take Variant args)
+    {
+        const char* latency_methods[] = { "get_latency", "select_by_latency" };
+        void* latency_funcs[] = {
+            gdext_colyseus_client_get_latency, gdext_colyseus_client_select_by_latency
+        };
+        for (int i = 0; i < 2; i++) {
+            StringName method_name_string;
+            constructors.string_name_new_with_latin1_chars(&method_name_string, latency_methods[i], false);
+
+            GDExtensionPropertyInfo return_info = make_property(GDEXTENSION_VARIANT_TYPE_INT, "");
+
+            GDExtensionClassMethodInfo method_info = {
+                .name = &method_name_string,
+                .method_userdata = latency_funcs[i],
                 .call_func = call_vararg,
                 .ptrcall_func = NULL,
                 .method_flags = GDEXTENSION_METHOD_FLAG_VARARG,

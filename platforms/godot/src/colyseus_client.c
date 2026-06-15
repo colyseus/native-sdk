@@ -983,6 +983,258 @@ void gdext_http_process_events(void) {
     }
 }
 
+// =============================================================================
+// Latency measurement — get_latency / select_by_latency
+// The C SDK runs its own worker threads; the binding just queues results and
+// emits signals from poll() (mirrors the HTTP pattern above).
+// =============================================================================
+
+typedef struct gdext_latency_event {
+    int kind;                  // 0 = get_latency ok, 1 = get_latency error, 2 = select
+    int64_t request_id;
+    GDExtensionObjectPtr client_object;
+    double latency_ms;
+    int code;
+    char* endpoint;            // measured/best endpoint ("" if none)
+    char* message;             // error message (kind 1) or results JSON (kind 2)
+    struct gdext_latency_event* next;
+} gdext_latency_event_t;
+
+static gdext_latency_event_t* g_latency_event_head = NULL;
+static gdext_latency_event_t* g_latency_event_tail = NULL;
+
+static void latency_event_push(gdext_latency_event_t* event) {
+    event->next = NULL;
+    HTTP_QUEUE_LOCK();
+    if (g_latency_event_tail) g_latency_event_tail->next = event;
+    else g_latency_event_head = event;
+    g_latency_event_tail = event;
+    HTTP_QUEUE_UNLOCK();
+}
+
+static gdext_latency_event_t* latency_event_pop(void) {
+    HTTP_QUEUE_LOCK();
+    gdext_latency_event_t* event = g_latency_event_head;
+    if (event) {
+        g_latency_event_head = event->next;
+        if (!g_latency_event_head) g_latency_event_tail = NULL;
+    }
+    HTTP_QUEUE_UNLOCK();
+    return event;
+}
+
+typedef struct {
+    int64_t request_id;
+    GDExtensionObjectPtr client_object;
+} gdext_latency_request_t;
+
+static void on_gdext_get_latency(const colyseus_latency_result_t* r, void* userdata) {
+    gdext_latency_request_t* req = (gdext_latency_request_t*)userdata;
+    gdext_latency_event_t* e = (gdext_latency_event_t*)calloc(1, sizeof(*e));
+    if (e) {
+        e->request_id = req->request_id;
+        e->client_object = req->client_object;
+        e->latency_ms = r->latency_ms;
+        if (r->ok) {
+            e->kind = 0;
+            e->endpoint = strdup(r->endpoint ? r->endpoint : "");
+        } else {
+            e->kind = 1;
+            e->code = r->error_code;
+            e->message = strdup(r->error ? r->error : "latency measurement failed");
+        }
+        latency_event_push(e);
+    }
+    free(req);
+}
+
+static void on_gdext_select_by_latency(const char* best_endpoint, double best_latency_ms, void* userdata) {
+    gdext_latency_request_t* req = (gdext_latency_request_t*)userdata;
+    gdext_latency_event_t* e = (gdext_latency_event_t*)calloc(1, sizeof(*e));
+    if (e) {
+        e->kind = 2;
+        e->request_id = req->request_id;
+        e->client_object = req->client_object;
+        e->endpoint = strdup(best_endpoint ? best_endpoint : "");
+        e->latency_ms = best_endpoint ? best_latency_ms : -1.0;
+        latency_event_push(e);
+    }
+    free(req);
+}
+
+static void gdext_latency_fill_tls(ColyseusClientWrapper* wrapper, colyseus_latency_options_t* opt) {
+    if (wrapper && wrapper->native_client && wrapper->native_client->settings) {
+        const colyseus_settings_t* s = wrapper->native_client->settings;
+        opt->use_secure = s->use_secure_protocol;
+        opt->tls_skip_verification = s->tls_skip_verification;
+        opt->ca_pem_data = s->ca_pem_data;
+        opt->ca_pem_len = s->ca_pem_len;
+    }
+}
+
+static int64_t gdext_get_latency_dispatch(ColyseusClientWrapper* wrapper, const char* endpoint, int timeout_ms) {
+    if (!wrapper) return 0;
+    g_http_request_counter++;
+    int64_t rid = g_http_request_counter;
+    gdext_latency_request_t* req = (gdext_latency_request_t*)calloc(1, sizeof(*req));
+    if (!req) return 0;
+    req->request_id = rid;
+    req->client_object = wrapper->godot_object;
+    colyseus_latency_options_t opt = {0};
+    if (timeout_ms > 0) opt.timeout_ms = timeout_ms;
+    gdext_latency_fill_tls(wrapper, &opt);
+    colyseus_get_latency(endpoint, &opt, on_gdext_get_latency, req);
+    return rid;
+}
+
+// Read a Godot Array of Strings into a newly-allocated char*[] (count via out_count).
+static char** gdext_read_string_array(const GDExtensionConstVariantPtr arr_variant, size_t* out_count) {
+    *out_count = 0;
+    StringName size_method;
+    constructors.string_name_new_with_latin1_chars(&size_method, "size", false);
+    Variant size_ret;
+    GDExtensionCallError err;
+    api.variant_call((Variant*)arr_variant, &size_method, NULL, 0, &size_ret, &err);
+    int64_t n = 0;
+    constructors.int_from_variant_constructor(&n, &size_ret);
+    destructors.string_name_destructor(&size_method);
+    destructors.variant_destroy(&size_ret);
+    if (n <= 0) return NULL;
+
+    Array arr;
+    constructors.array_from_variant_constructor(&arr, arr_variant);
+    char** out = (char**)calloc((size_t)n, sizeof(char*));
+    for (int64_t i = 0; i < n; i++) {
+        Variant* el = api.array_operator_index(&arr, i);
+        String s;
+        constructors.string_from_variant_constructor(&s, el);
+        out[i] = string_to_c_str(&s);
+        destructors.string_destructor(&s);
+    }
+    destructors.array_destructor(&arr);
+    *out_count = (size_t)n;
+    return out;
+}
+
+static int64_t gdext_select_by_latency_dispatch(ColyseusClientWrapper* wrapper,
+                                                const char* const* endpoints, size_t count, int timeout_ms) {
+    if (!wrapper) return 0;
+    g_http_request_counter++;
+    int64_t rid = g_http_request_counter;
+    gdext_latency_request_t* req = (gdext_latency_request_t*)calloc(1, sizeof(*req));
+    if (!req) return 0;
+    req->request_id = rid;
+    req->client_object = wrapper->godot_object;
+    colyseus_latency_options_t opt = {0};
+    if (timeout_ms > 0) opt.timeout_ms = timeout_ms;
+    gdext_latency_fill_tls(wrapper, &opt);
+    colyseus_select_by_latency(endpoints, count, &opt, on_gdext_select_by_latency, req);
+    return rid;
+}
+
+// get_latency(endpoint: String, timeout_ms: int = 0) -> request_id
+void gdext_colyseus_client_get_latency(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
+    const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count,
+    GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
+    (void)p_method_userdata; (void)r_error;
+    ColyseusClientWrapper* wrapper = (ColyseusClientWrapper*)p_instance;
+    if (!wrapper || p_argument_count < 1) return;
+
+    String endpoint_string;
+    constructors.string_from_variant_constructor(&endpoint_string, (GDExtensionVariantPtr)p_args[0]);
+    char* endpoint = string_to_c_str(&endpoint_string);
+
+    int timeout_ms = 0;
+    if (p_argument_count >= 2) {
+        int64_t t = 0;
+        constructors.int_from_variant_constructor(&t, (GDExtensionVariantPtr)p_args[1]);
+        timeout_ms = (int)t;
+    }
+
+    int64_t rid = gdext_get_latency_dispatch(wrapper, endpoint, timeout_ms);
+    if (r_return) constructors.variant_from_int_constructor(r_return, &rid);
+
+    destructors.string_destructor(&endpoint_string);
+    free(endpoint);
+}
+
+// select_by_latency(endpoints: Array, timeout_ms: int = 0) -> request_id
+void gdext_colyseus_client_select_by_latency(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
+    const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count,
+    GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
+    (void)p_method_userdata; (void)r_error;
+    ColyseusClientWrapper* wrapper = (ColyseusClientWrapper*)p_instance;
+    if (!wrapper || p_argument_count < 1) return;
+
+    size_t count = 0;
+    char** endpoints = gdext_read_string_array(p_args[0], &count);
+
+    int timeout_ms = 0;
+    if (p_argument_count >= 2) {
+        int64_t t = 0;
+        constructors.int_from_variant_constructor(&t, (GDExtensionVariantPtr)p_args[1]);
+        timeout_ms = (int)t;
+    }
+
+    int64_t rid = 0;
+    if (endpoints && count > 0)
+        rid = gdext_select_by_latency_dispatch(wrapper, (const char* const*)endpoints, count, timeout_ms);
+    if (r_return) constructors.variant_from_int_constructor(r_return, &rid);
+
+    if (endpoints) {
+        for (size_t i = 0; i < count; i++) free(endpoints[i]);
+        free(endpoints);
+    }
+}
+
+// Process queued latency events on the main thread (called from poll()).
+void gdext_latency_process_events(void) {
+    gdext_latency_event_t* event;
+    while ((event = latency_event_pop()) != NULL) {
+        if (event->client_object) {
+            int64_t rid = event->request_id;
+            Variant rid_v;
+            constructors.variant_from_int_constructor(&rid_v, &rid);
+
+            if (event->kind == 0) {
+                double lat = event->latency_ms;
+                Variant lat_v; constructors.variant_from_float_constructor(&lat_v, &lat);
+                String ep; string_from_c_str(&ep, event->endpoint ? event->endpoint : "");
+                Variant ep_v; constructors.variant_from_string_constructor(&ep_v, &ep);
+                GDExtensionConstVariantPtr args[3] = { &rid_v, &lat_v, &ep_v };
+                emit_signal_direct(event->client_object, "_latency_response", args, 3);
+                destructors.variant_destroy(&lat_v);
+                destructors.string_destructor(&ep);
+                destructors.variant_destroy(&ep_v);
+            } else if (event->kind == 1) {
+                int64_t code = event->code;
+                Variant code_v; constructors.variant_from_int_constructor(&code_v, &code);
+                String msg; string_from_c_str(&msg, event->message ? event->message : "");
+                Variant msg_v; constructors.variant_from_string_constructor(&msg_v, &msg);
+                GDExtensionConstVariantPtr args[3] = { &rid_v, &code_v, &msg_v };
+                emit_signal_direct(event->client_object, "_latency_error", args, 3);
+                destructors.variant_destroy(&code_v);
+                destructors.string_destructor(&msg);
+                destructors.variant_destroy(&msg_v);
+            } else {
+                String ep; string_from_c_str(&ep, event->endpoint ? event->endpoint : "");
+                Variant ep_v; constructors.variant_from_string_constructor(&ep_v, &ep);
+                double lat = event->latency_ms;
+                Variant lat_v; constructors.variant_from_float_constructor(&lat_v, &lat);
+                GDExtensionConstVariantPtr args[3] = { &rid_v, &ep_v, &lat_v };
+                emit_signal_direct(event->client_object, "_latency_selected", args, 3);
+                destructors.string_destructor(&ep);
+                destructors.variant_destroy(&ep_v);
+                destructors.variant_destroy(&lat_v);
+            }
+            destructors.variant_destroy(&rid_v);
+        }
+        free(event->endpoint);
+        free(event->message);
+        free(event);
+    }
+}
+
 void gdext_room_process_events(void) {
     gdext_room_event_t* event;
     while ((event = room_event_pop()) != NULL) {

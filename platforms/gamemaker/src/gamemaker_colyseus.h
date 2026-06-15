@@ -307,6 +307,29 @@ GM_EXPORT const char* colyseus_gm_event_get_http_body(void);
  */
 GM_EXPORT const char* colyseus_gm_http_get_endpoint(double client_handle);
 
+/* ── Latency ───────────────────────────────────────────────────────────── */
+
+/**
+ * Measure latency to a single endpoint. Returns a request id immediately;
+ * a GM_EVENT_LATENCY_RESPONSE (success) or GM_EVENT_LATENCY_ERROR is queued.
+ * @param endpoint   ws:// or wss:// URL
+ * @param timeout_ms measurement timeout (0 = default 1500)
+ */
+GM_EXPORT double colyseus_gm_get_latency(double client_handle, const char* endpoint, double timeout_ms);
+
+/**
+ * Measure several endpoints and select the lowest-latency one. Returns a
+ * request id immediately; a GM_EVENT_LATENCY_SELECTED event is queued.
+ * @param endpoints_json JSON array of endpoint strings (GML: json_stringify)
+ * @param timeout_ms     per-endpoint timeout (0 = default 1500)
+ */
+GM_EXPORT double colyseus_gm_select_by_latency(double client_handle, const char* endpoints_json, double timeout_ms);
+
+/**
+ * Latency (ms) from the last polled latency event (best latency for SELECTED).
+ */
+GM_EXPORT double colyseus_gm_event_get_latency(void);
+
 #ifdef __cplusplus
 }
 #endif

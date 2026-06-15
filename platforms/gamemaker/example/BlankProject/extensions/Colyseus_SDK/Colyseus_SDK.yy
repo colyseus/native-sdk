@@ -1437,6 +1437,59 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_get_latency",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_get_latency",
+          "help": "(internal) Measure latency to an endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_get_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_select_by_latency",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_select_by_latency",
+          "help": "(internal) Select lowest-latency endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_select_by_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_latency",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_latency",
+          "help": "Get latency (ms) from the current latency event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_http_push_response",
           "argCount": 3,
           "args": [
@@ -1469,6 +1522,63 @@
           "hidden": true,
           "kind": 1,
           "name": "__colyseus_gm_http_push_error",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_response",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_response",
+          "help": "(internal) Push latency success event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_response",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_error",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_error",
+          "help": "(internal) Push latency error event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_error",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_selected",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_selected",
+          "help": "(internal) Push latency selection event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_selected",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2
@@ -2905,6 +3015,59 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_get_latency",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_get_latency",
+          "help": "(internal) Measure latency to an endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_get_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_select_by_latency",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_select_by_latency",
+          "help": "(internal) Select lowest-latency endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_select_by_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_latency",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_latency",
+          "help": "Get latency (ms) from the current latency event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_http_push_response",
           "argCount": 3,
           "args": [
@@ -2937,6 +3100,63 @@
           "hidden": true,
           "kind": 1,
           "name": "__colyseus_gm_http_push_error",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_response",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_response",
+          "help": "(internal) Push latency success event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_response",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_error",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_error",
+          "help": "(internal) Push latency error event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_error",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_selected",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_selected",
+          "help": "(internal) Push latency selection event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_selected",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2

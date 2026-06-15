@@ -602,3 +602,31 @@ void colyseus_room_available_free(colyseus_room_available_t* room) {
     free(room->process_id);
     free(room->public_address);
 }
+
+void colyseus_client_get_latency(colyseus_client_t* client,
+                                 const colyseus_latency_options_t* options,
+                                 colyseus_get_latency_cb_t cb,
+                                 void* userdata) {
+    if (!client || !client->settings) {
+        if (cb) {
+            colyseus_latency_result_t r = { NULL, -1.0, false,
+                                            COLYSEUS_CLOSE_ABNORMAL_CLOSURE,
+                                            (char*)"client has no settings" };
+            cb(&r, userdata);
+        }
+        return;
+    }
+
+    char* endpoint = colyseus_settings_get_websocket_endpoint(client->settings);
+
+    colyseus_latency_options_t opts = {0};
+    if (options) opts = *options;
+    /* TLS is always derived from the client's settings */
+    opts.use_secure = client->settings->use_secure_protocol;
+    opts.tls_skip_verification = client->settings->tls_skip_verification;
+    opts.ca_pem_data = client->settings->ca_pem_data;
+    opts.ca_pem_len = client->settings->ca_pem_len;
+
+    colyseus_get_latency(endpoint, &opts, cb, userdata);
+    free(endpoint);
+}

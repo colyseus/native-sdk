@@ -142,6 +142,7 @@ jobs:
             ../../src/common/settings.c
             ../../src/client.c
             ../../src/room.c
+            ../../src/network/latency.c
             ../../src/network/websocket_transport.c
             ../../src/schema/decode.c
             ../../src/schema/ref_tracker.c
@@ -403,6 +404,7 @@ jobs:
             ../../src/common/settings.c
             ../../src/client.c
             ../../src/room.c
+            ../../src/network/latency.c
             ../../src/network/websocket_transport.c
             ../../src/schema/decode.c
             ../../src/schema/ref_tracker.c

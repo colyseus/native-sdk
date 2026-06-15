@@ -494,6 +494,7 @@ pub fn build(b: *std.Build) void {
         "src/common/settings.c",
         "src/client.c",
         "src/room.c",
+        "src/network/latency.c",
         // Schema
         "src/schema/decode.c",
         "src/schema/ref_tracker.c",
@@ -599,6 +600,7 @@ pub fn build(b: *std.Build) void {
     const headers = .{
         "client.h",
         "http.h",
+        "latency.h",
         "protocol.h",
         "room.h",
         "settings.h",
@@ -700,6 +702,13 @@ pub fn build(b: *std.Build) void {
             .source_file = "examples/auth_example.c",
             .run_step_name = "run-auth-example",
             .run_step_desc = "Run the auth example",
+        }, target, optimize, colyseus, wslay_version_h, c_std);
+
+        buildExample(b, .{
+            .name = "latency_example",
+            .source_file = "examples/latency_example.c",
+            .run_step_name = "run-latency-example",
+            .run_step_desc = "Run the latency selection example",
         }, target, optimize, colyseus, wslay_version_h, c_std);
     }
 
