@@ -2,6 +2,16 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.0
+
+### Added
+- Latency-based endpoint selection:
+  - `colyseus_get_latency(client, endpoint, callback, timeout_ms = 0)` — measures the round-trip time to a server; `callback(err, latency_ms)`.
+  - `colyseus_select_by_latency(client, endpoints, callback, timeout_ms = 0)` — measures an array of endpoints in parallel; `callback(err, { endpoint, latency_ms })` returns the lowest-latency endpoint.
+  - Each measurement always settles — on the pong, a connection error, a server-side close before the pong, or a timeout (default 1500 ms) — so one unreachable/blackholed endpoint can't stall the selection.
+  - Event types `COLYSEUS_EVENT_LATENCY_RESPONSE` (16), `COLYSEUS_EVENT_LATENCY_ERROR` (17) and `COLYSEUS_EVENT_LATENCY_SELECTED` (18), plus dispatch cases in `colyseus_process()`.
+- `TestLatencyApi` script covering latency event dispatch.
+
 ## 0.17.23
 
 ### Added
