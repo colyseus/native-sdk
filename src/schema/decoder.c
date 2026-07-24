@@ -916,19 +916,21 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
         int ref_id = colyseus_decode_varint(bytes, it);
         void* item_by_ref = colyseus_ref_tracker_get(decoder->refs, ref_id);
 
-        /* Find index of item */
+        /* Stale DELETE — refId unknown to this decoder (mid-tick joiner
+         * bootstrapped after the item was removed): no write, no change. */
+        if (item_by_ref == NULL) return true;
+
+        /* Ref-count decrement — this branch never reaches decode_value(),
+         * so it must do the DELETE bookkeeping itself. Must run even when
+         * the item is absent from THIS array (view membership churn). */
+        colyseus_ref_tracker_remove(decoder->refs, ref_id);
+
         index = array_find_index_by_ref(arr, item_by_ref);
 
-        /*
-         * Always emit the DELETE change — matches the TS reference decoder,
-         * which uses refs.get(refId) as previousValue and does not gate the
-         * change on the index lookup. If an earlier ADD_BY_REFID in the same
-         * bundle overwrote item->value, array_find_index_by_ref returns -1;
-         * we still need to fire onRemove so the user sees the deletion.
-         */
-        if (index >= 0) {
-            colyseus_array_schema_delete(arr, index);
-        }
+        /* Not present in this decoder's array — nothing to remove locally. */
+        if (index < 0) return true;
+
+        colyseus_array_schema_delete(arr, index);
 
         int* idx_ptr = malloc(sizeof(int));
         if (idx_ptr) *idx_ptr = index;

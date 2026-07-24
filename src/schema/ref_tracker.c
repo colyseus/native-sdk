@@ -94,6 +94,11 @@ bool colyseus_ref_tracker_has(colyseus_ref_tracker_t* tracker, int ref_id) {
     return entry != NULL;
 }
 
+size_t colyseus_ref_tracker_count(colyseus_ref_tracker_t* tracker) {
+    if (!tracker) return 0;
+    return (size_t)HASH_COUNT(tracker->refs);
+}
+
 bool colyseus_ref_tracker_remove(colyseus_ref_tracker_t* tracker, int ref_id) {
     if (!tracker) return false;
 

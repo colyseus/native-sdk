@@ -62,6 +62,9 @@ colyseus_ref_entry_t* colyseus_ref_tracker_get_entry(colyseus_ref_tracker_t* tra
 /* Check if reference exists */
 bool colyseus_ref_tracker_has(colyseus_ref_tracker_t* tracker, int ref_id);
 
+/* Number of tracked references */
+size_t colyseus_ref_tracker_count(colyseus_ref_tracker_t* tracker);
+
 /* Remove a reference (decrements count, schedules for GC if count reaches 0) */
 bool colyseus_ref_tracker_remove(colyseus_ref_tracker_t* tracker, int ref_id);
 
