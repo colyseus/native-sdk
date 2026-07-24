@@ -225,7 +225,14 @@ void colyseus_schema_serializer_set_state(colyseus_schema_serializer_t* serializ
     if (!serializer) return;
 
     serializer->it.offset = offset;
-    colyseus_decoder_decode(serializer->decoder, data, length, &serializer->it);
+
+    if (colyseus_ref_tracker_count(serializer->decoder->refs) > 1) {
+        /* rejoin over live state: reconcile ghosts (deletions that happened
+         * while off the wire) instead of decoding additively */
+        colyseus_decoder_decode_resync(serializer->decoder, data, length, &serializer->it);
+    } else {
+        colyseus_decoder_decode(serializer->decoder, data, length, &serializer->it);
+    }
 }
 
 void* colyseus_schema_serializer_get_state(colyseus_schema_serializer_t* serializer) {

@@ -4,6 +4,9 @@
 #include <string.h>
 #include <stdio.h>
 
+/* resync bookkeeping — defined alongside the other resync helpers below */
+static colyseus_resync_visited_entry_t* resync_visited_for(colyseus_decoder_t* decoder, int ref_id);
+
 /* ============================================================================
  * Type Context
  * ============================================================================ */
@@ -82,6 +85,9 @@ colyseus_decoder_t* colyseus_decoder_create(const colyseus_schema_vtable_t* stat
     decoder->state_vtable = state_vtable;
     decoder->trigger_changes = NULL;
     decoder->trigger_userdata = NULL;
+    decoder->resync_visited = NULL;
+    decoder->resync_active = false;
+    decoder->resync_damaged = false;
 
     /* Create initial state (handles both static and dynamic vtables) */
     decoder->state = create_schema_from_vtable(state_vtable);
@@ -556,6 +562,10 @@ static void* decode_value(
     if (strcmp(field_type, "array") == 0) {
         int ref_id = colyseus_decode_varint(bytes, it);
 
+        /* resync bookkeeping: mark the collection present in the payload —
+         * even with zero entries — so the sweep knows it participated */
+        if (decoder->resync_active) { (void)resync_visited_for(decoder, ref_id); }
+
         /* Check if ref exists AND is actually an ARRAY type */
         colyseus_array_schema_t* arr_ref = NULL;
         colyseus_ref_entry_t* entry = colyseus_ref_tracker_get_entry(decoder->refs, ref_id);
@@ -593,6 +603,10 @@ static void* decode_value(
     /* map type */
     if (strcmp(field_type, "map") == 0) {
         int ref_id = colyseus_decode_varint(bytes, it);
+
+        /* resync bookkeeping: mark the collection present in the payload —
+         * even with zero entries — so the sweep knows it participated */
+        if (decoder->resync_active) { (void)resync_visited_for(decoder, ref_id); }
 
         /* Check if ref exists AND is actually a MAP type */
         colyseus_map_schema_t* map_ref = NULL;
@@ -821,6 +835,304 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
 }
 
 /* ============================================================================
+ * Resync bookkeeping (see PORTING_RESYNC.md in @colyseus/schema)
+ *
+ * All entry points are guarded by `decoder->resync_active` at the call
+ * sites — the normal decode path never pays for any of this.
+ * ============================================================================ */
+
+static colyseus_resync_visited_entry_t* resync_visited_for(colyseus_decoder_t* decoder, int ref_id) {
+    colyseus_resync_visited_entry_t* entry = NULL;
+    HASH_FIND_INT(decoder->resync_visited, &ref_id, entry);
+    if (!entry) {
+        entry = calloc(1, sizeof(*entry));
+        if (!entry) return NULL;
+        entry->ref_id = ref_id;
+        HASH_ADD_INT(decoder->resync_visited, ref_id, entry);
+    }
+    return entry;
+}
+
+static void resync_touch_key(colyseus_decoder_t* decoder, int ref_id, const char* key) {
+    if (!key) return;
+    colyseus_resync_visited_entry_t* entry = resync_visited_for(decoder, ref_id);
+    if (!entry) return;
+
+    colyseus_resync_str_id_t* id = NULL;
+    HASH_FIND_STR(entry->keys, key, id);
+    if (!id) {
+        id = malloc(sizeof(*id));
+        if (!id) return;
+        id->key = strdup(key); /* the visited set owns its own copy */
+        HASH_ADD_KEYPTR(hh, entry->keys, id->key, strlen(id->key), id);
+    }
+}
+
+static void resync_touch_index(colyseus_decoder_t* decoder, int ref_id, int index) {
+    colyseus_resync_visited_entry_t* entry = resync_visited_for(decoder, ref_id);
+    if (!entry) return;
+
+    colyseus_resync_int_id_t* id = NULL;
+    HASH_FIND_INT(entry->indexes, &index, id);
+    if (!id) {
+        id = malloc(sizeof(*id));
+        if (!id) return;
+        id->index = index;
+        HASH_ADD_INT(entry->indexes, index, id);
+    }
+}
+
+/*
+ * Release a replaced occupant: full-sync emits plain ADD (never
+ * DELETE_AND_ADD), so an entry whose instance changed while this client was
+ * off the wire would otherwise leak its previous ref. Resync-only — a live
+ * patch's plain ADD can be a positional rewrite where the occupant moved
+ * and is still alive.
+ */
+static void resync_release_replaced(colyseus_decoder_t* decoder, int parent_ref_id,
+    uint8_t operation, bool has_schema_child,
+    const char* key_identity, int index_identity,
+    void* previous_value, void* value)
+{
+    if (previous_value == NULL || previous_value == value) return;
+    if (operation != (uint8_t)COLYSEUS_OP_ADD) return;
+    if (!has_schema_child) return;
+
+    colyseus_ref_tracker_remove(decoder->refs, ((colyseus_schema_t*)previous_value)->__refId);
+
+    void* dynamic_index;
+    if (key_identity) {
+        dynamic_index = strdup(key_identity);
+    } else {
+        int* idx_ptr = malloc(sizeof(int));
+        if (idx_ptr) *idx_ptr = index_identity;
+        dynamic_index = idx_ptr;
+    }
+
+    colyseus_data_change_t change = {
+        .ref_id = parent_ref_id,
+        .op = (uint8_t)COLYSEUS_OP_DELETE,
+        .field = NULL,
+        .dynamic_index = dynamic_index,
+        .value = NULL,
+        .previous_value = previous_value,
+        .field_type = COLYSEUS_FIELD_REF,
+        .owns_previous_value = false
+    };
+    colyseus_changes_add(decoder->changes, &change);
+}
+
+static void resync_free_visited(colyseus_decoder_t* decoder) {
+    colyseus_resync_visited_entry_t *entry, *tmp;
+    HASH_ITER(hh, decoder->resync_visited, entry, tmp) {
+        colyseus_resync_str_id_t *sid, *stmp;
+        HASH_ITER(hh, entry->keys, sid, stmp) {
+            HASH_DEL(entry->keys, sid);
+            free(sid->key);
+            free(sid);
+        }
+        colyseus_resync_int_id_t *iid, *itmp;
+        HASH_ITER(hh, entry->indexes, iid, itmp) {
+            HASH_DEL(entry->indexes, iid);
+            free(iid);
+        }
+        HASH_DEL(decoder->resync_visited, entry);
+        free(entry);
+    }
+}
+
+/* ── the post-decode sweep ────────────────────────────────────────────── */
+
+static bool resync_seen_add(colyseus_resync_int_id_t** seen, int ref_id) {
+    colyseus_resync_int_id_t* entry = NULL;
+    HASH_FIND_INT(*seen, &ref_id, entry);
+    if (entry) return false;
+    entry = malloc(sizeof(*entry));
+    if (!entry) return false;
+    entry->index = ref_id;
+    HASH_ADD_INT(*seen, index, entry);
+    return true;
+}
+
+static void resync_sweep_schema(colyseus_decoder_t* decoder, colyseus_schema_t* schema, colyseus_resync_int_id_t** seen);
+static void resync_sweep_array(colyseus_decoder_t* decoder, colyseus_array_schema_t* arr, colyseus_resync_int_id_t** seen);
+static void resync_sweep_map(colyseus_decoder_t* decoder, colyseus_map_schema_t* map, colyseus_resync_int_id_t** seen);
+
+static void resync_sweep_schema(colyseus_decoder_t* decoder, colyseus_schema_t* schema, colyseus_resync_int_id_t** seen) {
+    if (!schema || !schema->__vtable) return;
+    if (!resync_seen_add(seen, schema->__refId)) return;
+
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        const colyseus_dynamic_vtable_t* dv = colyseus_vtable_as_dynamic(schema->__vtable);
+        for (int i = 0; i < dv->dyn_field_count; i++) {
+            const colyseus_dynamic_field_t* field = dv->dyn_fields[i];
+            if (field->type != COLYSEUS_FIELD_REF &&
+                field->type != COLYSEUS_FIELD_ARRAY &&
+                field->type != COLYSEUS_FIELD_MAP) {
+                continue;
+            }
+            colyseus_dynamic_value_t* v = colyseus_dynamic_schema_get((colyseus_dynamic_schema_t*)schema, field->index);
+            if (!v || !v->data.ptr) continue;
+
+            if (field->type == COLYSEUS_FIELD_REF) {
+                resync_sweep_schema(decoder, (colyseus_schema_t*)v->data.ref, seen);
+            } else if (field->type == COLYSEUS_FIELD_ARRAY) {
+                resync_sweep_array(decoder, v->data.array, seen);
+            } else {
+                resync_sweep_map(decoder, v->data.map, seen);
+            }
+        }
+    } else {
+        const colyseus_schema_vtable_t* vt = schema->__vtable;
+        for (int i = 0; i < vt->field_count; i++) {
+            const colyseus_field_t* field = &vt->fields[i];
+            if (field->type != COLYSEUS_FIELD_REF &&
+                field->type != COLYSEUS_FIELD_ARRAY &&
+                field->type != COLYSEUS_FIELD_MAP) {
+                continue;
+            }
+            void* value = *(void**)((char*)schema + field->offset);
+            if (!value) continue;
+
+            if (field->type == COLYSEUS_FIELD_REF) {
+                resync_sweep_schema(decoder, (colyseus_schema_t*)value, seen);
+            } else if (field->type == COLYSEUS_FIELD_ARRAY) {
+                resync_sweep_array(decoder, (colyseus_array_schema_t*)value, seen);
+            } else {
+                resync_sweep_map(decoder, (colyseus_map_schema_t*)value, seen);
+            }
+        }
+    }
+}
+
+static void resync_sweep_map(colyseus_decoder_t* decoder, colyseus_map_schema_t* map, colyseus_resync_int_id_t** seen) {
+    if (!map) return;
+    if (!resync_seen_add(seen, map->__refId)) return;
+
+    /* absent = the collection never appeared in the payload at all — it is
+     * not part of full-sync (@transient, view-invisible) and must be left
+     * alone. An empty entry means "present with zero entries". */
+    colyseus_resync_visited_entry_t* visited = NULL;
+    HASH_FIND_INT(decoder->resync_visited, &map->__refId, visited);
+    if (!visited) return;
+
+    colyseus_map_item_t *item, *tmp;
+    HASH_ITER(hh, map->items, item, tmp) {
+        colyseus_resync_str_id_t* hit = NULL;
+        HASH_FIND_STR(visited->keys, item->key, hit);
+        if (hit) {
+            /* recurse so nested collections of retained entries sweep too;
+             * swept subtrees are left to the GC's transitive walk instead */
+            if (map->has_schema_child && item->value) {
+                resync_sweep_schema(decoder, (colyseus_schema_t*)item->value, seen);
+            }
+            continue;
+        }
+
+        colyseus_data_change_t change = {
+            .ref_id = map->__refId,
+            .op = (uint8_t)COLYSEUS_OP_DELETE,
+            .field = NULL,
+            .dynamic_index = strdup(item->key),
+            .value = NULL,
+            .previous_value = item->value,
+            .field_type = map->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
+            .owns_previous_value = false
+        };
+        colyseus_changes_add(decoder->changes, &change);
+
+        if (map->has_schema_child && item->value) {
+            colyseus_ref_tracker_remove(decoder->refs, ((colyseus_schema_t*)item->value)->__refId);
+        }
+
+        /* scrub ALL index→key rows of the swept key — including stale ones
+         * left behind by re-indexing (the journal never evicts them) */
+        colyseus_map_index_t *idx, *idxtmp;
+        HASH_ITER(hh, map->indexes, idx, idxtmp) {
+            if (strcmp(idx->key, item->key) == 0) {
+                HASH_DEL(map->indexes, idx);
+                free(idx->key);
+                free(idx);
+            }
+        }
+
+        /* same ownership as colyseus_map_schema_delete_by_index: item node +
+         * key only — the value pointer stays alive for the pending change */
+        HASH_DEL(map->items, item);
+        free(item->key);
+        free(item);
+        map->count--;
+    }
+}
+
+static void resync_sweep_array(colyseus_decoder_t* decoder, colyseus_array_schema_t* arr, colyseus_resync_int_id_t** seen) {
+    if (!arr) return;
+    if (!resync_seen_add(seen, arr->__refId)) return;
+
+    colyseus_resync_visited_entry_t* visited = NULL;
+    HASH_FIND_INT(decoder->resync_visited, &arr->__refId, visited);
+    if (!visited) return;
+
+    /* colyseus_array_schema_delete only NULLs the slot + records the key,
+     * so iterating the linked list while deleting is safe */
+    bool removed = false;
+    for (colyseus_array_item_t* item = arr->items; item; item = item->next) {
+        if (item->value == NULL) continue;
+
+        colyseus_resync_int_id_t* hit = NULL;
+        HASH_FIND_INT(visited->indexes, &item->index, hit);
+        if (hit) {
+            if (arr->has_schema_child) {
+                resync_sweep_schema(decoder, (colyseus_schema_t*)item->value, seen);
+            }
+            continue;
+        }
+
+        int* idx_ptr = malloc(sizeof(int));
+        if (idx_ptr) *idx_ptr = item->index;
+        colyseus_data_change_t change = {
+            .ref_id = arr->__refId,
+            .op = (uint8_t)COLYSEUS_OP_DELETE,
+            .field = NULL,
+            .dynamic_index = idx_ptr,
+            .value = NULL,
+            .previous_value = item->value,
+            .field_type = arr->has_schema_child ? COLYSEUS_FIELD_REF : COLYSEUS_FIELD_STRING,
+            .owns_previous_value = false
+        };
+        colyseus_changes_add(decoder->changes, &change);
+
+        if (arr->has_schema_child) {
+            colyseus_ref_tracker_remove(decoder->refs, ((colyseus_schema_t*)item->value)->__refId);
+        }
+
+        colyseus_array_schema_delete(arr, item->index);
+        removed = true;
+    }
+
+    if (removed) {
+        /* removes the holes AND renumbers survivors 0..n-1 */
+        colyseus_array_schema_on_decode_end(arr);
+    }
+}
+
+static void resync_sweep(colyseus_decoder_t* decoder) {
+    if (decoder->resync_damaged) {
+        fprintf(stderr, "colyseus-schema: resync sweep skipped — parts of the payload could not be decoded. Stale entries may persist until the next resync.\n");
+        return;
+    }
+
+    colyseus_resync_int_id_t* seen = NULL;
+    resync_sweep_schema(decoder, decoder->state, &seen);
+
+    colyseus_resync_int_id_t *entry, *tmp;
+    HASH_ITER(hh, seen, entry, tmp) {
+        HASH_DEL(seen, entry);
+        free(entry);
+    }
+}
+
+/* ============================================================================
  * Map decode
  * ============================================================================ */
 
@@ -870,6 +1182,15 @@ static bool decode_map_schema(colyseus_decoder_t* decoder, const uint8_t* bytes,
         if (value != NULL && dynamic_index) {
             colyseus_map_schema_set_by_index(map, field_index, dynamic_index, value);
         }
+    }
+
+    /* resync bookkeeping — record even when the value is unchanged (the
+     * change list can't serve as the record: its pushes are gated). Runs
+     * BEFORE dynamic_index ownership transfers to the change list. */
+    if (decoder->resync_active) {
+        resync_touch_key(decoder, map->__refId, dynamic_index);
+        resync_release_replaced(decoder, map->__refId, operation, map->has_schema_child,
+            dynamic_index, 0, previous_value, value);
     }
 
     /* Record change */
@@ -984,8 +1305,20 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
             field_type, child_vtable, NULL, operation, previous_value);
 
         if (value != NULL) {
-            colyseus_array_schema_set(arr, index, value, operation);
+            /* resync snapshot ADDs are positional overwrites, not inserts */
+            colyseus_array_schema_set(arr, index, value,
+                (decoder->resync_active && operation == (uint8_t)COLYSEUS_OP_ADD)
+                    ? (uint8_t)COLYSEUS_OP_REPLACE
+                    : operation);
         }
+    }
+
+    /* resync bookkeeping — identity is the resolved client-side index
+     * (ADD_BY_REFID resolves above, so visited indexes may be sparse) */
+    if (decoder->resync_active) {
+        resync_touch_index(decoder, arr->__refId, index);
+        resync_release_replaced(decoder, arr->__refId, operation, arr->has_schema_child,
+            NULL, index, previous_value, value);
     }
 
     /* Record change */
@@ -1044,6 +1377,10 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
                 fprintf(stderr, "colyseus-schema: \"refId\" not found: %d (previous refId: %d)\n",
                     ref_id, previous_ref_id);
 
+                /* a skipped range can swallow other structures' ops — resync
+                 * visited data is no longer trustworthy */
+                if (decoder->resync_active) { decoder->resync_damaged = true; }
+
                 /* Skip to next SWITCH_TO_STRUCTURE with a known refId.
                  * Must validate the refId after each 0xFF marker to avoid
                  * false matches on data bytes that happen to be 0xFF. */
@@ -1087,6 +1424,11 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
 
         if (!success) {
             /* Schema mismatch - skip until next known structure */
+
+            /* a skipped range can swallow other structures' ops — resync
+             * visited data is no longer trustworthy */
+            if (decoder->resync_active) { decoder->resync_damaged = true; }
+
             colyseus_iterator_t next_it = {it->offset};
 
             while (it->offset < (int)length) {
@@ -1108,6 +1450,11 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
         colyseus_array_schema_on_decode_end((colyseus_array_schema_t*)_ref);
     }
 
+    /* resync mode: prune everything the snapshot didn't visit. Runs before
+     * trigger_changes (DELETE changes fire on-remove with the real
+     * previous_value) and before GC (ref_tracker_remove feeds the list). */
+    if (decoder->resync_active) { resync_sweep(decoder); }
+
     /* Trigger changes callback */
     if (decoder->trigger_changes) {
         decoder->trigger_changes(decoder->changes, decoder->trigger_userdata);
@@ -1115,4 +1462,18 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
 
     /* Run garbage collection */
     colyseus_ref_tracker_gc(decoder->refs);
+}
+
+void colyseus_decoder_decode_resync(colyseus_decoder_t* decoder, const uint8_t* bytes, size_t length, colyseus_iterator_t* it) {
+    if (!decoder) return;
+
+    decoder->resync_visited = NULL;
+    decoder->resync_active = true;
+    decoder->resync_damaged = false;
+
+    colyseus_decoder_decode(decoder, bytes, length, it);
+
+    resync_free_visited(decoder);
+    decoder->resync_visited = NULL;
+    decoder->resync_active = false;
 }

@@ -166,6 +166,31 @@ static void schedule_children_for_removal(colyseus_ref_tracker_t* tracker, colys
 
     switch (entry->ref_type) {
         case COLYSEUS_REF_TYPE_SCHEMA: {
+            /* dynamic vtables have no static field table — walk dyn_fields */
+            if (entry->vtable && colyseus_vtable_is_dynamic(entry->vtable)) {
+                const colyseus_dynamic_vtable_t* dv = colyseus_vtable_as_dynamic(entry->vtable);
+                colyseus_dynamic_schema_t* dschema = (colyseus_dynamic_schema_t*)entry->ref;
+
+                for (int i = 0; i < dv->dyn_field_count; i++) {
+                    const colyseus_dynamic_field_t* field = dv->dyn_fields[i];
+                    if (field->type != COLYSEUS_FIELD_REF &&
+                        field->type != COLYSEUS_FIELD_ARRAY &&
+                        field->type != COLYSEUS_FIELD_MAP) {
+                        continue;
+                    }
+
+                    colyseus_dynamic_value_t* dvv = colyseus_dynamic_schema_get(dschema, field->index);
+                    if (!dvv || !dvv->data.ptr) continue;
+
+                    int child_ref_id = COLYSEUS_REF_ID(dvv->data.ptr);
+                    if (colyseus_ref_tracker_has(tracker, child_ref_id) &&
+                        !is_in_deleted_list(tracker, child_ref_id)) {
+                        colyseus_ref_tracker_remove(tracker, child_ref_id);
+                    }
+                }
+                break;
+            }
+
             if (!entry->vtable || !entry->vtable->fields) break;
 
             colyseus_schema_t* schema = (colyseus_schema_t*)entry->ref;
