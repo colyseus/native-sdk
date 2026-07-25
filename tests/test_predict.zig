@@ -14,8 +14,13 @@ const c = @cImport({
     @cInclude("colyseus/input_handle.h");
     @cInclude("colyseus/predict/drift.h");
     @cInclude("colyseus/predict/reconciler.h");
+    @cInclude("colyseus/predict/predict.h");
     @cInclude("colyseus/schema/input_encoder.h");
+    @cInclude("colyseus/schema/decoder.h");
+    @cInclude("colyseus/schema/callbacks.h");
     @cInclude("schema/recon_state.h");
+    @cInclude("schema/passive_ent.h");
+    @cInclude("schema/reckon_ball.h");
     @cInclude("schema/accel_input.h");
 });
 
@@ -224,4 +229,133 @@ test "drift_math" {
     d.ema = 0;
     d.peak = 0;
     try testing.expectEqual(@as(c_uint, c.COLYSEUS_DRIFT_MATCHED), c.colyseus_drift_classify(&d, 0));
+}
+
+// ─── passive smoothing (fixture scenario D) ─────────────────────────────────
+
+fn decodeBytes(decoder: *c.colyseus_decoder_t, bytes: []const u8) void {
+    var it = c.colyseus_iterator_t{ .offset = 0 };
+    c.colyseus_decoder_decode(decoder, bytes.ptr, bytes.len, &it);
+}
+
+test "passive_smoothing" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+
+    const decoder = c.colyseus_decoder_create(&c.passive_ent_vtable).?;
+    defer c.colyseus_decoder_free(decoder);
+    const callbacks = c.colyseus_callbacks_create(decoder).?;
+    defer c.colyseus_callbacks_free(callbacks);
+    const clock = c.colyseus_room_clock_create().?;
+    defer c.colyseus_room_clock_free(clock);
+    c.colyseus_room_clock_set_patch_interval(clock, 50);
+
+    const p = c.colyseus_predict_create(callbacks, clock).?;
+    defer c.colyseus_predict_free(p);
+    const ent: *c.colyseus_schema_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
+
+    var lerp_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    lerp_opts.mode = c.COLYSEUS_PREDICT_LERP;
+    _ = c.colyseus_predict_track(p, ent, "a", &lerp_opts);
+    var damped_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    damped_opts.mode = c.COLYSEUS_PREDICT_DAMPED;
+    _ = c.colyseus_predict_track(p, ent, "b", &damped_opts);
+    var ext_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    ext_opts.mode = c.COLYSEUS_PREDICT_EXTRAPOLATE;
+    ext_opts.damping = -1; // raw projection (no output EMA)
+    _ = c.colyseus_predict_track(p, ent, "c", &ext_opts);
+    var raw_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    raw_opts.mode = c.COLYSEUS_PREDICT_RAW;
+    _ = c.colyseus_predict_track(p, ent, "d", &raw_opts);
+    var angle_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    angle_opts.mode = c.COLYSEUS_PREDICT_LERP;
+    angle_opts.angle = true;
+    _ = c.colyseus_predict_track(p, ent, "yaw", &angle_opts);
+
+    // patches on the server-time axis: sample(sNow, -1) at NOW=sNow pins
+    // offset 0 → serverNow == NOW, lastServerTime == sNow (fixture axis)
+    NOW = 1000;
+    c.colyseus_room_clock_sample(clock, 1000, -1);
+    decodeBytes(decoder, &[_]u8{ 128, 10, 129, 10, 130, 10, 131, 10, 132, 3 });
+    NOW = 1050;
+    c.colyseus_room_clock_sample(clock, 1050, -1);
+    decodeBytes(decoder, &[_]u8{ 128, 20, 129, 20, 130, 20, 131, 20, 132, 253 }); // yaw -3 crosses ±π
+    NOW = 1100;
+    c.colyseus_room_clock_sample(clock, 1100, -1);
+    decodeBytes(decoder, &[_]u8{ 128, 30, 129, 30, 130, 30, 131, 30 });
+
+    // fixture reads @1150: lerp(a)=20, raw(d)=30, extrapolate(c)=40
+    NOW = 1150;
+    c.colyseus_predict_tick(p, NOW);
+    try testing.expectEqual(@as(f64, 20), c.colyseus_predict_value(p, ent, "a"));
+    try testing.expectEqual(@as(f64, 30), c.colyseus_predict_value(p, ent, "d"));
+    try testing.expectEqual(@as(f64, 40), c.colyseus_predict_value(p, ent, "c"));
+    // angle: unwrapped fold keeps the lerp on the ±π seam
+    const yaw_mid = c.colyseus_predict_value(p, ent, "yaw");
+    try testing.expect(@abs(yaw_mid) > 3.0);
+
+    NOW = 1175;
+    c.colyseus_predict_tick(p, NOW);
+    try testing.expectEqual(@as(f64, 25), c.colyseus_predict_value(p, ent, "a"));
+    try testing.expectEqual(@as(f64, 45), c.colyseus_predict_value(p, ent, "c"));
+
+    // idle-resume gap collapse: a idle 1100→1400, resumes at 40; synthetic
+    // held sample (1350, 30) → 31 / 35 / 40 at the fixture read instants
+    NOW = 1400;
+    c.colyseus_room_clock_sample(clock, 1400, -1);
+    decodeBytes(decoder, &[_]u8{ 128, 40 });
+    NOW = 1455;
+    c.colyseus_predict_tick(p, NOW);
+    try testing.expectEqual(@as(f64, 31), c.colyseus_predict_value(p, ent, "a"));
+    NOW = 1475;
+    c.colyseus_predict_tick(p, NOW);
+    try testing.expectEqual(@as(f64, 35), c.colyseus_predict_value(p, ent, "a"));
+    NOW = 1500;
+    c.colyseus_predict_tick(p, NOW);
+    try testing.expectEqual(@as(f64, 40), c.colyseus_predict_value(p, ent, "a"));
+}
+
+// ─── reckon + valueAt (fixture scenario E) ──────────────────────────────────
+
+fn ballStep(state: ?*c.colyseus_schema_t, dt: f64, elapsed_ms: f64, userdata: ?*anyopaque) callconv(.c) void {
+    _ = elapsed_ms;
+    _ = userdata;
+    const s: *c.reckon_ball_t = @ptrCast(@alignCast(state.?));
+    s.x += s.vx * dt;
+}
+
+test "reckon_value_at" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+
+    const decoder = c.colyseus_decoder_create(&c.reckon_ball_vtable).?;
+    defer c.colyseus_decoder_free(decoder);
+    const callbacks = c.colyseus_callbacks_create(decoder).?;
+    defer c.colyseus_callbacks_free(callbacks);
+    const clock = c.colyseus_room_clock_create().?;
+    defer c.colyseus_room_clock_free(clock);
+
+    const p = c.colyseus_predict_create(callbacks, clock).?;
+    defer c.colyseus_predict_free(p);
+    const ball: *c.colyseus_schema_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
+
+    const fields = [_][*c]const u8{"x"};
+    // smoothing 0 → raw projection (exp()-free); substep 10
+    try testing.expectEqual(@as(c_int, 0), c.colyseus_predict_track_reckon(
+        p, ball, &c.reckon_ball_vtable, @ptrCast(&fields), 1, ballStep, 0, 10, 0, null));
+
+    // patch: x=100, vx=50 stamped sNow=1000 (offset 0 → serverNow == NOW)
+    NOW = 1000;
+    c.colyseus_room_clock_sample(clock, 1000, -1);
+    decodeBytes(decoder, &[_]u8{ 128, 100, 129, 50 });
+
+    // fixture: 1000→100, 1050→102.5, 1100→105, 1200→110
+    const expect_x = [_][2]f64{ .{ 1000, 100 }, .{ 1050, 102.5 }, .{ 1100, 105 }, .{ 1200, 110 } };
+    for (expect_x) |pair| {
+        NOW = pair[0];
+        c.colyseus_predict_tick(p, NOW);
+        try testing.expectEqual(pair[1], c.colyseus_predict_value(p, ball, "x"));
+    }
+
+    // valueAt: arbitrary instant raw; past clamps to the snapshot
+    try testing.expectEqual(@as(f64, 107.5), c.colyseus_predict_value_at(p, ball, "x", 1150));
+    try testing.expectEqual(@as(f64, 100), c.colyseus_predict_value_at(p, ball, "x", 900));
 }

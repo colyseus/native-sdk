@@ -788,6 +788,12 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
             operation, previous_value);
     }
 
+    /* Change gate — decided BEFORE the set: the static-branch re-point below
+     * makes `value` alias the field storage (the same pointer
+     * get_schema_field returned for previous_value), which would otherwise
+     * suppress every scalar change record. */
+    bool record_change = previous_value != value;
+
     /* Set field value */
     if (value != NULL || operation == (uint8_t)COLYSEUS_OP_DELETE) {
         if (is_dynamic) {
@@ -825,12 +831,32 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
             /* Re-fetch — points into stable dynamic value storage */
             value = get_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field);
         } else {
+            bool value_was_set = value != NULL;
             set_schema_field(schema, field, value);
+            /* set_schema_field CONSUMES (frees) the decoded temp for scalar
+             * primitives — re-point the change payload at the stable field
+             * storage, or the change record carries a dangling pointer.
+             * Strings transfer ownership into the field (pointer stays valid)
+             * and ref/collection pointers are ref-tracked — both unchanged.
+             * Only when a value was actually consumed: a DELETE (value NULL)
+             * must keep NULL so the changed-gate below still sees it. */
+            if (value_was_set) {
+                switch (field_type) {
+                    case COLYSEUS_FIELD_STRING:
+                    case COLYSEUS_FIELD_REF:
+                    case COLYSEUS_FIELD_ARRAY:
+                    case COLYSEUS_FIELD_MAP:
+                        break;
+                    default:
+                        value = (char*)schema + field->offset;
+                        break;
+                }
+            }
         }
     }
 
     /* Record change */
-    if (previous_value != value) {
+    if (record_change) {
         colyseus_data_change_t change = {
             .ref_id = schema->__refId,
             .op = operation,
@@ -845,7 +871,7 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
         /* Transfer ownership of duplicated string to changes - don't free here */
         owns_previous_value = false;
     }
-    
+
     /* Free duplicated string if change wasn't added */
     if (owns_previous_value) {
         free(previous_value_for_change);

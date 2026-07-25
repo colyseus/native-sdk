@@ -497,6 +497,7 @@ pub fn build(b: *std.Build) void {
         "src/room_clock.c",
         "src/input_handle.c",
         "src/predict/reconciler.c",
+        "src/predict/predict.c",
         "src/network/latency.c",
         // Schema
         "src/schema/decode.c",
