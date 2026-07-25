@@ -496,6 +496,7 @@ pub fn build(b: *std.Build) void {
         "src/room.c",
         "src/room_clock.c",
         "src/input_handle.c",
+        "src/predict/reconciler.c",
         "src/network/latency.c",
         // Schema
         "src/schema/decode.c",
@@ -740,6 +741,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_room_protocol", .file = "tests/test_room_protocol.zig", .description = "Run 0.18 room wire-compat tests (byte fixtures)" },
         .{ .name = "test_quantized", .file = "tests/test_quantized.zig", .description = "Run 5.0 reflection + t.quantized tests (byte fixtures)" },
         .{ .name = "test_input", .file = "tests/test_input.zig", .description = "Run input layer + RoomClock tests (byte fixtures)" },
+        .{ .name = "test_predict", .file = "tests/test_predict.zig", .description = "Run Predict layer tests (behavior fixtures)" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },

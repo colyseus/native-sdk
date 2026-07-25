@@ -61,6 +61,16 @@ int colyseus_input_handle_send(colyseus_input_handle_t* handle);
 void colyseus_input_handle_reset(colyseus_input_handle_t* handle);
 
 /*
+ * Subscribe to sends: `listener(seq, userdata)` fires synchronously at the
+ * end of each send (replay ring + reckon instant already recorded) — the
+ * prediction layer observes the input stream through this. Returns a
+ * subscription id for colyseus_input_handle_off_send (-1 when full).
+ */
+int colyseus_input_handle_on_send(colyseus_input_handle_t* handle,
+    void (*listener)(int seq, void* userdata), void* userdata);
+void colyseus_input_handle_off_send(colyseus_input_handle_t* handle, int subscription);
+
+/*
  * Feed the server's last-PROCESSED input seq (decoded from the TIMED
  * prefix). Advances last_processed and returns the RTT sample for that ack,
  * or -1 when unknown.

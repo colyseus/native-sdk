@@ -42,8 +42,32 @@ struct colyseus_input_handle {
     colyseus_room_clock_t* (*get_clock)(void* userdata);
     void* userdata;
 
+    /* send observers (the prediction layer subscribes here) */
+    struct {
+        void (*fn)(int seq, void* userdata);
+        void* userdata;
+    } send_listeners[4];
+
     colyseus_wbuf_t frame; /* per-send scratch */
 };
+
+int colyseus_input_handle_on_send(colyseus_input_handle_t* handle,
+    void (*listener)(int seq, void* userdata), void* userdata) {
+    for (int i = 0; i < 4; i++) {
+        if (handle->send_listeners[i].fn == NULL) {
+            handle->send_listeners[i].fn = listener;
+            handle->send_listeners[i].userdata = userdata;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void colyseus_input_handle_off_send(colyseus_input_handle_t* handle, int subscription) {
+    if (subscription < 0 || subscription >= 4) return;
+    handle->send_listeners[subscription].fn = NULL;
+    handle->send_listeners[subscription].userdata = NULL;
+}
 
 colyseus_input_handle_t* colyseus_input_handle_create(
     colyseus_schema_t* data,
@@ -137,6 +161,12 @@ static void record_sent(colyseus_input_handle_t* handle, int seq) {
             handle->reckon_times = calloc(handle->replay_buffer_size, sizeof(double));
         }
         handle->reckon_times[slot] = handle->pending_reckon;
+    }
+    /* notify send observers LAST — the replay ring + reckon instant are recorded */
+    for (int i = 0; i < 4; i++) {
+        if (handle->send_listeners[i].fn) {
+            handle->send_listeners[i].fn(seq, handle->send_listeners[i].userdata);
+        }
     }
 }
 
