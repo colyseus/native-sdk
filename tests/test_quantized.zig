@@ -14,6 +14,8 @@ const c = @cImport({
     @cInclude("colyseus/schema/quantize.h");
     @cInclude("colyseus/schema/dynamic_schema.h");
     @cInclude("colyseus/schema/collections.h");
+    @cInclude("colyseus/schema/decoder.h");
+    @cInclude("schema/q_state.h");
 });
 
 // rows: desc, input, q, roundtrip — behavior lock from the JS reference codec
@@ -235,4 +237,41 @@ test "reflection_and_quantized_state" {
     try testing.expectEqual(@as(f64, 4.000046652010295), c.colyseus_dynamic_schema_get_by_name(state, "yaw").*.data.num);
     try testing.expectEqual(@as(f64, -1.5), c.colyseus_dynamic_schema_get_by_name(state, "pitch").*.data.num);
     try testing.expectEqual(@as(c_int, 4), nums.*.count);
+}
+
+test "static_class_quantized_state" {
+    // same wire fixtures through the schema-codegen generated static vtable
+    // (locks the emitter's precomputed descriptor + 8-member field entries)
+    const decoder = c.colyseus_decoder_create(&c.q_state_vtable).?;
+    defer c.colyseus_decoder_free(decoder);
+
+    const state_bytes = [_]u8{ 128, 238, 50, 129, 187, 130, 55, 221, 154, 31, 131, 1, 132, 2, 133, 5, 134, 4, 135, 161, 113, 255, 1, 128, 0, 1, 128, 1, 202, 0, 0, 32, 64, 128, 2, 3, 255, 2, 128, 0, 161, 97, 161, 120, 255, 5, 128, 7, 255, 4, 128, 0, 6, 128, 1, 7, 255, 6, 128, 1, 255, 7, 128, 2 };
+    var it = c.colyseus_iterator_t{ .offset = 0 };
+    c.colyseus_decoder_decode(decoder, &state_bytes, state_bytes.len, &it);
+
+    const state: *c.q_state_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
+
+    try testing.expectEqual(@as(f64, 1.2500025945283118), state.yaw);
+    try testing.expectEqual(@as(f64, 0.6999999999999997), state.pitch);
+    try testing.expectEqual(@as(f64, 0.12345678897655028), state.precise);
+    try testing.expectEqualStrings("q", std.mem.span(state.label));
+
+    try testing.expectEqual(@as(c_int, 3), state.nums.*.count);
+    const n1: *f64 = @ptrCast(@alignCast(c.colyseus_array_schema_get(state.nums, 1).?));
+    try testing.expectEqual(@as(f64, 2.5), n1.*);
+
+    const tag_a: [*c]const u8 = @ptrCast(c.colyseus_map_schema_get(state.tags, "a").?);
+    try testing.expectEqualStrings("x", std.mem.span(tag_a));
+
+    try testing.expectEqual(@as(f64, 7), state.child.*.v);
+    try testing.expectEqual(@as(c_int, 2), state.items.*.count);
+
+    // patch: yaw changes, pitch clamps to min, nums grows
+    const patch = [_]u8{ 128, 250, 162, 129, 0, 255, 1, 128, 3, 4 };
+    var it2 = c.colyseus_iterator_t{ .offset = 0 };
+    c.colyseus_decoder_decode(decoder, &patch, patch.len, &it2);
+
+    try testing.expectEqual(@as(f64, 4.000046652010295), state.yaw);
+    try testing.expectEqual(@as(f64, -1.5), state.pitch);
+    try testing.expectEqual(@as(c_int, 4), state.nums.*.count);
 }
