@@ -722,6 +722,38 @@ pub fn build(b: *std.Build) void {
     }
 
     // ========================================================================
+    // Prediction-playground validation client (lives in the sibling demos
+    // repo; built only when that checkout is present).
+    // ========================================================================
+    {
+        const probe_src = "../demos/prediction-tools/clients/native/predict_probe.c";
+        if (std.fs.cwd().access(probe_src, .{})) |_| {
+            const probe_module = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+            });
+            const probe = b.addExecutable(.{
+                .name = "predict_probe",
+                .root_module = probe_module,
+            });
+            probe.linkLibC();
+            probe.addCSourceFile(.{
+                .file = .{ .cwd_relative = probe_src },
+                .flags = &.{ "-Wall", "-Wextra", c_std },
+            });
+            probe.addIncludePath(b.path("include"));
+            probe.addIncludePath(b.path("third_party/uthash/src"));
+            probe.addIncludePath(b.path("third_party/sds"));
+            probe.addIncludePath(b.path("third_party/cJSON"));
+            probe.addIncludePath(b.path("third_party/wslay/lib/includes"));
+            probe.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
+            probe.addIncludePath(.{ .cwd_relative = "../demos/prediction-tools/clients/native" });
+            probe.linkLibrary(colyseus);
+            b.installArtifact(probe);
+        } else |_| {}
+    }
+
+    // ========================================================================
     // Build and run tests (skip for emscripten - can't run wasm tests directly)
     // ========================================================================
     if (is_emscripten) return;
