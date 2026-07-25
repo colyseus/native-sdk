@@ -498,6 +498,8 @@ pub fn build(b: *std.Build) void {
         "src/input_handle.c",
         "src/predict/reconciler.c",
         "src/predict/predict.c",
+        "src/predict/events.c",
+        "src/predict/spawns.c",
         "src/network/latency.c",
         // Schema
         "src/schema/decode.c",

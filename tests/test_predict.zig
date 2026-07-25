@@ -359,3 +359,179 @@ test "reckon_value_at" {
     try testing.expectEqual(@as(f64, 107.5), c.colyseus_predict_value_at(p, ball, "x", 1150));
     try testing.expectEqual(@as(f64, 100), c.colyseus_predict_value_at(p, ball, "x", 900));
 }
+
+// ─── event channel + spawns (fixture scenarios F/G) ─────────────────────────
+
+const evc = @cImport({
+    @cInclude("colyseus/predict/events.h");
+    @cInclude("colyseus/predict/spawns.h");
+});
+
+var event_log_buf: [16][32]u8 = undefined;
+var event_log_len: [16]usize = undefined;
+var event_log_count: usize = 0;
+
+fn logEvent(prefix: []const u8, payload: ?*anyopaque) void {
+    if (event_log_count >= event_log_buf.len) return;
+    const name: [*c]const u8 = @ptrCast(payload orelse return);
+    const span = std.mem.span(name);
+    var buf = &event_log_buf[event_log_count];
+    @memcpy(buf[0..prefix.len], prefix);
+    @memcpy(buf[prefix.len .. prefix.len + span.len], span);
+    event_log_len[event_log_count] = prefix.len + span.len;
+    event_log_count += 1;
+}
+
+fn evPredict(payload: ?*anyopaque, userdata: ?*anyopaque) callconv(.c) void {
+    _ = userdata;
+    logEvent("P:", payload);
+}
+fn evConfirm(payload: ?*anyopaque, userdata: ?*anyopaque) callconv(.c) void {
+    _ = userdata;
+    logEvent("C:", payload);
+}
+fn evReject(payload: ?*anyopaque, userdata: ?*anyopaque) callconv(.c) void {
+    _ = userdata;
+    logEvent("R:", payload);
+}
+var unpredicted_count: i32 = 0;
+fn evUnpredicted(key: [*c]const u8, userdata: ?*anyopaque) callconv(.c) void {
+    _ = key;
+    _ = userdata;
+    unpredicted_count += 1;
+}
+
+fn expectLog(index: usize, expected: []const u8) !void {
+    try testing.expect(index < event_log_count);
+    try testing.expectEqualStrings(expected, event_log_buf[index][0..event_log_len[index]]);
+}
+
+test "event_channel_settlement" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    event_log_count = 0;
+    unpredicted_count = 0;
+
+    const clock = c.colyseus_room_clock_create().?;
+    defer c.colyseus_room_clock_free(clock);
+    NOW = 1000;
+    c.colyseus_room_clock_sample(clock, 1000, -1); // offset 0 → serverNow == NOW
+
+    var opts = std.mem.zeroes(evc.colyseus_event_channel_options_t);
+    opts.on_predict = evPredict;
+    opts.on_confirm = evConfirm;
+    opts.on_reject = evReject;
+    opts.on_unpredicted = evUnpredicted;
+    opts.grace_ticks = 3;
+    const chan = evc.colyseus_event_channel_create(&opts, @ptrCast(clock)).?;
+    defer evc.colyseus_event_channel_free(chan);
+
+    // UI-born predict + confirm; unpredicted confirm
+    const goal_a: [*c]const u8 = "goal-a";
+    try testing.expect(evc.colyseus_event_channel_predict(chan, "goal-a", @constCast(goal_a)));
+    try testing.expectEqual(@as(c_int, 1), evc.colyseus_event_channel_pending_count(chan));
+    try testing.expectEqual(@as(c_int, 1), evc.colyseus_event_channel_confirm(chan, "goal-a"));
+    try testing.expectEqual(@as(c_int, 0), evc.colyseus_event_channel_confirm(chan, "goal-b"));
+    try testing.expectEqual(@as(i32, 1), unpredicted_count);
+
+    // pending dedupe
+    const kill_1: [*c]const u8 = "kill-1";
+    try testing.expect(evc.colyseus_event_channel_predict(chan, "kill-1", @constCast(kill_1)));
+    try testing.expect(!evc.colyseus_event_channel_predict(chan, "kill-1", @constCast(kill_1)));
+    try testing.expectEqual(@as(c_int, 1), evc.colyseus_event_channel_pending_count(chan));
+
+    // UI-born TTL: rtt 0 → 600ms on the serverNow axis
+    NOW = 1601;
+    evc.colyseus_event_channel_prune(chan);
+    try testing.expectEqual(@as(c_int, 0), evc.colyseus_event_channel_pending_count(chan));
+
+    try expectLog(0, "P:goal-a");
+    try expectLog(1, "C:goal-a");
+    try expectLog(2, "P:kill-1");
+    try expectLog(3, "R:kill-1");
+}
+
+var spawn_rejected_id: i32 = -1;
+fn spawnReject(local: ?*anyopaque, id: c_int, userdata: ?*anyopaque) callconv(.c) void {
+    _ = local;
+    _ = userdata;
+    spawn_rejected_id = id;
+}
+fn spawnOwned(server: ?*c.colyseus_schema_t, userdata: ?*anyopaque) callconv(.c) bool {
+    _ = userdata;
+    // recon_state doubles as the "rocket": vx > 0 marks "mine"
+    const rocket: *c.recon_state_t = @ptrCast(@alignCast(server.?));
+    return rocket.vx > 0;
+}
+fn spawnTime(server: ?*c.colyseus_schema_t, userdata: ?*anyopaque) callconv(.c) f64 {
+    _ = userdata;
+    const rocket: *c.recon_state_t = @ptrCast(@alignCast(server.?));
+    return rocket.x; // x carries bornMs in this fixture
+}
+fn spawnStep(local: ?*anyopaque, dt: f64, userdata: ?*anyopaque) callconv(.c) void {
+    _ = userdata;
+    const v: *f64 = @ptrCast(@alignCast(local.?));
+    v.* += 10 * dt;
+}
+
+test "spawns_correlation" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    spawn_rejected_id = -1;
+
+    const clock = c.colyseus_room_clock_create().?;
+    defer c.colyseus_room_clock_free(clock);
+    NOW = 1000;
+    c.colyseus_room_clock_sample(clock, 1000, -1);
+
+    var opts = std.mem.zeroes(evc.colyseus_spawns_options_t);
+    opts.owned = @ptrCast(&spawnOwned);
+    opts.spawn_time = @ptrCast(&spawnTime);
+    opts.has_spawn_time = true;
+    opts.step = spawnStep;
+    opts.on_reject = spawnReject;
+    const store = evc.colyseus_spawns_create(&opts, @ptrCast(clock)).?;
+    defer evc.colyseus_spawns_free(store);
+
+    var local_x: f64 = 0;
+    const id1 = evc.colyseus_spawns_spawn(store, &local_x);
+    try testing.expectEqual(@as(c_int, 1), id1);
+
+    // pending local steps on the serverNow axis: 1000 → 1100 = dt 0.1 → +1
+    evc.colyseus_spawns_tick(store, 0);
+    NOW = 1100;
+    evc.colyseus_spawns_tick(store, 0);
+    try testing.expectEqual(@as(f64, 1), local_x);
+
+    // authoritative arrival: fifo match + lead = bornMs(=x) − at = 1080 − 1000
+    const server1 = c.recon_state_create().?;
+    defer c.recon_state_vtable.destroy.?(@ptrCast(server1));
+    server1.*.x = 1080; // bornMs
+    server1.*.vx = 1;   // mine
+    evc.colyseus_spawns_handle_add(store, @ptrCast(server1));
+    const e1 = evc.colyseus_spawns_entry_for(store, @ptrCast(server1)).?;
+    try testing.expectEqual(@as(c_int, 1), e1.*.id);
+    try testing.expect(e1.*.confirmed);
+    try testing.expectEqual(@as(f64, 80), e1.*.lead_ms);
+
+    // foreign entity: never consumes a prediction
+    const server2 = c.recon_state_create().?;
+    defer c.recon_state_vtable.destroy.?(@ptrCast(server2));
+    server2.*.x = 1090;
+    server2.*.vx = -1; // not mine
+    evc.colyseus_spawns_handle_add(store, @ptrCast(server2));
+    const e2 = evc.colyseus_spawns_entry_for(store, @ptrCast(server2)).?;
+    try testing.expectEqual(@as(f64, 0), e2.*.lead_ms);
+    try testing.expectEqual(@as(?*anyopaque, null), e2.*.local);
+
+    // mispredict prune: unmatched pending at serverNow 1100, TTL 600
+    var local2_x: f64 = 0;
+    const id2 = evc.colyseus_spawns_spawn(store, &local2_x);
+    NOW = 1701;
+    evc.colyseus_spawns_prune(store);
+    try testing.expectEqual(id2, spawn_rejected_id);
+    try testing.expect(!evc.colyseus_spawns_alive(store, id2));
+
+    // remove drops the confirmed entry
+    evc.colyseus_spawns_handle_remove(store, @ptrCast(server1));
+    try testing.expect(!evc.colyseus_spawns_alive(store, 1));
+    try testing.expectEqual(@as(c_int, 1), evc.colyseus_spawns_size(store));
+}

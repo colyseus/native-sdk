@@ -522,3 +522,8 @@ double colyseus_reconciler_last_correction(const colyseus_reconciler_t* r, const
     }
     return 0;
 }
+
+/* @internal — events.c reaches the emitting handle through the step ctx. */
+colyseus_input_handle_t* colyseus_reconciler_input_(const void* reconciler) {
+    return ((const colyseus_reconciler_t*)reconciler)->input;
+}
