@@ -497,6 +497,7 @@ pub fn build(b: *std.Build) void {
         "src/network/latency.c",
         // Schema
         "src/schema/decode.c",
+        "src/schema/quantize.c",
         "src/schema/ref_tracker.c",
         "src/schema/collections.c",
         "src/schema/decoder.c",
@@ -733,6 +734,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_schema_arrayops", .file = "tests/test_schema_arrayops.zig", .description = "Run ArraySchema wire-semantics tests (byte fixtures)" },
         .{ .name = "test_schema_resync", .file = "tests/test_schema_resync.zig", .description = "Run decodeResync reconciliation tests (byte fixtures)" },
         .{ .name = "test_room_protocol", .file = "tests/test_room_protocol.zig", .description = "Run 0.18 room wire-compat tests (byte fixtures)" },
+        .{ .name = "test_quantized", .file = "tests/test_quantized.zig", .description = "Run 5.0 reflection + t.quantized tests (byte fixtures)" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },

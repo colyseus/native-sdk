@@ -65,7 +65,22 @@ typedef enum {
     COLYSEUS_FIELD_REF,
     COLYSEUS_FIELD_ARRAY,
     COLYSEUS_FIELD_MAP,
+    COLYSEUS_FIELD_QUANTIZED, /* bounded float on a uintN wire — see quantize.h */
 } colyseus_field_type_t;
+
+/*
+ * Resolved t.quantized() descriptor — precomputed so encode/decode (and any
+ * language port) derive the scale from the same fields. `span` is 2^bits for
+ * wrap (top step folds onto 0) and 2^bits-1 for clamp (endpoints inclusive).
+ */
+typedef struct {
+    double min;
+    double max;
+    double range;   /* max - min */
+    double span;
+    uint8_t bits;   /* 8 | 16 | 32 */
+    bool wrap;      /* false = clamp */
+} colyseus_quantized_descriptor_t;
 
 /* Data change record */
 typedef struct {
@@ -84,7 +99,9 @@ typedef struct {
     int offset;
 } colyseus_iterator_t;
 
-/* Field metadata - describes a single field in a schema */
+/* Field metadata - describes a single field in a schema.
+ * NOTE: append-only — existing designated/partial initializers with fewer
+ * members zero-fill the rest, so older generated headers keep compiling. */
 typedef struct {
     int index;                              /* Field index (from @type decorator) */
     const char* name;                       /* Field name */
@@ -93,6 +110,7 @@ typedef struct {
     size_t offset;                          /* offsetof() into struct */
     const colyseus_schema_vtable_t* child_vtable;  /* For ref/array/map of schema */
     const char* child_primitive_type;       /* For array/map of primitives */
+    const colyseus_quantized_descriptor_t* quantized; /* For COLYSEUS_FIELD_QUANTIZED */
 } colyseus_field_t;
 
 /* Schema vtable - replaces C# reflection */

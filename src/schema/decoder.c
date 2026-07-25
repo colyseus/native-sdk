@@ -1,5 +1,6 @@
 #include "colyseus/schema/decoder.h"
 #include "colyseus/schema/dynamic_schema.h"
+#include "colyseus/schema/quantize.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -266,6 +267,7 @@ static void set_dyn_schema_field(colyseus_dynamic_schema_t* schema,
             break;
         case COLYSEUS_FIELD_NUMBER:
         case COLYSEUS_FIELD_FLOAT64:
+        case COLYSEUS_FIELD_QUANTIZED: /* dequantized double */
             if (value) {
                 dyn_value->data.num = *(double*)value;
                 free(value);
@@ -391,6 +393,7 @@ static void set_schema_field(colyseus_schema_t* schema, const colyseus_field_t* 
 
         case COLYSEUS_FIELD_NUMBER:
         case COLYSEUS_FIELD_FLOAT64:
+        case COLYSEUS_FIELD_QUANTIZED: /* dequantized double */
             if (value) {
                 *(double*)field_ptr = *(double*)value;
                 free(value);
@@ -756,17 +759,34 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
     }
 
     /* Decode value using unified decode_value function */
-    const char* decode_type_str;
-    switch (field_type) {
-        case COLYSEUS_FIELD_REF:   decode_type_str = "ref"; break;
-        case COLYSEUS_FIELD_ARRAY: decode_type_str = "array"; break;
-        case COLYSEUS_FIELD_MAP:   decode_type_str = "map"; break;
-        default:                   decode_type_str = field_type_str; break;
-    }
+    if (field_type == COLYSEUS_FIELD_QUANTIZED) {
+        /* Quantized scalar: read the unsigned int of the descriptor's wire
+         * width, then dequantize — the instance only ever holds the
+         * wire-exact double (see quantize.h). */
+        const colyseus_quantized_descriptor_t* desc = is_dynamic
+            ? dyn_field->quantized
+            : field->quantized;
 
-    value = decode_value(decoder, bytes, length, it,
-        decode_type_str, child_vtable, child_primitive_type,
-        operation, previous_value);
+        uint32_t q = (desc->bits == 8) ? colyseus_decode_uint8(bytes, it)
+                   : (desc->bits == 16) ? colyseus_decode_uint16(bytes, it)
+                   : colyseus_decode_uint32(bytes, it);
+
+        double* decoded = malloc(sizeof(double));
+        if (decoded) { *decoded = colyseus_dequantize(desc, q); }
+        value = decoded;
+    } else {
+        const char* decode_type_str;
+        switch (field_type) {
+            case COLYSEUS_FIELD_REF:   decode_type_str = "ref"; break;
+            case COLYSEUS_FIELD_ARRAY: decode_type_str = "array"; break;
+            case COLYSEUS_FIELD_MAP:   decode_type_str = "map"; break;
+            default:                   decode_type_str = field_type_str; break;
+        }
+
+        value = decode_value(decoder, bytes, length, it,
+            decode_type_str, child_vtable, child_primitive_type,
+            operation, previous_value);
+    }
 
     /* Set field value */
     if (value != NULL || operation == (uint8_t)COLYSEUS_OP_DELETE) {

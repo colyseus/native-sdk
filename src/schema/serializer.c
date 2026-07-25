@@ -1,5 +1,6 @@
 #include "colyseus/schema.h"
 #include "colyseus/schema/dynamic_schema.h"
+#include "colyseus/schema/quantize.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -20,7 +21,21 @@ typedef struct {
     char* name;
     char* type;
     double referenced_type;
+    /* 5.0: primitive child of a collection — own slot, replacing the
+     * legacy "array:string" colon packing */
+    char* child_primitive;
+    /* 5.0: set only on t.quantized() fields; NULL = not quantized */
+    struct reflection_quantized* quantized;
 } reflection_field_t;
+
+/* QuantizedDescriptor schema (5.0) */
+typedef struct reflection_quantized {
+    colyseus_schema_t __base;
+    double min;
+    double max;
+    uint8_t bits;
+    uint8_t mode; /* 0 = clamp, 1 = wrap */
+} reflection_quantized_t;
 
 /* ReflectionType schema */
 typedef struct {
@@ -38,9 +53,39 @@ typedef struct {
 } reflection_t;
 
 /* Forward declarations for vtables */
+static const colyseus_schema_vtable_t reflection_quantized_vtable;
 static const colyseus_schema_vtable_t reflection_field_vtable;
 static const colyseus_schema_vtable_t reflection_type_vtable;
 static const colyseus_schema_vtable_t reflection_vtable;
+
+/* QuantizedDescriptor */
+static colyseus_schema_t* reflection_quantized_create(void) {
+    reflection_quantized_t* q = calloc(1, sizeof(reflection_quantized_t));
+    if (q) {
+        q->__base.__vtable = &reflection_quantized_vtable;
+    }
+    return (colyseus_schema_t*)q;
+}
+
+static void reflection_quantized_destroy(colyseus_schema_t* s) {
+    free(s);
+}
+
+static const colyseus_field_t reflection_quantized_fields[] = {
+    {0, "min", COLYSEUS_FIELD_FLOAT64, "float64", offsetof(reflection_quantized_t, min), NULL, NULL},
+    {1, "max", COLYSEUS_FIELD_FLOAT64, "float64", offsetof(reflection_quantized_t, max), NULL, NULL},
+    {2, "bits", COLYSEUS_FIELD_UINT8, "uint8", offsetof(reflection_quantized_t, bits), NULL, NULL},
+    {3, "mode", COLYSEUS_FIELD_UINT8, "uint8", offsetof(reflection_quantized_t, mode), NULL, NULL},
+};
+
+static const colyseus_schema_vtable_t reflection_quantized_vtable = {
+    "QuantizedDescriptor",
+    sizeof(reflection_quantized_t),
+    reflection_quantized_create,
+    reflection_quantized_destroy,
+    reflection_quantized_fields,
+    4
+};
 
 /* ReflectionField */
 static colyseus_schema_t* reflection_field_create(void) {
@@ -57,6 +102,7 @@ static void reflection_field_destroy(colyseus_schema_t* s) {
     if (f) {
         free(f->name);
         free(f->type);
+        free(f->child_primitive);
         free(f);
     }
 }
@@ -65,6 +111,8 @@ static const colyseus_field_t reflection_field_fields[] = {
     {0, "name", COLYSEUS_FIELD_STRING, "string", offsetof(reflection_field_t, name), NULL, NULL},
     {1, "type", COLYSEUS_FIELD_STRING, "string", offsetof(reflection_field_t, type), NULL, NULL},
     {2, "referencedType", COLYSEUS_FIELD_NUMBER, "number", offsetof(reflection_field_t, referenced_type), NULL, NULL},
+    {3, "childPrimitive", COLYSEUS_FIELD_STRING, "string", offsetof(reflection_field_t, child_primitive), NULL, NULL},
+    {4, "quantized", COLYSEUS_FIELD_REF, "ref", offsetof(reflection_field_t, quantized), &reflection_quantized_vtable, NULL},
 };
 
 static const colyseus_schema_vtable_t reflection_field_vtable = {
@@ -73,7 +121,7 @@ static const colyseus_schema_vtable_t reflection_field_vtable = {
     reflection_field_create,
     reflection_field_destroy,
     reflection_field_fields,
-    3
+    5
 };
 
 /* ReflectionType */
@@ -305,14 +353,8 @@ static colyseus_dynamic_vtable_t* build_vtable_from_reflection_type(
     if (ref_type->fields) {
         colyseus_array_item_t* field_item = ref_type->fields->items;
         
-        fprintf(stderr, "[Reflection] Processing type %d with %d fields\n", type_id, ref_type->fields->count);
-
         while (field_item) {
             reflection_field_t* ref_field = (reflection_field_t*)field_item->value;
-            fprintf(stderr, "[Reflection]   field_item index=%d, name=%s, type=%s\n",
-                field_item->index,
-                ref_field && ref_field->name ? ref_field->name : "(null)",
-                ref_field && ref_field->type ? ref_field->type : "(null)");
             if (ref_field && ref_field->name && ref_field->type) {
                 colyseus_field_type_t field_type = colyseus_field_type_from_string(ref_field->type);
                 
@@ -323,8 +365,20 @@ static colyseus_dynamic_vtable_t* build_vtable_from_reflection_type(
                     field_index, ref_field->name, field_type, ref_field->type);
                 
                 if (dyn_field) {
+                    if (ref_field->quantized) {
+                        /* schema-typed descriptor -> resolved codec */
+                        colyseus_quantized_descriptor_t* desc = malloc(sizeof(*desc));
+                        if (desc) {
+                            *desc = colyseus_quantize_resolve(
+                                ref_field->quantized->min,
+                                ref_field->quantized->max,
+                                ref_field->quantized->bits,
+                                ref_field->quantized->mode == 1);
+                        }
+                        dyn_field->quantized = desc;
+
                     /* Handle referenced types (for ref, map, array of schema) */
-                    if (ref_field->referenced_type >= 0) {
+                    } else if (ref_field->referenced_type >= 0) {
                         /* Find the referenced type in reflection */
                         colyseus_array_item_t* type_item = reflection->types->items;
                         while (type_item) {
@@ -341,16 +395,14 @@ static colyseus_dynamic_vtable_t* build_vtable_from_reflection_type(
                             type_item = type_item->next;
                         }
                     } else if (field_type == COLYSEUS_FIELD_ARRAY || field_type == COLYSEUS_FIELD_MAP) {
-                        /* Primitive child type - extract from type string if possible */
-                        /* For now, assume string primitives for maps without referenced types */
-                        if (strcmp(ref_field->type, "map") == 0 || strcmp(ref_field->type, "array") == 0) {
-                            dyn_field->child_primitive_type = strdup("string");
-                        }
+                        /* 5.0: primitive collection children ride their own
+                         * childPrimitive slot (the 4.x colon packing is gone;
+                         * this also fixes the old hardcoded "string") */
+                        dyn_field->child_primitive_type =
+                            strdup(ref_field->child_primitive ? ref_field->child_primitive : "string");
                     }
-                    
+
                     colyseus_dynamic_vtable_add_field(vtable, dyn_field);
-                    fprintf(stderr, "[Reflection]   Added field '%s' at index %d, type=%s\n",
-                        ref_field->name, field_index, ref_field->type);
                 }
             }
             field_item = field_item->next;

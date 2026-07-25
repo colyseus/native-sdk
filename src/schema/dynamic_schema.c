@@ -319,6 +319,7 @@ void colyseus_dynamic_field_free(colyseus_dynamic_field_t* field) {
     free(field->name);
     free(field->type_str);
     free(field->child_primitive_type);
+    free(field->quantized);
     free(field);
 }
 
@@ -487,6 +488,7 @@ colyseus_field_type_t colyseus_field_type_from_string(const char* type_str) {
     if (strcmp(type_str, "uint64") == 0) return COLYSEUS_FIELD_UINT64;
     if (strcmp(type_str, "float32") == 0) return COLYSEUS_FIELD_FLOAT32;
     if (strcmp(type_str, "float64") == 0) return COLYSEUS_FIELD_FLOAT64;
+    if (strcmp(type_str, "quantized") == 0) return COLYSEUS_FIELD_QUANTIZED;
     if (strcmp(type_str, "ref") == 0) return COLYSEUS_FIELD_REF;
     if (strcmp(type_str, "array") == 0) return COLYSEUS_FIELD_ARRAY;
     if (strcmp(type_str, "map") == 0) return COLYSEUS_FIELD_MAP;
@@ -498,6 +500,7 @@ const char* colyseus_field_type_to_string(colyseus_field_type_t type) {
     switch (type) {
         case COLYSEUS_FIELD_STRING:  return "string";
         case COLYSEUS_FIELD_NUMBER:  return "number";
+        case COLYSEUS_FIELD_QUANTIZED: return "quantized";
         case COLYSEUS_FIELD_BOOLEAN: return "boolean";
         case COLYSEUS_FIELD_INT8:    return "int8";
         case COLYSEUS_FIELD_UINT8:   return "uint8";

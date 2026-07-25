@@ -147,6 +147,7 @@ struct colyseus_dynamic_field {
     char* type_str;                             /* Type string (owned) */
     const colyseus_dynamic_vtable_t* child_vtable;  /* For ref/array/map of schema */
     char* child_primitive_type;                 /* For array/map of primitives (owned) */
+    colyseus_quantized_descriptor_t* quantized; /* For COLYSEUS_FIELD_QUANTIZED (owned) */
 };
 
 /* Create/destroy dynamic field */
