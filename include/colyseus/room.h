@@ -191,6 +191,18 @@ struct colyseus_room {
     void* ping_userdata;
     uint64_t ping_started_at_ms;
 
+    /* server-time + RTT estimator (TIMED prefix); always present */
+    struct colyseus_room_clock* clock;
+
+    /* input layer — populated from the JOIN_ROOM handshake sections */
+    struct colyseus_input_handle* input_handle;
+    const colyseus_schema_vtable_t* input_vtable_from_reflection; /* owned (dynamic) */
+    bool input_stamp_render;
+    bool input_stamp_reckon;
+    int input_tick_rate;   /* 0 = not advertised */
+    int input_patch_rate;
+    int input_sub_steps;
+
     /* Wildcard message handlers - default (msgpack reader) */
     colyseus_room_on_message_fn on_message_any;
     void* on_message_any_userdata;
@@ -248,6 +260,28 @@ bool colyseus_room_is_connected(const colyseus_room_t* room);
  * connection is not open; a new call replaces a still-pending measurement.
  */
 void colyseus_room_ping(colyseus_room_t* room, colyseus_room_on_ping_fn callback, void* userdata);
+
+/*
+ * The room's server-time + RTT estimator (see room_clock.h). Always present;
+ * a room whose server never calls defineInput() simply receives no TIMED
+ * samples (server_now() == now(), zeros elsewhere).
+ */
+struct colyseus_room_clock* colyseus_room_get_clock(colyseus_room_t* room);
+
+/*
+ * Lazily create (and thereafter return) the per-room input handle (see
+ * input_handle.h). Mutate the handle's data instance, then send.
+ *
+ * `input_vtable` may be a static vtable (schema-codegen output for the
+ * server's defineInput() schema) or NULL — NULL synthesizes the schema from
+ * the handshake's INPUT_REFLECTION section (dynamic vtable). Returns NULL
+ * when neither source yields a schema. Later calls return the same handle
+ * (options are ignored — first call wins).
+ */
+struct colyseus_input_handle* colyseus_room_input(
+    colyseus_room_t* room,
+    const colyseus_schema_vtable_t* input_vtable,
+    const void* options /* colyseus_input_options_t*, NULL = defaults */);
 
 const char* colyseus_room_get_reconnection_token(const colyseus_room_t* room);
 

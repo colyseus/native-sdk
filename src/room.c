@@ -1,4 +1,6 @@
 #include "colyseus/room.h"
+#include "colyseus/room_clock.h"
+#include "colyseus/input_handle.h"
 #include "colyseus/websocket_transport.h"
 #include "colyseus/schema.h"
 #include "colyseus/messages.h"
@@ -558,6 +560,13 @@ static void room_handle_reconnection(colyseus_room_t* room, int code, const char
         return;
     }
 
+    /* The server allocates a FRESH input buffer for the reconnected client
+     * (its consumed counter restarts at 0) — zero ours so post-reconnect
+     * seqs line up. Observing controllers follow via the handle's epoch. */
+    if (room->input_handle) {
+        colyseus_input_handle_reset(room->input_handle);
+    }
+
     WORKER_LOCK(w);
     if (!room->reconnection.is_reconnecting) {
         room->reconnection.retry_count = 0;
@@ -588,6 +597,8 @@ colyseus_room_t* colyseus_room_create(const char* name, colyseus_transport_facto
     room->settings = NULL;
     room->joined_at_ms = 0;
 
+    room->clock = colyseus_room_clock_create();
+
     room_reconnection_init(room);
 
     return room;
@@ -614,6 +625,15 @@ void colyseus_room_free(colyseus_room_t* room) {
     if (room->transport) {
         colyseus_transport_destroy(room->transport);
     }
+
+    /* Cleanup input layer + clock */
+    if (room->input_handle) {
+        colyseus_input_handle_free(room->input_handle);
+    }
+    if (room->input_vtable_from_reflection) {
+        colyseus_dynamic_vtable_free((colyseus_dynamic_vtable_t*)room->input_vtable_from_reflection);
+    }
+    colyseus_room_clock_free(room->clock);
 
     /* Cleanup serializer */
     if (room->serializer) {
@@ -754,6 +774,62 @@ const char* colyseus_room_get_name(const colyseus_room_t* room) {
 
 bool colyseus_room_is_connected(const colyseus_room_t* room) {
     return room ? room->has_joined && colyseus_transport_is_open(room->transport) : false;
+}
+
+struct colyseus_room_clock* colyseus_room_get_clock(colyseus_room_t* room) {
+    return room ? room->clock : NULL;
+}
+
+/* input-handle host callbacks — the handle stays transport-agnostic */
+static void room_input_send(const uint8_t* data, size_t length, void* userdata) {
+    colyseus_room_t* room = (colyseus_room_t*)userdata;
+    /* WS-only transport: unreliable falls back to the reliable channel */
+    if (room->transport) colyseus_transport_send(room->transport, data, length);
+}
+
+static bool room_input_is_open(void* userdata) {
+    colyseus_room_t* room = (colyseus_room_t*)userdata;
+    return room->transport && colyseus_transport_is_open(room->transport);
+}
+
+static struct colyseus_room_clock* room_input_get_clock(void* userdata) {
+    return ((colyseus_room_t*)userdata)->clock;
+}
+
+struct colyseus_input_handle* colyseus_room_input(
+    colyseus_room_t* room,
+    const colyseus_schema_vtable_t* input_vtable,
+    const void* options) {
+    if (!room) return NULL;
+    if (room->input_handle) return room->input_handle;
+
+    const colyseus_schema_vtable_t* vtable = input_vtable
+        ? input_vtable
+        : room->input_vtable_from_reflection;
+    if (!vtable) return NULL; /* no defineInput() on the server and no static vtable */
+
+    const colyseus_input_options_t* opts = (const colyseus_input_options_t*)options;
+    /* dynamic vtables have no base.create — they construct via their own path */
+    colyseus_schema_t* instance = colyseus_vtable_is_dynamic(vtable)
+        ? (colyseus_schema_t*)colyseus_dynamic_schema_create((const colyseus_dynamic_vtable_t*)vtable)
+        : vtable->create();
+    instance->__vtable = vtable;
+    colyseus_input_encoder_t* encoder = colyseus_input_encoder_create(
+        instance, vtable,
+        opts ? opts->unreliable : false,
+        opts ? opts->history_size : 0);
+    if (!encoder) {
+        vtable->destroy(instance);
+        return NULL; /* non-primitive fields */
+    }
+
+    room->input_handle = colyseus_input_handle_create(
+        instance, vtable, encoder,
+        room->input_stamp_render, room->input_stamp_reckon,
+        opts,
+        room->input_tick_rate, room->input_patch_rate, room->input_sub_steps,
+        room_input_send, room_input_is_open, room_input_get_clock, room);
+    return room->input_handle;
 }
 
 void colyseus_room_ping(colyseus_room_t* room, colyseus_room_on_ping_fn callback, void* userdata) {
@@ -1262,9 +1338,16 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
 
     if (raw_byte & COLYSEUS_PROTOCOL_MODIFIER_TIMED) {
         /* [uint32 sNow][uint32 inputSeq] — server time (ms since room start)
-         * + last PROCESSED input seq. Consumed here; feeds the room clock +
-         * input ack once the input layer is ported. */
-        offset += 8;
+         * + last PROCESSED input seq. The input ack goes to the handle (it
+         * owns the round-trip); its RTT sample + sNow feed the clock. */
+        colyseus_iterator_t timed_it = { .offset = (int)offset };
+        double s_now = (double)colyseus_decode_uint32(data, &timed_it);
+        int input_seq = (int)colyseus_decode_uint32(data, &timed_it);
+        offset = (size_t)timed_it.offset;
+        double rtt_sample = room->input_handle
+            ? colyseus_input_handle_ack_input(room->input_handle, input_seq)
+            : -1;
+        colyseus_room_clock_sample(room->clock, s_now, rtt_sample);
     }
 
     switch (code) {
@@ -1349,13 +1432,38 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
             offset = reflection_end;
 
             /* Trailing tagged sections: [tag byte][length varint][payload].
-             * Unknown tags are skipped via length (forward-compatible).
-             * INPUT_REFLECTION / INPUT_OPTIONS are consumed by the input
-             * layer once ported. */
+             * Unknown tags are skipped via length (forward-compatible). */
             while (offset < length) {
-                offset++; /* tag (see colyseus_handshake_section_t) */
+                uint8_t tag = data[offset++];
                 size_t section_len = (size_t)decode_number(data, &offset);
-                offset += section_len;
+                size_t section_end = offset + section_len;
+
+                if (tag == COLYSEUS_HANDSHAKE_INPUT_REFLECTION) {
+                    /* schema reflection of the input struct — synthesize its
+                     * vtable so colyseus_room_input() works without a static one */
+                    if (room->input_vtable_from_reflection) {
+                        colyseus_dynamic_vtable_free(
+                            (colyseus_dynamic_vtable_t*)room->input_vtable_from_reflection);
+                    }
+                    room->input_vtable_from_reflection =
+                        colyseus_build_input_vtable_from_reflection(data, section_end, (int)offset);
+
+                } else if (tag == COLYSEUS_HANDSHAKE_INPUT_OPTIONS) {
+                    /* [flags u8][varints in bit order] */
+                    uint8_t flags = data[offset++];
+                    room->input_stamp_render = (flags & COLYSEUS_INPUT_FLAG_RENDER_TIME) != 0;
+                    room->input_stamp_reckon = (flags & COLYSEUS_INPUT_FLAG_RECKON_TIME) != 0;
+                    if (flags & COLYSEUS_INPUT_FLAG_FIXED_TIMESTEP) room->input_tick_rate = (int)decode_number(data, &offset);
+                    if (flags & COLYSEUS_INPUT_FLAG_PATCH_RATE) room->input_patch_rate = (int)decode_number(data, &offset);
+                    if (flags & COLYSEUS_INPUT_FLAG_SUB_STEPS) room->input_sub_steps = (int)decode_number(data, &offset);
+                }
+
+                offset = section_end;
+            }
+
+            /* hand the snapshot cadence to the clock once the loop has it */
+            if (room->input_patch_rate > 0) {
+                colyseus_room_clock_set_patch_interval(room->clock, room->input_patch_rate);
             }
 
             /* Acknowledge JOIN_ROOM */

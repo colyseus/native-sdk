@@ -473,6 +473,28 @@ static colyseus_dynamic_vtable_t* build_vtables_from_reflection(
     return root;
 }
 
+const colyseus_schema_vtable_t* colyseus_build_input_vtable_from_reflection(
+    const uint8_t* bytes, size_t length, int offset) {
+    /* Decode a standalone reflection payload (the INPUT_REFLECTION handshake
+     * section) and build the root dynamic vtable for it — the input-schema
+     * analog of the serializer's auto-detect path. */
+    colyseus_decoder_t* ref_decoder = colyseus_decoder_create(&reflection_vtable);
+    if (!ref_decoder) return NULL;
+
+    colyseus_iterator_t it = { .offset = offset };
+    colyseus_decoder_decode(ref_decoder, bytes, length, &it);
+
+    reflection_t* reflection = (reflection_t*)colyseus_decoder_get_state(ref_decoder);
+    colyseus_dynamic_vtable_t* root = NULL;
+    if (reflection && reflection->types) {
+        colyseus_dynamic_vtable_t* vtable_cache[64] = {0};
+        int vtable_count = 0;
+        root = build_vtables_from_reflection(reflection, vtable_cache, &vtable_count);
+    }
+    colyseus_decoder_free(ref_decoder); /* vtables own copies of every name */
+    return (const colyseus_schema_vtable_t*)root;
+}
+
 void colyseus_schema_serializer_handshake(colyseus_schema_serializer_t* serializer,
     const uint8_t* bytes, size_t length, int offset) {
     if (!serializer || !bytes || length == 0) return;

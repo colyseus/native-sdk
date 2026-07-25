@@ -74,6 +74,23 @@ extern "C" {
         COLYSEUS_HANDSHAKE_INPUT_OPTIONS = 2,
     } colyseus_handshake_section_t;
 
+    /*
+     * Bit flags in the leading byte of the INPUT_OPTIONS section. Some flags
+     * imply a trailing varint in the section payload, appended in bit order.
+     */
+    typedef enum {
+        /* reliable inputs carry the SNAPSHOT-timeline stamp (renderTime) */
+        COLYSEUS_INPUT_FLAG_RENDER_TIME = 1,
+        /* [tickRate varint] (Hz) follows — the server's fixed step rate */
+        COLYSEUS_INPUT_FLAG_FIXED_TIMESTEP = 2,
+        /* [patchRate varint] (ms) follows — the state-patch interval */
+        COLYSEUS_INPUT_FLAG_PATCH_RATE = 4,
+        /* [subSteps varint] follows — physics sub-steps per input tick */
+        COLYSEUS_INPUT_FLAG_SUB_STEPS = 8,
+        /* reliable inputs carry the RECKON-timeline stamp (reckonTime) */
+        COLYSEUS_INPUT_FLAG_RECKON_TIME = 16,
+    } colyseus_input_flags_t;
+
     /* Close codes */
     typedef enum {
         COLYSEUS_CLOSE_NORMAL_CLOSURE = 1000,
