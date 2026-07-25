@@ -35,6 +35,9 @@ static char* room_get_message_key_int(int type);
 static float decode_number(const uint8_t* bytes, size_t* offset);
 static char* decode_string(const uint8_t* bytes, size_t* offset);
 
+/* Request/response helpers */
+static void room_reject_all_pending_requests(colyseus_room_t* room, const char* reason);
+
 /* Reconnection helpers */
 static void room_enqueue_message(colyseus_room_t* room, const uint8_t* data, size_t length);
 static void room_clear_message_queue(colyseus_room_t* room);
@@ -598,6 +601,15 @@ void colyseus_room_free(colyseus_room_t* room) {
      * half-freed room. */
     room_reconnection_teardown(room);
 
+    /* Drop pending requests (no callbacks — the room is going away) */
+    {
+        colyseus_pending_request_t *entry, *tmp;
+        HASH_ITER(hh, room->pending_requests, entry, tmp) {
+            HASH_DEL(room->pending_requests, entry);
+            free(entry);
+        }
+    }
+
     /* Cleanup transport */
     if (room->transport) {
         colyseus_transport_destroy(room->transport);
@@ -1068,6 +1080,85 @@ void colyseus_room_send_int_encoded(colyseus_room_t* room, int type, const uint8
     free(data);
 }
 
+/* ============================================================================
+ * Request/response (ROOM_REQUEST / ROOM_RESPONSE)
+ * ============================================================================ */
+
+uint32_t colyseus_room_request_encoded(colyseus_room_t* room, const char* type,
+    const uint8_t* payload, size_t payload_length,
+    colyseus_room_on_response_fn callback, void* userdata)
+{
+    if (!room || !type || !callback) return 0;
+
+    uint32_t request_id = room->next_request_id++;
+
+    /* Build frame: [ROOM_REQUEST][requestId varint][type string][payload?] */
+    uint8_t request_id_buffer[5];
+    size_t request_id_size = msgpack_encode_number(request_id_buffer, (int)request_id);
+
+    size_t type_len = strlen(type);
+    size_t type_size = (type_len <= 31) ? (1 + type_len) :
+                       (type_len <= 255) ? (2 + type_len) :
+                       (type_len <= 65535) ? (3 + type_len) :
+                       (5 + type_len);
+
+    size_t total_len = 1 + request_id_size + type_size + payload_length;
+    uint8_t* data = malloc(total_len);
+    if (!data) return 0;
+
+    data[0] = COLYSEUS_PROTOCOL_ROOM_REQUEST;
+    memcpy(data + 1, request_id_buffer, request_id_size);
+    size_t encoded_type_len = msgpack_encode_string(data + 1 + request_id_size, type, type_len);
+
+    if (payload && payload_length > 0) {
+        memcpy(data + 1 + request_id_size + encoded_type_len, payload, payload_length);
+    }
+
+    colyseus_pending_request_t* entry = malloc(sizeof(colyseus_pending_request_t));
+    if (!entry) { free(data); return 0; }
+    entry->request_id = request_id;
+    entry->callback = callback;
+    entry->userdata = userdata;
+    HASH_ADD(hh, room->pending_requests, request_id, sizeof(uint32_t), entry);
+
+    /* reliable + offline: buffered frames flush on (re)connect */
+    room_send_or_enqueue(room, data, total_len);
+    free(data);
+
+    return request_id;
+}
+
+uint32_t colyseus_room_request(colyseus_room_t* room, const char* type, colyseus_message_t* payload,
+    colyseus_room_on_response_fn callback, void* userdata)
+{
+    if (!room || !type || !callback) return 0;
+
+    size_t encoded_len = 0;
+    uint8_t* encoded_data = payload ? colyseus_message_encode(payload, &encoded_len) : NULL;
+
+    return colyseus_room_request_encoded(room, type, encoded_data, encoded_len, callback, userdata);
+}
+
+void colyseus_room_cancel_request(colyseus_room_t* room, uint32_t request_id) {
+    if (!room) return;
+
+    colyseus_pending_request_t* entry = NULL;
+    HASH_FIND(hh, room->pending_requests, &request_id, sizeof(uint32_t), entry);
+    if (entry) {
+        HASH_DEL(room->pending_requests, entry);
+        free(entry);
+    }
+}
+
+static void room_reject_all_pending_requests(colyseus_room_t* room, const char* reason) {
+    colyseus_pending_request_t *entry, *tmp;
+    HASH_ITER(hh, room->pending_requests, entry, tmp) {
+        HASH_DEL(room->pending_requests, entry);
+        entry->callback(false, NULL, reason, entry->userdata);
+        free(entry);
+    }
+}
+
 /* Send raw bytes (ROOM_DATA_BYTES protocol) */
 void colyseus_room_send_bytes(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length) {
     if (!room || !type) return;
@@ -1149,8 +1240,18 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
         }
     }
 
-    colyseus_protocol_t code = (colyseus_protocol_t)data[0];
+    /* Strip modifier bits (bits 5..7) so the dispatch below stays
+     * modifier-agnostic; consume any modifier-attached prefix bytes here. */
+    uint8_t raw_byte = data[0];
+    colyseus_protocol_t code = (colyseus_protocol_t)(raw_byte & COLYSEUS_PROTOCOL_CODE_MASK);
     size_t offset = 1;
+
+    if (raw_byte & COLYSEUS_PROTOCOL_MODIFIER_TIMED) {
+        /* [uint32 sNow][uint32 inputSeq] — server time (ms since room start)
+         * + last PROCESSED input seq. Consumed here; feeds the room clock +
+         * input ack once the input layer is ported. */
+        offset += 8;
+    }
 
     switch (code) {
         case COLYSEUS_PROTOCOL_JOIN_ROOM: {
@@ -1188,6 +1289,14 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
 
             bool is_reconnect = room->has_joined;
 
+            /* State reflection is length-prefixed: the schema handshake must
+             * not read past it into the trailing tagged-section bytes. A
+             * zero length means reconnect (the serializer already has state). */
+            size_t state_reflection_len = (offset < length)
+                ? (size_t)decode_number(data, &offset)
+                : 0;
+            size_t reflection_end = offset + state_reflection_len;
+
             /* On first join only: instantiate serializer + apply handshake.
              * On reconnect, the server replays JOIN_ROOM with just the
              * reconnection token + serializer ID (skipHandshake=1) and we
@@ -1197,9 +1306,9 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
                     /* Create serializer - pass NULL if no vtable, handshake will auto-detect */
                     room->serializer = colyseus_schema_serializer_create(room->state_vtable);
 
-                    /* Handle handshake if there's more data */
-                    if (offset < length && room->serializer) {
-                        colyseus_schema_serializer_handshake(room->serializer, data, length, (int)offset);
+                    if (state_reflection_len > 0 && room->serializer) {
+                        /* bounded: the reflection decoder reads until `length` */
+                        colyseus_schema_serializer_handshake(room->serializer, data, reflection_end, (int)offset);
 
                         /* If auto-detection happened, copy the vtable reference to room */
                         if (!room->state_vtable) {
@@ -1221,6 +1330,18 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
                 if (room->on_join) {
                     room->on_join(room->on_join_userdata);
                 }
+            }
+
+            offset = reflection_end;
+
+            /* Trailing tagged sections: [tag byte][length varint][payload].
+             * Unknown tags are skipped via length (forward-compatible).
+             * INPUT_REFLECTION / INPUT_OPTIONS are consumed by the input
+             * layer once ported. */
+            while (offset < length) {
+                offset++; /* tag (see colyseus_handshake_section_t) */
+                size_t section_len = (size_t)decode_number(data, &offset);
+                offset += section_len;
             }
 
             /* Acknowledge JOIN_ROOM */
@@ -1333,14 +1454,53 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
             break;
         }
 
+        case COLYSEUS_PROTOCOL_ROOM_RESPONSE: {
+            /* reply to a pending colyseus_room_request() */
+            uint32_t request_id = (uint32_t)decode_number(data, &offset);
+            if (offset >= length) break;
+            uint8_t status = data[offset++];
+
+            colyseus_pending_request_t* entry = NULL;
+            HASH_FIND(hh, room->pending_requests, &request_id, sizeof(uint32_t), entry);
+
+            /* already answered (e.g. cancelled) or unknown id — ignore */
+            if (entry) {
+                HASH_DEL(room->pending_requests, entry);
+
+                colyseus_message_reader_t* reader = (length > offset)
+                    ? colyseus_message_reader_create(data + offset, length - offset)
+                    : NULL;
+
+                /* the ONE place the wire's three statuses collapse into the
+                 * (ok, reader, error) outcome — see colyseus_room_on_response_fn */
+                entry->callback(
+                    status == COLYSEUS_RESPONSE_OK,
+                    reader,
+                    status == COLYSEUS_RESPONSE_ERROR ? "request faulted" : NULL,
+                    entry->userdata);
+
+                if (reader) colyseus_message_reader_free(reader);
+                free(entry);
+            }
+            break;
+        }
+
         default:
             fprintf(stderr, "Unknown protocol message: %d\n", code);
             break;
     }
 }
 
+void colyseus_room_process_message(colyseus_room_t* room, const uint8_t* data, size_t length) {
+    if (!room || !data || length == 0) return;
+    room_on_transport_message(data, length, room);
+}
+
 static void room_on_transport_close(int code, const char* reason, void* userdata) {
     colyseus_room_t* room = (colyseus_room_t*)userdata;
+
+    /* in-flight requests can't be answered on a closed socket */
+    room_reject_all_pending_requests(room, "connection closed before a response was received.");
 
     if (!room->has_joined) {
         /* Connection died before the first JOIN_ROOM — report as error to the

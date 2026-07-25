@@ -91,6 +91,28 @@ typedef struct colyseus_pending_msg {
     struct colyseus_pending_msg* next;
 } colyseus_pending_msg_t;
 
+/*
+ * Reply outcome of colyseus_room_request(), collapsing the wire's
+ * ROOM_RESPONSE statuses:
+ *
+ *   OK        → ok=true,  reader = reply payload (NULL when empty), error=NULL
+ *   REJECTED  → ok=false, reader = the authored rejection reason,   error=NULL
+ *   ERROR     → ok=false, reader = {name, message, code?},          error="request faulted"
+ *   closed    → ok=false, reader = NULL, error="connection closed ..."
+ *
+ * `reader` is only valid for the duration of the callback.
+ */
+typedef void (*colyseus_room_on_response_fn)(bool ok, colyseus_message_reader_t* reader,
+    const char* error, void* userdata);
+
+/* Pending request awaiting a ROOM_RESPONSE (hash by request id). */
+typedef struct colyseus_pending_request {
+    uint32_t request_id;
+    colyseus_room_on_response_fn callback;
+    void* userdata;
+    UT_hash_handle hh;
+} colyseus_pending_request_t;
+
 /* Reconnection runtime state. Internal — do not modify directly. */
 typedef struct {
     colyseus_reconnection_options_t options;
@@ -156,6 +178,10 @@ struct colyseus_room {
 
     /* Message handlers hash map */
     colyseus_message_handler_t* message_handlers;
+
+    /* request/response (ROOM_REQUEST / ROOM_RESPONSE) correlation state */
+    colyseus_pending_request_t* pending_requests;
+    uint32_t next_request_id;
 
     /* Wildcard message handlers - default (msgpack reader) */
     colyseus_room_on_message_fn on_message_any;
@@ -253,6 +279,31 @@ void colyseus_room_send_int_encoded(colyseus_room_t* room, int type, const uint8
 /* Send raw bytes (ROOM_DATA_BYTES protocol) */
 void colyseus_room_send_bytes(colyseus_room_t* room, const char* type, const uint8_t* data, size_t length);
 void colyseus_room_send_int_bytes(colyseus_room_t* room, int type, const uint8_t* data, size_t length);
+
+/*
+ * Send a message and await the server's reply — the value the server
+ * returns from its matching onMessage handler (ROOM_REQUEST/ROOM_RESPONSE).
+ *
+ * Returns the request id. The callback fires exactly once: on reply, or
+ * with an error when the connection closes first. The C core has no timer
+ * runtime, so there is NO automatic timeout — platforms wanting one should
+ * schedule colyseus_room_cancel_request() with their own timer.
+ */
+uint32_t colyseus_room_request(colyseus_room_t* room, const char* type, colyseus_message_t* payload,
+    colyseus_room_on_response_fn callback, void* userdata);
+
+/* Same, with a pre-encoded msgpack payload (NULL/0 for no payload). */
+uint32_t colyseus_room_request_encoded(colyseus_room_t* room, const char* type,
+    const uint8_t* payload, size_t payload_length,
+    colyseus_room_on_response_fn callback, void* userdata);
+
+/* Drop a pending request (timeout/cancel path). Idempotent; a late
+ * ROOM_RESPONSE for a cancelled id is silently ignored. */
+void colyseus_room_cancel_request(colyseus_room_t* room, uint32_t request_id);
+
+/* Feed one raw protocol frame through the room's dispatch — for custom
+ * transports and tests. Regular transports call this internally. */
+void colyseus_room_process_message(colyseus_room_t* room, const uint8_t* data, size_t length);
 
 #ifdef __cplusplus
 }
