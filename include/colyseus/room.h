@@ -105,6 +105,9 @@ typedef struct colyseus_pending_msg {
 typedef void (*colyseus_room_on_response_fn)(bool ok, colyseus_message_reader_t* reader,
     const char* error, void* userdata);
 
+/* Reply to a colyseus_room_ping() — round-trip time in whole milliseconds. */
+typedef void (*colyseus_room_on_ping_fn)(int rtt_ms, void* userdata);
+
 /* Pending request awaiting a ROOM_RESPONSE (hash by request id). */
 typedef struct colyseus_pending_request {
     uint32_t request_id;
@@ -183,6 +186,11 @@ struct colyseus_room {
     colyseus_pending_request_t* pending_requests;
     uint32_t next_request_id;
 
+    /* room-level ping (PING echo) — single in-flight measurement */
+    colyseus_room_on_ping_fn ping_callback;
+    void* ping_userdata;
+    uint64_t ping_started_at_ms;
+
     /* Wildcard message handlers - default (msgpack reader) */
     colyseus_room_on_message_fn on_message_any;
     void* on_message_any_userdata;
@@ -233,6 +241,13 @@ void colyseus_room_set_session_id(colyseus_room_t* room, const char* session_id)
 
 const char* colyseus_room_get_name(const colyseus_room_t* room);
 bool colyseus_room_is_connected(const colyseus_room_t* room);
+
+/*
+ * Measure the round-trip time to the room over the LIVE connection (PING echo).
+ * The callback fires once with the RTT in whole milliseconds. No-op when the
+ * connection is not open; a new call replaces a still-pending measurement.
+ */
+void colyseus_room_ping(colyseus_room_t* room, colyseus_room_on_ping_fn callback, void* userdata);
 
 const char* colyseus_room_get_reconnection_token(const colyseus_room_t* room);
 

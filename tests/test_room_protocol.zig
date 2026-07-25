@@ -188,3 +188,34 @@ test "cancel_request_ignores_late_response" {
 
     try testing.expect(!outcome.replied);
 }
+
+// ─── room-level ping (PING echo) ────────────────────────────────────────────
+
+var ping_rtt: i32 = -1;
+fn onPing(rtt_ms: c_int, userdata: ?*anyopaque) callconv(.c) void {
+    _ = userdata;
+    ping_rtt = rtt_ms;
+}
+
+test "room_ping_echo" {
+    const room = makeRoom();
+    defer destroyRoom(room);
+
+    ping_rtt = -1;
+    c.colyseus_room_ping(room, onPing, null);
+
+    // one PING byte on the wire, no callback yet
+    try testing.expectEqual(@as(usize, 1), sent_count);
+    try testing.expectEqual(@as(usize, 1), sent_lens[0]);
+    try testing.expectEqual(@as(u8, c.COLYSEUS_PROTOCOL_PING), sent_frames[0][0]);
+    try testing.expectEqual(@as(i32, -1), ping_rtt);
+
+    // server echoes the PING → RTT delivered once
+    feed(room, &[_]u8{c.COLYSEUS_PROTOCOL_PING});
+    try testing.expect(ping_rtt >= 0);
+
+    // a second echo with no pending measurement is ignored
+    ping_rtt = -1;
+    feed(room, &[_]u8{c.COLYSEUS_PROTOCOL_PING});
+    try testing.expectEqual(@as(i32, -1), ping_rtt);
+}

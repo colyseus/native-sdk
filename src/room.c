@@ -756,6 +756,20 @@ bool colyseus_room_is_connected(const colyseus_room_t* room) {
     return room ? room->has_joined && colyseus_transport_is_open(room->transport) : false;
 }
 
+void colyseus_room_ping(colyseus_room_t* room, colyseus_room_on_ping_fn callback, void* userdata) {
+    if (!room || !callback) return;
+
+    /* a ping over a dead connection would measure the reconnect, not the RTT */
+    if (!room->transport || !colyseus_transport_is_open(room->transport)) return;
+
+    room->ping_started_at_ms = colyseus_monotonic_ms();
+    room->ping_callback = callback;
+    room->ping_userdata = userdata;
+
+    const uint8_t ping_byte = COLYSEUS_PROTOCOL_PING;
+    colyseus_transport_send(room->transport, &ping_byte, 1);
+}
+
 const char* colyseus_room_get_reconnection_token(const colyseus_room_t* room) {
     return room ? room->reconnection_token : NULL;
 }
@@ -1450,6 +1464,16 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
                 if (strlen(type_str) > 0) {
                     room_dispatch_message_bytes(room, type_str, data + offset, length - offset);
                 }
+            }
+            break;
+        }
+
+        case COLYSEUS_PROTOCOL_PING: {
+            /* server echo of colyseus_room_ping() */
+            if (room->ping_callback) {
+                colyseus_room_on_ping_fn callback = room->ping_callback;
+                room->ping_callback = NULL;
+                callback((int)(colyseus_monotonic_ms() - room->ping_started_at_ms), room->ping_userdata);
             }
             break;
         }
