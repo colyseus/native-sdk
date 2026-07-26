@@ -1,7 +1,9 @@
 #include "colyseus/predict/reconciler.h"
+#include "colyseus/predict/sim_reconciler.h"
 #include "colyseus/schema/dynamic_schema.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -11,6 +13,11 @@
  * room_clock.c for the clang ARM64 FMA story.
  */
 #pragma STDC FP_CONTRACT OFF
+
+/* Forward decls for the composite face (definitions after the shared engine). */
+typedef struct colyseus_reconciler colyseus_reconciler_impl_t;
+static void sim_refresh_pose(colyseus_reconciler_impl_t* r);
+static void sim_adopt_bound(colyseus_reconciler_impl_t* r);
 
 /* ── memo store (numbers; NAN = none) ────────────────────────────────── */
 
@@ -37,6 +44,32 @@ typedef struct {
     bool numeric; /* number-family (booleans reconcile verbatim, not smoothed) */
 } recon_field_t;
 
+/* ── composite face (simReconciler.ts) ───────────────────────────────── */
+
+#define SIM_NAME_MAX 24
+#define SIM_POSE_KEY_MAX 48
+
+typedef struct {
+    char name[SIM_NAME_MAX];
+    colyseus_schema_t* source;               /* NULL = opaque part */
+    colyseus_schema_t* mirror;               /* bound only (owned) */
+    void* opaque;
+    const colyseus_schema_vtable_t* vtable;
+    recon_field_t* fields;                   /* bound: numeric scalars */
+    int field_count;
+    int pose_base;                           /* index into the pose arrays */
+} sim_part_t;
+
+struct colyseus_sim_world {
+    sim_part_t* parts;
+    int part_count;
+    colyseus_sim_step_fn step;
+    void (*adopt)(colyseus_sim_world_t* world, void* userdata);
+    void* userdata;
+    double* cur_pose;                        /* [reconciler field_count] */
+    char (*pose_keys)[SIM_POSE_KEY_MAX];
+};
+
 struct colyseus_reconciler {
     colyseus_schema_t* truth;
     const colyseus_schema_vtable_t* vtable;
@@ -47,6 +80,10 @@ struct colyseus_reconciler {
     void* userdata;
 
     colyseus_schema_t* mirror; /* the predicted state (owned) */
+
+    /* Non-NULL switches the state face from ONE mirrored instance to a world
+     * of parts read back as a pose; the rollback loop below is unchanged. */
+    colyseus_sim_world_t* sim;
 
     recon_field_t* fields;
     int field_count;
@@ -193,12 +230,25 @@ static void memos_clear(colyseus_reconciler_t* r) {
 
 /* ── engine ──────────────────────────────────────────────────────────── */
 
+/* The current predicted value of field `i`: a mirror field, or a pose entry. */
+static double cur_value(const colyseus_reconciler_t* r, int i) {
+    return r->sim ? r->sim->cur_pose[i] : read_num(r->mirror, &r->fields[i]);
+}
+
 static void run_step(colyseus_reconciler_t* r, int seq, const colyseus_schema_t* command) {
     r->ctx.tick = seq;
     double raw = colyseus_input_handle_reckon_time_at(r->input, seq);
     r->ctx.lag_comp_active = raw > 0;
     r->ctx.reckon_time = raw > 0 ? raw
         : (r->clock ? colyseus_room_clock_server_now(r->clock) : 0);
+
+    if (r->sim) {
+        r->sim->step(&r->ctx, r->sim, command, r->userdata);
+        sim_refresh_pose(r);
+        /* No wire-precision ring: a composite sim always adopts. */
+        return;
+    }
+
     r->step(&r->ctx, r->mirror, command, r->userdata);
 
     /* record this seq's predicted state (live and replay alike) */
@@ -210,7 +260,7 @@ static void run_step(colyseus_reconciler_t* r, int seq, const colyseus_schema_t*
 
 static void snapshot_prev(colyseus_reconciler_t* r) {
     for (int i = 0; i < r->field_count; i++) {
-        if (r->fields[i].numeric) r->prev[i] = read_num(r->mirror, &r->fields[i]) + r->error[i];
+        if (r->fields[i].numeric) r->prev[i] = cur_value(r, i) + r->error[i];
     }
 }
 
@@ -246,6 +296,13 @@ static double render_alpha(const colyseus_reconciler_t* r) {
 }
 
 static void adopt_truth(colyseus_reconciler_t* r) {
+    if (r->sim) {
+        /* Bound mirrors pull FIRST and unconditionally, then the app restores
+         * whatever opaque parts it owns. */
+        sim_adopt_bound(r);
+        if (r->sim->adopt) r->sim->adopt(r->sim, r->userdata);
+        return;
+    }
     for (int i = 0; i < r->field_count; i++) {
         write_num(r->mirror, &r->fields[i], read_num(r->truth, &r->fields[i]));
     }
@@ -253,6 +310,7 @@ static void adopt_truth(colyseus_reconciler_t* r) {
 
 /* Wire-precision compare of the ring prediction at `acked` vs decoded truth. */
 static bool truth_matches_at(colyseus_reconciler_t* r, int acked) {
+    if (r->sim) return false;   /* composite face: always adopt */
     int slot = acked % r->history_size;
     if (r->history_seq[slot] != (double)acked) return false;
     const double* base = &r->history[(size_t)slot * r->field_count];
@@ -274,12 +332,13 @@ static void reconcile(colyseus_reconciler_t* r, int acked) {
     }
 
     for (int i = 0; i < r->field_count; i++) {
-        if (r->fields[i].numeric) {
-            r->rendered_before[i] = read_num(r->mirror, &r->fields[i]) + r->error[i];
-        }
+        if (r->fields[i].numeric) r->rendered_before[i] = cur_value(r, i) + r->error[i];
     }
 
     adopt_truth(r);
+    /* refreshRender: with nothing to replay the pose would still hold the
+     * pre-adopt values, and the correction below would read them. */
+    if (r->sim) sim_refresh_pose(r);
 
     /* replay still-unacked inputs from the handle's buffer */
     int from = acked > r->replay_from ? acked : r->replay_from;
@@ -298,7 +357,7 @@ static void reconcile(colyseus_reconciler_t* r, int acked) {
     double mag = 0;
     for (int i = 0; i < r->field_count; i++) {
         if (!r->fields[i].numeric) { r->last_correction[i] = 0; continue; }
-        double correction = r->rendered_before[i] - read_num(r->mirror, &r->fields[i]);
+        double correction = r->rendered_before[i] - cur_value(r, i);
         r->error[i] = hard ? 0 : correction;
         double a = correction < 0 ? -correction : correction;
         if (a > mag) mag = a;
@@ -310,7 +369,7 @@ static void reconcile(colyseus_reconciler_t* r, int acked) {
         for (int i = 0; i < r->field_count; i++) {
             if (!r->fields[i].numeric) continue;
             r->error[i] = 0;
-            r->prev[i] = read_num(r->mirror, &r->fields[i]);
+            r->prev[i] = cur_value(r, i);
         }
     }
     r->reconcile_seq++;
@@ -435,8 +494,19 @@ colyseus_reconciler_t* colyseus_reconciler_create(
 
 void colyseus_reconciler_free(colyseus_reconciler_t* r) {
     if (!r) return;
-    colyseus_input_handle_off_send(r->input, r->send_subscription);
+    if (r->send_subscription >= 0) colyseus_input_handle_off_send(r->input, r->send_subscription);
     if (r->mirror) r->vtable->destroy(r->mirror);
+    if (r->sim) {
+        for (int i = 0; i < r->sim->part_count; i++) {
+            sim_part_t* part = &r->sim->parts[i];
+            if (part->mirror) part->vtable->destroy(part->mirror);
+            free(part->fields);
+        }
+        free(r->sim->pose_keys);
+        free(r->sim->cur_pose);
+        free(r->sim->parts);
+        free(r->sim);
+    }
     free(r->memos);
     free(r->history_seq);
     free(r->history);
@@ -481,7 +551,7 @@ void colyseus_reconciler_tick(colyseus_reconciler_t* r, double now) {
 double colyseus_reconciler_value(colyseus_reconciler_t* r, const char* field) {
     for (int i = 0; i < r->field_count; i++) {
         if (strcmp(r->fields[i].name, field) != 0) continue;
-        double current = read_num(r->mirror, &r->fields[i]);
+        double current = cur_value(r, i);
         if (!r->fields[i].numeric) return current;
         double smoothed = current + r->error[i];
         double p = r->prev[i];
@@ -492,9 +562,10 @@ double colyseus_reconciler_value(colyseus_reconciler_t* r, const char* field) {
 
 void colyseus_reconciler_reset(colyseus_reconciler_t* r) {
     adopt_truth(r);
+    if (r->sim) sim_refresh_pose(r);
     for (int i = 0; i < r->field_count; i++) {
         if (r->fields[i].numeric) {
-            r->prev[i] = read_num(r->mirror, &r->fields[i]);
+            r->prev[i] = cur_value(r, i);
             r->error[i] = 0;
         }
     }
@@ -526,4 +597,185 @@ double colyseus_reconciler_last_correction(const colyseus_reconciler_t* r, const
 /* @internal — events.c reaches the emitting handle through the step ctx. */
 colyseus_input_handle_t* colyseus_reconciler_input_(const void* reconciler) {
     return ((const colyseus_reconciler_t*)reconciler)->input;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * SimReconciler — the composite face over the SAME rollback engine.
+ *
+ * The only differences from the flat face live in the hooks above:
+ * adopt_truth() pulls every bound mirror from its source, run_step() drives the
+ * world step and refreshes the pose, truth_matches_at() is always false (a
+ * composite sim has no wire-precision short-circuit), and cur_value() reads the
+ * pose instead of a mirror field. Everything else — catchUp, reconcile, error
+ * decay, snap, drift, memos — is shared verbatim.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+static void sim_refresh_pose(colyseus_reconciler_t* r) {
+    colyseus_sim_world_t* w = r->sim;
+    for (int p = 0; p < w->part_count; p++) {
+        sim_part_t* part = &w->parts[p];
+        if (!part->mirror) continue;
+        for (int f = 0; f < part->field_count; f++) {
+            w->cur_pose[part->pose_base + f] = read_num(part->mirror, &part->fields[f]);
+        }
+    }
+}
+
+static void sim_adopt_bound(colyseus_reconciler_t* r) {
+    colyseus_sim_world_t* w = r->sim;
+    for (int p = 0; p < w->part_count; p++) {
+        sim_part_t* part = &w->parts[p];
+        if (!part->mirror) continue;
+        for (int f = 0; f < part->field_count; f++) {
+            write_num(part->mirror, &part->fields[f], read_num(part->source, &part->fields[f]));
+        }
+    }
+}
+
+void* colyseus_sim_world_part(colyseus_sim_world_t* world, const char* name) {
+    if (!world || !name) return NULL;
+    for (int i = 0; i < world->part_count; i++) {
+        if (strcmp(world->parts[i].name, name) != 0) continue;
+        return world->parts[i].mirror ? (void*)world->parts[i].mirror : world->parts[i].opaque;
+    }
+    return NULL;
+}
+
+colyseus_sim_world_t* colyseus_sim_reconciler_world(colyseus_reconciler_t* r) {
+    return r ? r->sim : NULL;
+}
+
+colyseus_reconciler_t* colyseus_sim_reconciler_create(
+    colyseus_input_handle_t* input,
+    colyseus_room_clock_t* clock,
+    colyseus_sim_step_fn step,
+    const colyseus_sim_reconciler_options_t* options) {
+    if (!input || !step || !options || options->part_count <= 0) return NULL;
+
+    colyseus_reconciler_t* r = calloc(1, sizeof(colyseus_reconciler_t));
+    r->send_subscription = -1;   /* the early-error paths run through free() */
+    r->input = input;
+    r->clock = clock;
+    r->on_reconcile = options->on_reconcile;
+    r->userdata = options->userdata;
+
+    /* fixed step: explicit > handle-advertised > stepSeconds; fail otherwise */
+    double step_ms = options->step_ms > 0 ? options->step_ms : 0;
+    if (step_ms <= 0) {
+        int tick_rate = colyseus_input_handle_tick_rate(input);
+        if (tick_rate > 0) step_ms = 1000.0 / tick_rate;
+    }
+    if (step_ms <= 0 && options->step_seconds > 0) step_ms = options->step_seconds * 1000;
+    if (step_ms <= 0) { free(r); return NULL; }
+    r->step_ms = step_ms;
+
+    double dt = options->step_seconds > 0 ? options->step_seconds : 0;
+    if (dt <= 0) {
+        int tick_rate = colyseus_input_handle_tick_rate(input);
+        dt = tick_rate > 0 ? 1.0 / tick_rate : step_ms / 1000;
+    }
+    int sub_steps = options->sub_steps > 1 ? options->sub_steps : colyseus_input_handle_sub_steps(input);
+    if (sub_steps < 1) sub_steps = 1;
+
+    if (options->smoothing >= 0) {
+        r->smoothing = options->smoothing;
+    } else {
+        int patch_rate = colyseus_input_handle_patch_rate(input);
+        r->smoothing = patch_rate > 0 ? 1000.0 / patch_rate : 20;
+    }
+    r->snap_threshold = options->snap > 0 ? options->snap : 0;
+
+    colyseus_sim_world_t* w = calloc(1, sizeof(colyseus_sim_world_t));
+    w->step = step;
+    w->adopt = options->adopt;
+    w->userdata = options->userdata;
+    w->part_count = options->part_count;
+    w->parts = calloc((size_t)w->part_count, sizeof(sim_part_t));
+    r->sim = w;
+
+    /* Auto-binding: a part with a `source` gets a MIRROR of the same vtable and
+     * contributes "<part>.<field>" pose keys; a part without one is opaque and
+     * is only ever restored by the app's adopt(). */
+    int pose_count = 0, bound = 0;
+    for (int i = 0; i < w->part_count; i++) {
+        const colyseus_sim_part_t* spec = &options->parts[i];
+        sim_part_t* part = &w->parts[i];
+        if (!spec->name) { colyseus_reconciler_free(r); return NULL; }
+        snprintf(part->name, SIM_NAME_MAX, "%s", spec->name);
+        part->opaque = spec->opaque;
+        part->pose_base = pose_count;
+        if (!spec->source) continue;
+        if (!spec->vtable || colyseus_vtable_is_dynamic(spec->vtable)) {
+            colyseus_reconciler_free(r); return NULL;
+        }
+        part->source = spec->source;
+        part->vtable = spec->vtable;
+        part->fields = calloc((size_t)spec->vtable->field_count, sizeof(recon_field_t));
+        for (int f = 0; f < spec->vtable->field_count; f++) {
+            const colyseus_field_t* field = &spec->vtable->fields[f];
+            if (field->type == COLYSEUS_FIELD_REF || field->type == COLYSEUS_FIELD_ARRAY
+                || field->type == COLYSEUS_FIELD_MAP || field->type == COLYSEUS_FIELD_STRING
+                || field->type == COLYSEUS_FIELD_BOOLEAN) { continue; }
+            recon_field_t* rf = &part->fields[part->field_count++];
+            rf->type = field->type;
+            rf->offset = field->offset;
+            rf->name = field->name;
+            rf->numeric = true;
+        }
+        /* A bound entry with no scalar fields has nothing to predict. */
+        if (part->field_count == 0) { colyseus_reconciler_free(r); return NULL; }
+        part->mirror = spec->vtable->create();
+        part->mirror->__vtable = spec->vtable;
+        pose_count += part->field_count;
+        bound++;
+    }
+    /* Nothing bound and no adopt() = no restore point for the replay. */
+    if (pose_count == 0 || (bound == 0 && !options->adopt)) {
+        colyseus_reconciler_free(r); return NULL;
+    }
+
+    /* The pose IS the reconciled field view: one entry per bound numeric field. */
+    r->field_count = pose_count;
+    r->fields = calloc((size_t)pose_count, sizeof(recon_field_t));
+    w->pose_keys = calloc((size_t)pose_count, SIM_POSE_KEY_MAX);
+    w->cur_pose = calloc((size_t)pose_count, sizeof(double));
+    for (int i = 0; i < w->part_count; i++) {
+        sim_part_t* part = &w->parts[i];
+        for (int f = 0; f < part->field_count; f++) {
+            int k = part->pose_base + f;
+            snprintf(w->pose_keys[k], SIM_POSE_KEY_MAX, "%s.%s", part->name, part->fields[f].name);
+            r->fields[k].name = w->pose_keys[k];
+            r->fields[k].numeric = true;
+        }
+    }
+
+    r->error = calloc((size_t)pose_count, sizeof(double));
+    r->prev = calloc((size_t)pose_count, sizeof(double));
+    r->rendered_before = calloc((size_t)pose_count, sizeof(double));
+    r->last_correction = calloc((size_t)pose_count, sizeof(double));
+
+    adopt_truth(r);
+    sim_refresh_pose(r);
+    for (int i = 0; i < pose_count; i++) r->prev[i] = w->cur_pose[i];
+
+    /* No wire-precision ring here, but the memo store is still keyed by seq. */
+    r->history_size = colyseus_input_handle_replay_buffer_size(input);
+    if (r->history_size <= 0) r->history_size = 64;
+    r->history_seq = malloc((size_t)r->history_size * sizeof(double));
+    for (int i = 0; i < r->history_size; i++) r->history_seq[i] = -1;
+    r->memos = calloc((size_t)r->history_size, sizeof(memo_slot_t));
+    memos_clear(r);
+
+    r->ctx.dt = dt;
+    r->ctx.dt_ms = step_ms;
+    r->ctx.sub_steps = sub_steps;
+    r->ctx.sub_dt = dt / sub_steps;
+    r->ctx.sub_dt_ms = step_ms / sub_steps;
+    r->ctx._memo_backing = r;
+
+    r->last_acked = colyseus_input_handle_last_processed(input);
+    r->last_epoch = colyseus_input_handle_epoch(input);
+    r->predicted_seq = colyseus_input_handle_sent_count(input);
+    r->send_subscription = colyseus_input_handle_on_send(input, on_send_hook, r);
+    return r;
 }

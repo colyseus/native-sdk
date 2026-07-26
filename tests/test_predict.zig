@@ -15,6 +15,7 @@ const c = @cImport({
     @cInclude("colyseus/predict/drift.h");
     @cInclude("colyseus/predict/reconciler.h");
     @cInclude("colyseus/predict/predict.h");
+    @cInclude("colyseus/predict/sim_reconciler.h");
     @cInclude("colyseus/schema/input_encoder.h");
     @cInclude("colyseus/schema/decoder.h");
     @cInclude("colyseus/schema/callbacks.h");
@@ -22,6 +23,8 @@ const c = @cImport({
     @cInclude("schema/passive_ent.h");
     @cInclude("schema/reckon_ball.h");
     @cInclude("schema/accel_input.h");
+    @cInclude("schema/sim_paddle.h");
+    @cInclude("schema/sim_puck.h");
 });
 
 var NOW: f64 = 0;
@@ -534,4 +537,100 @@ test "spawns_correlation" {
     evc.colyseus_spawns_handle_remove(store, @ptrCast(server1));
     try testing.expect(!evc.colyseus_spawns_alive(store, 1));
     try testing.expectEqual(@as(c_int, 1), evc.colyseus_spawns_size(store));
+}
+
+// ============================================================================
+// SimReconciler — the composite face (fixtures scenario C: sim_reconciler_bound).
+// ============================================================================
+
+
+// step shared with the "server": paddle.vx = cmd; paddle.x += vx·dt; puck += 1
+fn simStep(
+    ctx: [*c]const c.colyseus_step_ctx_t,
+    world: ?*c.colyseus_sim_world_t,
+    command: ?*const c.colyseus_schema_t,
+    userdata: ?*anyopaque,
+) callconv(.c) void {
+    _ = userdata;
+    const paddle: *c.sim_paddle_t = @ptrCast(@alignCast(c.colyseus_sim_world_part(world, "paddle").?));
+    const puck: *c.sim_puck_t = @ptrCast(@alignCast(c.colyseus_sim_world_part(world, "puck").?));
+    const cmd: *const c.accel_input_t = @ptrCast(@alignCast(command.?));
+    paddle.vx = cmd.ax;
+    paddle.x += paddle.vx * ctx.*.dt;
+    puck.px += 1;
+}
+
+test "sim_reconciler_bound" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+
+    const input_instance = c.accel_input_create().?;
+    input_instance.*.__base.__vtable = &c.accel_input_vtable;
+    const encoder = c.colyseus_input_encoder_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, false, 0).?;
+    var in_opts = std.mem.zeroes(c.colyseus_input_options_t);
+    const handle = c.colyseus_input_handle_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, encoder,
+        false, false, &in_opts, 0, 0, 0,
+        stubSend, stubIsOpen, stubGetClock, null).?;
+    defer c.colyseus_input_handle_free(handle);
+
+    // Decoded truth sources (the JS fixture gets these from a real
+    // encode/decode round trip; here they are set directly).
+    const paddle_truth = c.sim_paddle_create().?;
+    paddle_truth.*.__base.__vtable = &c.sim_paddle_vtable;
+    const puck_truth = c.sim_puck_create().?;
+    puck_truth.*.__base.__vtable = &c.sim_puck_vtable;
+    defer c.sim_paddle_vtable.destroy.?(@ptrCast(paddle_truth));
+    defer c.sim_puck_vtable.destroy.?(@ptrCast(puck_truth));
+
+    const parts = [_]c.colyseus_sim_part_t{
+        .{ .name = "paddle", .source = @ptrCast(paddle_truth), .vtable = &c.sim_paddle_vtable, .@"opaque" = null },
+        .{ .name = "puck", .source = @ptrCast(puck_truth), .vtable = &c.sim_puck_vtable, .@"opaque" = null },
+    };
+    var opts = std.mem.zeroes(c.colyseus_sim_reconciler_options_t);
+    opts.parts = &parts;
+    opts.part_count = 2;
+    opts.smoothing = 0;
+    opts.step_ms = 50;
+    const recon = c.colyseus_sim_reconciler_create(handle, null, simStep, &opts).?;
+    defer c.colyseus_reconciler_free(recon);
+
+    const world = c.colyseus_sim_reconciler_world(recon).?;
+    const paddle: *c.sim_paddle_t = @ptrCast(@alignCast(c.colyseus_sim_world_part(world, "paddle").?));
+    const puck: *c.sim_puck_t = @ptrCast(@alignCast(c.colyseus_sim_world_part(world, "puck").?));
+
+    // The bound mirrors REPLACED the sources in the world — mutating the world
+    // must never touch decoded state.
+    try testing.expect(@intFromPtr(paddle) != @intFromPtr(paddle_truth));
+    try testing.expect(@intFromPtr(puck) != @intFromPtr(puck_truth));
+
+    NOW = 0;
+    c.colyseus_reconciler_tick(recon, NOW);
+
+    input_instance.*.ax = 2;
+    _ = c.colyseus_input_handle_send(handle);
+    _ = c.colyseus_input_handle_send(handle);
+
+    try testing.expectEqual(@as(f64, 0.2), paddle.x);
+    try testing.expectEqual(@as(f64, 2), puck.px);
+    // renderAlpha is 0 here, so value() reads the previous step's pose.
+    try testing.expectEqual(@as(f64, 0.1), c.colyseus_reconciler_value(recon, "paddle.x"));
+    try testing.expectEqual(@as(f64, 1), c.colyseus_reconciler_value(recon, "puck.px"));
+
+    // Server truth: applied input 1. The auto-`number` wire rounds through f32,
+    // and SimReconciler has NO wire-precision skip — it always adopts — so the
+    // correction carries that float noise. Reference behaviour; ports reproduce it.
+    paddle_truth.*.x = @as(f64, @as(f32, 0.1));
+    paddle_truth.*.vx = 2;
+    puck_truth.*.px = 1;
+    _ = c.colyseus_input_handle_ack_input(handle, 1);
+    NOW = 50;
+    c.colyseus_reconciler_tick(recon, NOW);
+
+    const mag = c.colyseus_reconciler_last_correction_mag(recon);
+    try testing.expect(mag > 0); // it really did adopt + replay
+    try testing.expect(mag < 1e-6);
+    // Input 2 replayed on top of the adopted truth.
+    try testing.expectEqual(@as(f64, 2), puck.px);
+    try testing.expectEqual(@as(c_int, 1), c.colyseus_reconciler_reconcile_seq(recon));
 }
