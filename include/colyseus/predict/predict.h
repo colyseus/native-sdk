@@ -4,6 +4,11 @@
 #include "colyseus/schema/types.h"
 #include "colyseus/schema/callbacks.h"
 #include "colyseus/room_clock.h"
+#include "colyseus/predict/reconciler.h"
+#include "colyseus/predict/events.h"
+#include "colyseus/predict/spawns.h"
+
+struct colyseus_room;
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,6 +62,14 @@ colyseus_predict_t* colyseus_predict_create(
     colyseus_callbacks_t* callbacks,
     colyseus_room_clock_t* clock);
 
+/**
+ * The one-call entry point: a Predict scoped to `room`, owning the callbacks
+ * layer it needs and wired to the room clock and fixed step. This is what an
+ * app should use — colyseus_predict_create() is for tests and for sharing one
+ * callbacks layer across several Predicts (lab-style per-mode overlays).
+ */
+colyseus_predict_t* colyseus_predict_for_room(struct colyseus_room* room);
+
 void colyseus_predict_free(colyseus_predict_t* p);
 
 /*
@@ -90,8 +103,96 @@ int colyseus_predict_track_reckon(
  * entity is removed if you wire on_remove to it). */
 void colyseus_predict_detach(colyseus_predict_t* p, colyseus_schema_t* instance);
 
-/* Advance one render frame (drives damped/extrapolate clocks + reckon cache). */
-void colyseus_predict_tick(colyseus_predict_t* p, double now);
+/**
+ * Track EVERY entry of a collection — the ones present now and the ones that
+ * arrive later — and stop tracking them as they are removed. This is the
+ * common case: remote entities you smooth but do not control.
+ *
+ * `fields` NULL tracks every numeric field of each entry. `except_key` skips
+ * one entry by map key (your own session id); NULL tracks all.
+ * Returns 0 on success.
+ */
+int colyseus_predict_attach_all(
+    colyseus_predict_t* p,
+    colyseus_schema_t* state,
+    const char* collection,
+    const char* const* fields, int field_count,
+    const char* except_key,
+    const colyseus_predict_field_options_t* options);
+
+/*
+ * ── Children ────────────────────────────────────────────────────────────
+ * Objects created or registered here are DRIVEN by colyseus_predict_tick():
+ * one call per frame advances the whole prediction stack instead of four.
+ * Predict never frees them — it only drives them — and a child deregisters
+ * itself when you free it.
+ */
+
+/**
+ * Create a reconciler driven by this Predict, and bind the input handle's
+ * lag-comp render delay to this Predict's lerp delay (so the server rewinds
+ * to the instant this client actually displayed). Prefer this over
+ * colyseus_reconciler_create().
+ */
+colyseus_reconciler_t* colyseus_predict_reconciler(
+    colyseus_predict_t* p,
+    colyseus_schema_t* truth,
+    const colyseus_schema_vtable_t* vtable,
+    colyseus_input_handle_t* input,
+    colyseus_reconciler_step_fn step,
+    const colyseus_reconciler_options_t* options);
+
+/**
+ * Like colyseus_predict_attach_all, but DEAD-RECKONS every entry through a step
+ * function shared with the server (the bot patterns in a lab, an NPC's mover)
+ * instead of smoothing samples.
+ */
+int colyseus_predict_attach_all_reckon(
+    colyseus_predict_t* p,
+    colyseus_schema_t* state,
+    const char* collection,
+    const colyseus_schema_vtable_t* entry_vtable,
+    const char* const* fields, int field_count,
+    colyseus_predict_step_fn step,
+    double smoothing, double substep_ms, double snap,
+    void* userdata);
+
+/**
+ * The callbacks layer this Predict uses. It belongs to the ROOM and outlives
+ * this Predict, so anything you register on it directly you must also remove
+ * yourself — prefer the attach_* helpers above, which are torn down with the
+ * Predict.
+ */
+colyseus_callbacks_t* colyseus_predict_callbacks(colyseus_predict_t* p);
+
+/**
+ * Route a collection's adds/removes into a spawn store AND drive the store
+ * from tick(). This is the whole wiring a predicted-spawn collection needs.
+ */
+void colyseus_predict_bind_spawns(colyseus_predict_t* p, colyseus_spawns_t* spawns,
+    colyseus_schema_t* state, const char* collection);
+
+/** Drive an event channel's settlement (its prune) from tick(). */
+void colyseus_predict_drive_events(colyseus_predict_t* p, colyseus_event_channel_t* channel);
+/** Drive a spawn store's local-step + TTL eviction from tick(). */
+void colyseus_predict_drive_spawns(colyseus_predict_t* p, colyseus_spawns_t* spawns);
+/** Stop driving a child (called for you by the child's own free()). */
+void colyseus_predict_undrive(colyseus_predict_t* p, void* child);
+
+/**
+ * Advance one render frame: drive every child, then the damped/extrapolate
+ * clocks and the reckon cache.
+ *
+ * RETURNS the number of fixed input steps due this frame — send exactly one
+ * input per returned step and the client stays on the server's cadence:
+ *
+ *     int steps = colyseus_predict_tick(predict, now);
+ *     for (int i = 0; i < steps; i++) { cmd->moveX = ...; colyseus_input_handle_send(input); }
+ *
+ * The count is 0 until a reconciler advertises the fixed step, and is capped at
+ * 5 per frame (a hitch drops the backlog rather than firing a burst).
+ */
+int colyseus_predict_tick(colyseus_predict_t* p, double now);
 
 /* Smoothed/predicted RENDER value; falls back to the raw instance field when
  * untracked. */

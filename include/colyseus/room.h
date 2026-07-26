@@ -194,6 +194,9 @@ struct colyseus_room {
     /* server-time + RTT estimator (TIMED prefix); always present */
     struct colyseus_room_clock* clock;
 
+    /* lazily built decode-callback layer (colyseus_room_callbacks) */
+    struct colyseus_callbacks* callbacks;
+
     /* input layer — populated from the JOIN_ROOM handshake sections */
     struct colyseus_input_handle* input_handle;
     const colyseus_schema_vtable_t* input_vtable_from_reflection; /* owned (dynamic) */
@@ -260,6 +263,14 @@ bool colyseus_room_is_connected(const colyseus_room_t* room);
  * connection is not open; a new call replaces a still-pending measurement.
  */
 void colyseus_room_ping(colyseus_room_t* room, colyseus_room_on_ping_fn callback, void* userdata);
+
+/*
+ * The room's schema-callbacks layer (see schema/callbacks.h), created on first
+ * use and owned by the room — the JS SDK's getStateCallbacks(room). Use this
+ * instead of reaching through room->serializer->decoder; several Predicts (a
+ * per-mode overlay comparison, say) can share the one layer.
+ */
+struct colyseus_callbacks* colyseus_room_callbacks(colyseus_room_t* room);
 
 /*
  * The room's server-time + RTT estimator (see room_clock.h). Always present;

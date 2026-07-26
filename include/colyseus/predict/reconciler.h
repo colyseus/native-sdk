@@ -30,6 +30,7 @@ extern "C" {
  * are NOT reconciled — read those off the raw instance).
  */
 typedef struct colyseus_reconciler colyseus_reconciler_t;
+struct colyseus_predict;
 
 /* Per-step context (mirrors the server's StepContext — one fixed dt drives
  * both sides). Reused across steps; read inside `step` only. */
@@ -61,6 +62,19 @@ typedef struct colyseus_step_ctx {
  */
 double colyseus_step_memo(const colyseus_step_ctx_t* ctx, const char* key,
     double (*compute)(void* userdata), void* userdata);
+
+/**
+ * Vector form: memoize up to COLYSEUS_MEMO_VEC_MAX doubles under one key —
+ * a position, a velocity, a verdict plus its payload. Splitting a single
+ * outcome across several scalar memos works but re-runs the derivation once
+ * per component; this runs `compute` exactly once for the whole tuple.
+ *
+ * `compute` fills `out` and returns the number of values written (0 = nothing
+ * this seq). Returns the count replayed (0 when the seq memoized nothing).
+ */
+#define COLYSEUS_MEMO_VEC_MAX 4
+int colyseus_step_memo_vec(const colyseus_step_ctx_t* ctx, const char* key,
+    int (*compute)(double* out, void* userdata), void* userdata, double* out);
 
 /* Deterministic input-application step, SHARED with the server: mutate
  * `state` (the schema-instance mirror) by applying `command` over `ctx->dt`. */
@@ -136,6 +150,9 @@ const colyseus_drift_t* colyseus_reconciler_drift(const colyseus_reconciler_t* r
 double colyseus_reconciler_last_correction_mag(const colyseus_reconciler_t* r);
 double colyseus_reconciler_last_correction(const colyseus_reconciler_t* r, const char* field);
 int colyseus_reconciler_reconcile_seq(const colyseus_reconciler_t* r);
+
+/* @internal — set by colyseus_predict_reconciler() so free() can deregister. */
+void colyseus_reconciler_set_driver_(colyseus_reconciler_t* r, struct colyseus_predict* driver);
 
 #ifdef __cplusplus
 }

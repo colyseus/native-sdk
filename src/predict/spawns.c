@@ -1,8 +1,31 @@
 #include "colyseus/predict/spawns.h"
 #include "uthash.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Read a scalar field off a decoded instance (mirrors reconciler.c's read_num). */
+static double spawns_field_read(const colyseus_schema_t* instance, const colyseus_field_t* f) {
+    const void* p = (const char*)instance + f->offset;
+    switch (f->type) {
+        case COLYSEUS_FIELD_BOOLEAN: return *(const bool*)p ? 1 : 0;
+        case COLYSEUS_FIELD_FLOAT32: return (double)*(const float*)p;
+        case COLYSEUS_FIELD_INT8:    return (double)*(const int8_t*)p;
+        case COLYSEUS_FIELD_UINT8:   return (double)*(const uint8_t*)p;
+        case COLYSEUS_FIELD_INT16:   return (double)*(const int16_t*)p;
+        case COLYSEUS_FIELD_UINT16:  return (double)*(const uint16_t*)p;
+        case COLYSEUS_FIELD_INT32:   return (double)*(const int32_t*)p;
+        case COLYSEUS_FIELD_UINT32:  return (double)*(const uint32_t*)p;
+        case COLYSEUS_FIELD_INT64:   return (double)*(const int64_t*)p;
+        case COLYSEUS_FIELD_UINT64:  return (double)*(const uint64_t*)p;
+        case COLYSEUS_FIELD_REF:
+        case COLYSEUS_FIELD_ARRAY:
+        case COLYSEUS_FIELD_MAP:
+        case COLYSEUS_FIELD_STRING:  return NAN;
+        default:                     return *(const double*)p;
+    }
+}
 
 typedef struct spawn_entry_internal {
     colyseus_spawn_entry_t pub;
@@ -204,6 +227,37 @@ const colyseus_spawn_entry_t* colyseus_spawns_entry(colyseus_spawns_t* spawns, i
 
 bool colyseus_spawns_alive(colyseus_spawns_t* spawns, int id) {
     return find_by_id(spawns, id) != NULL;
+}
+
+const colyseus_spawn_entry_t* colyseus_spawns_first(colyseus_spawns_t* spawns) {
+    return spawns && spawns->head ? &spawns->head->pub : NULL;
+}
+
+const colyseus_spawn_entry_t* colyseus_spawns_next(colyseus_spawns_t* spawns,
+    const colyseus_spawn_entry_t* entry) {
+    if (!spawns || !entry) return NULL;
+    /* Re-find by id: the caller may have freed entries since the last step. */
+    spawn_entry_internal_t* cur = find_by_id(spawns, entry->id);
+    if (!cur) return NULL;
+    return cur->next ? &cur->next->pub : NULL;
+}
+
+double colyseus_spawns_value(colyseus_spawns_t* spawns,
+    const colyseus_spawn_entry_t* entry, const char* field) {
+    if (!spawns || !entry || !field) return NAN;
+    if (entry->confirmed && entry->server) {
+        const colyseus_schema_vtable_t* vt = entry->server->__vtable;
+        if (!vt) return NAN;
+        for (int i = 0; i < vt->field_count; i++) {
+            if (strcmp(vt->fields[i].name, field) != 0) continue;
+            return spawns_field_read(entry->server, &vt->fields[i]);
+        }
+        return NAN;
+    }
+    if (entry->local && spawns->opts.local_read) {
+        return spawns->opts.local_read(entry->local, field, spawns->opts.userdata);
+    }
+    return NAN;
 }
 
 int colyseus_spawns_size(const colyseus_spawns_t* spawns) {

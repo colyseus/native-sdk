@@ -1,5 +1,6 @@
 #include "colyseus/predict/reconciler.h"
 #include "colyseus/predict/sim_reconciler.h"
+#include "colyseus/predict/predict.h"
 #include "colyseus/schema/dynamic_schema.h"
 
 #include <math.h>
@@ -26,7 +27,9 @@ static void sim_adopt_bound(colyseus_reconciler_impl_t* r);
 
 typedef struct {
     char key[MEMO_KEY_MAX];
-    double value;
+    double value;                            /* scalar form: values[0] */
+    double values[COLYSEUS_MEMO_VEC_MAX];
+    int count;                               /* 0 = scalar entry */
 } memo_entry_t;
 
 typedef struct {
@@ -118,6 +121,10 @@ struct colyseus_reconciler {
     double* history_seq;  /* slot → seq (-1 = empty) */
 
     memo_slot_t* memos;   /* [history_size] */
+
+    /* The Predict driving this controller, if it was born from one — free()
+     * deregisters so a dropped reconciler can never be ticked again. */
+    struct colyseus_predict* driver;
 };
 
 /* ── value access on schema instances (static offsets) ───────────────── */
@@ -177,6 +184,16 @@ static double wire_round(const recon_field_t* f, double v) {
         case COLYSEUS_FIELD_NUMBER:  return quantize_auto_number(v);
         default:                     return v; /* exact types + quantized: identity */
     }
+}
+
+/* Claim (or reclaim) this seq's memo slot on a LIVE step. */
+static memo_slot_t* memo_slot_for(colyseus_reconciler_t* r, const colyseus_step_ctx_t* ctx) {
+    memo_slot_t* slot = &r->memos[ctx->tick % r->history_size];
+    if (slot->seq != (double)ctx->tick) {
+        slot->seq = (double)ctx->tick;
+        slot->count = 0;
+    }
+    return slot;
 }
 
 /* ── ctx.memo ────────────────────────────────────────────────────────── */
@@ -494,6 +511,7 @@ colyseus_reconciler_t* colyseus_reconciler_create(
 
 void colyseus_reconciler_free(colyseus_reconciler_t* r) {
     if (!r) return;
+    if (r->driver) colyseus_predict_undrive(r->driver, r);
     if (r->send_subscription >= 0) colyseus_input_handle_off_send(r->input, r->send_subscription);
     if (r->mirror) r->vtable->destroy(r->mirror);
     if (r->sim) {
@@ -557,7 +575,8 @@ double colyseus_reconciler_value(colyseus_reconciler_t* r, const char* field) {
         double p = r->prev[i];
         return p + (smoothed - p) * render_alpha(r);
     }
-    return 0;
+    /* Not a reconciled field: NAN, never a plausible-looking 0. */
+    return NAN;
 }
 
 void colyseus_reconciler_reset(colyseus_reconciler_t* r) {
@@ -592,6 +611,46 @@ double colyseus_reconciler_last_correction(const colyseus_reconciler_t* r, const
         if (strcmp(r->fields[i].name, field) == 0) return r->last_correction[i];
     }
     return 0;
+}
+
+void colyseus_reconciler_set_driver_(colyseus_reconciler_t* r, struct colyseus_predict* driver) {
+    if (r) r->driver = driver;
+}
+
+int colyseus_step_memo_vec(const colyseus_step_ctx_t* ctx, const char* key,
+    int (*compute)(double* out, void* userdata), void* userdata, double* out) {
+    colyseus_reconciler_t* r = (colyseus_reconciler_t*)ctx->_memo_backing;
+    if (!r || !key || !out) { return compute ? compute(out, userdata) : 0; }
+    memo_slot_t* slot = &r->memos[ctx->tick % r->history_size];
+
+    if (ctx->is_replay) {
+        if (slot->seq != (double)ctx->tick) return 0;
+        for (int i = 0; i < slot->count; i++) {
+            if (strncmp(slot->entries[i].key, key, MEMO_KEY_MAX) != 0) continue;
+            int n = slot->entries[i].count;
+            for (int k = 0; k < n; k++) out[k] = slot->entries[i].values[k];
+            return n;
+        }
+        return 0;
+    }
+
+    int n = compute(out, userdata);
+    if (n > COLYSEUS_MEMO_VEC_MAX) n = COLYSEUS_MEMO_VEC_MAX;
+    if (n <= 0) return 0;
+    slot = memo_slot_for(r, ctx);
+    for (int i = 0; i < slot->count; i++) {
+        if (strncmp(slot->entries[i].key, key, MEMO_KEY_MAX) != 0) continue;
+        slot->entries[i].count = n;
+        for (int k = 0; k < n; k++) slot->entries[i].values[k] = out[k];
+        return n;
+    }
+    if (slot->count < MEMO_KEYS_PER_SEQ) {
+        memo_entry_t* e = &slot->entries[slot->count++];
+        snprintf(e->key, MEMO_KEY_MAX, "%s", key);
+        e->count = n;
+        for (int k = 0; k < n; k++) e->values[k] = out[k];
+    }
+    return n;
 }
 
 /* @internal — events.c reaches the emitting handle through the step ctx. */

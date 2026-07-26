@@ -3,6 +3,7 @@
 #include "colyseus/input_handle.h"
 #include "colyseus/websocket_transport.h"
 #include "colyseus/schema.h"
+#include "colyseus/schema/callbacks.h"
 #include "colyseus/messages.h"
 #include "colyseus/utils/time.h"
 #include <stdlib.h>
@@ -612,6 +613,11 @@ void colyseus_room_free(colyseus_room_t* room) {
      * half-freed room. */
     room_reconnection_teardown(room);
 
+    if (room->callbacks) {
+        colyseus_callbacks_free(room->callbacks);
+        room->callbacks = NULL;
+    }
+
     /* Drop pending requests (no callbacks — the room is going away) */
     {
         colyseus_pending_request_t *entry, *tmp;
@@ -780,6 +786,14 @@ struct colyseus_room_clock* colyseus_room_get_clock(colyseus_room_t* room) {
     return room ? room->clock : NULL;
 }
 
+struct colyseus_callbacks* colyseus_room_callbacks(colyseus_room_t* room) {
+    if (!room || !room->serializer) return NULL;
+    if (!room->callbacks) {
+        room->callbacks = colyseus_callbacks_create(room->serializer->decoder);
+    }
+    return room->callbacks;
+}
+
 /* input-handle host callbacks — the handle stays transport-agnostic */
 static void room_input_send(const uint8_t* data, size_t length, void* userdata) {
     colyseus_room_t* room = (colyseus_room_t*)userdata;
@@ -801,7 +815,17 @@ struct colyseus_input_handle* colyseus_room_input(
     const colyseus_schema_vtable_t* input_vtable,
     const void* options) {
     if (!room) return NULL;
-    if (room->input_handle) return room->input_handle;
+    if (room->input_handle) {
+        /* One handle per room by design — but silently discarding a second
+         * caller's options is how a lag-comp render_delay or an allow_rewind
+         * gate goes missing without a trace. */
+        if (options) {
+            fprintf(stderr, "colyseus: colyseus_room_input() called again with options on room "
+                "'%s'; the first call's options stand (one input handle per room)\n",
+                room->name ? room->name : "?");
+        }
+        return room->input_handle;
+    }
 
     const colyseus_schema_vtable_t* vtable = input_vtable
         ? input_vtable

@@ -90,6 +90,17 @@ colyseus_schema_t* colyseus_input_handle_at(colyseus_input_handle_t* handle, int
  */
 double colyseus_input_handle_reckon_time_at(colyseus_input_handle_t* handle, int seq);
 
+/*
+ * Lag-comp render delay (ms): the stamp is serverNow - (render_delay + rtt/2),
+ * so this MUST equal the delay the app renders remote entities at or the server
+ * rewinds to an instant the client never displayed. `colyseus_predict_*` binds
+ * it automatically from the Predict's lerp delay; set it by hand only when you
+ * interpolate outside the predict layer. An explicit value passed to
+ * colyseus_room_input() wins over the automatic binding.
+ */
+void colyseus_input_handle_set_render_delay(colyseus_input_handle_t* handle, double milliseconds);
+double colyseus_input_handle_render_delay(const colyseus_input_handle_t* handle);
+
 /* Round-trip state. */
 int colyseus_input_handle_sent_count(const colyseus_input_handle_t* handle);
 int colyseus_input_handle_last_processed(const colyseus_input_handle_t* handle);

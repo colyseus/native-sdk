@@ -1,6 +1,11 @@
 #include "colyseus/predict/predict.h"
+#include "colyseus/predict/sim_reconciler.h"
+#include "colyseus/room.h"
+#include "colyseus/schema.h"
 #include "colyseus/schema/dynamic_schema.h"
 #include "uthash.h"
+
+#include <stdio.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -82,13 +87,62 @@ typedef struct {
     UT_hash_handle hh;
 } slot_bucket_t;
 
+static void predict_bind_render_delay_fwd(colyseus_predict_t* p);
+
+/* ── children driven by tick() (port of Predictor.driven) ────────────── */
+
+typedef enum { DRIVEN_RECONCILER, DRIVEN_EVENTS, DRIVEN_SPAWNS } driven_kind_t;
+
+typedef struct driven_child {
+    driven_kind_t kind;
+    void* ptr;
+    struct driven_child* next;
+} driven_child_t;
+
+/* ── attach_all registrations (collection -> per-entry tracking) ─────── */
+
+typedef struct attach_all_ctx {
+    colyseus_predict_t* p;
+    char** fields;                  /* NULL = every numeric field */
+    int field_count;
+    char* except_key;
+    colyseus_predict_field_options_t opts;
+    /* reckon variant */
+    const colyseus_schema_vtable_t* entry_vtable;
+    colyseus_predict_step_fn step;
+    double smoothing, substep_ms, snap;
+    void* userdata;
+    /* The room owns the callbacks layer, so these MUST be removed when the
+     * Predict dies or a later patch calls back into freed state. */
+    colyseus_callback_handle_t on_add;
+    colyseus_callback_handle_t on_remove;
+    struct attach_all_ctx* next;
+} attach_all_ctx_t;
+
 struct colyseus_predict {
-    colyseus_callbacks_t* callbacks;
+    colyseus_callbacks_t* callbacks;   /* borrowed — the room owns it */
     colyseus_room_clock_t* clock;
     double render_time;
     slot_bucket_t* by_ref;
     predict_sim_t* sims;            /* uthash by ref_id */
+
+    /* Room-wide fixed-step accumulator: elapsed render time -> whole input
+     * steps due this frame. Separate from each controller's render clock. */
+    double fixed_step_ms;           /* 0 = not adopted yet */
+    double step_acc;
+    double last_frame_now;
+    bool has_last_frame;
+
+    driven_child_t* driven;
+    attach_all_ctx_t* attachments;
+
+    /* Lag-comp binding: the delay remote entities are DRAWN at, pushed onto
+     * the input handles of reconcilers this Predict spawned. */
+    double lerp_delay;
+    colyseus_input_handle_t* bound_input;
 };
+
+#define PREDICT_MAX_STEPS_PER_FRAME 5
 
 /* ── field value access (static offsets) ─────────────────────────────── */
 
@@ -388,7 +442,121 @@ colyseus_predict_t* colyseus_predict_create(colyseus_callbacks_t* callbacks, col
     colyseus_predict_t* p = calloc(1, sizeof(colyseus_predict_t));
     p->callbacks = callbacks;
     p->clock = clock;
+    p->lerp_delay = 100;   /* the reference default for lerp-mode tracking */
     return p;
+}
+
+colyseus_predict_t* colyseus_predict_for_room(struct colyseus_room* room) {
+    if (!room || !room->serializer) return NULL;
+    /* Borrow the room's layer: several Predicts over one room share it, and
+     * the room frees it. */
+    colyseus_callbacks_t* callbacks = colyseus_room_callbacks(room);
+    if (!callbacks) return NULL;
+    colyseus_predict_t* p = colyseus_predict_create(callbacks, colyseus_room_get_clock(room));
+    /* Pace from the server's advertised tick rate even before a reconciler
+     * exists, so a prediction-free lab can still use tick() for send pacing. */
+    if (room->input_tick_rate > 0) p->fixed_step_ms = 1000.0 / room->input_tick_rate;
+    return p;
+}
+
+/* ── attach_all ──────────────────────────────────────────────────────── */
+
+static void attach_all_on_add(void* value, void* key, void* userdata) {
+    attach_all_ctx_t* a = (attach_all_ctx_t*)userdata;
+    const char* k = (const char*)key;
+    if (a->except_key && k && strcmp(k, a->except_key) == 0) return;
+
+    colyseus_schema_t* instance = (colyseus_schema_t*)value;
+    if (a->step) {
+        colyseus_predict_track_reckon(a->p, instance, a->entry_vtable,
+            (const char* const*)a->fields, a->field_count, a->step,
+            a->smoothing, a->substep_ms, a->snap, a->userdata);
+        return;
+    }
+    if (a->fields) {
+        for (int i = 0; i < a->field_count; i++) {
+            colyseus_predict_track(a->p, instance, a->fields[i], &a->opts);
+        }
+        return;
+    }
+    /* No explicit list: every numeric field of the entry. */
+    const colyseus_schema_vtable_t* vt = instance->__vtable;
+    if (!vt || colyseus_vtable_is_dynamic(vt)) return;
+    for (int i = 0; i < vt->field_count; i++) {
+        const colyseus_field_t* f = &vt->fields[i];
+        if (f->type == COLYSEUS_FIELD_REF || f->type == COLYSEUS_FIELD_ARRAY
+            || f->type == COLYSEUS_FIELD_MAP || f->type == COLYSEUS_FIELD_STRING
+            || f->type == COLYSEUS_FIELD_BOOLEAN) continue;
+        colyseus_predict_track(a->p, instance, f->name, &a->opts);
+    }
+}
+
+static void attach_all_on_remove(void* value, void* key, void* userdata) {
+    (void)key;
+    attach_all_ctx_t* a = (attach_all_ctx_t*)userdata;
+    colyseus_predict_detach(a->p, (colyseus_schema_t*)value);
+}
+
+int colyseus_predict_attach_all(
+    colyseus_predict_t* p,
+    colyseus_schema_t* state,
+    const char* collection,
+    const char* const* fields, int field_count,
+    const char* except_key,
+    const colyseus_predict_field_options_t* options) {
+    if (!p || !state || !collection) return -1;
+
+    attach_all_ctx_t* a = calloc(1, sizeof(attach_all_ctx_t));
+    a->p = p;
+    if (options) a->opts = *options;
+    if (fields && field_count > 0) {
+        a->field_count = field_count;
+        a->fields = calloc((size_t)field_count, sizeof(char*));
+        for (int i = 0; i < field_count; i++) a->fields[i] = strdup(fields[i]);
+    }
+    if (except_key) a->except_key = strdup(except_key);
+
+    /* `immediate` replays the entries already decoded — the initial full sync
+     * usually lands before an app gets here. */
+    a->on_add = colyseus_callbacks_on_add(p->callbacks, state, collection,
+        attach_all_on_add, a, true);
+    a->on_remove = colyseus_callbacks_on_remove(p->callbacks, state, collection,
+        attach_all_on_remove, a);
+    a->next = p->attachments;
+    p->attachments = a;
+    return 0;
+}
+
+int colyseus_predict_attach_all_reckon(
+    colyseus_predict_t* p,
+    colyseus_schema_t* state,
+    const char* collection,
+    const colyseus_schema_vtable_t* entry_vtable,
+    const char* const* fields, int field_count,
+    colyseus_predict_step_fn step,
+    double smoothing, double substep_ms, double snap,
+    void* userdata) {
+    if (!p || !state || !collection || !entry_vtable || !step || field_count <= 0) return -1;
+
+    attach_all_ctx_t* a = calloc(1, sizeof(attach_all_ctx_t));
+    a->p = p;
+    a->entry_vtable = entry_vtable;
+    a->step = step;
+    a->smoothing = smoothing;
+    a->substep_ms = substep_ms;
+    a->snap = snap;
+    a->userdata = userdata;
+    a->field_count = field_count;
+    a->fields = calloc((size_t)field_count, sizeof(char*));
+    for (int i = 0; i < field_count; i++) a->fields[i] = strdup(fields[i]);
+
+    a->on_add = colyseus_callbacks_on_add(p->callbacks, state, collection,
+        attach_all_on_add, a, true);
+    a->on_remove = colyseus_callbacks_on_remove(p->callbacks, state, collection,
+        attach_all_on_remove, a);
+    a->next = p->attachments;
+    p->attachments = a;
+    return 0;
 }
 
 static void free_slot(colyseus_predict_t* p, predict_slot_t* slot) {
@@ -414,6 +582,17 @@ static void free_sim(predict_sim_t* sim) {
 
 void colyseus_predict_free(colyseus_predict_t* p) {
     if (!p) return;
+    while (p->driven) { driven_child_t* d = p->driven; p->driven = d->next; free(d); }
+    while (p->attachments) {
+        attach_all_ctx_t* a = p->attachments;
+        p->attachments = a->next;
+        colyseus_callbacks_remove(p->callbacks, a->on_add);
+        colyseus_callbacks_remove(p->callbacks, a->on_remove);
+        for (int i = 0; i < a->field_count; i++) free(a->fields[i]);
+        free(a->fields);
+        free(a->except_key);
+        free(a);
+    }
     slot_bucket_t *bucket, *tmp;
     HASH_ITER(hh, p->by_ref, bucket, tmp) {
         predict_slot_t* slot = bucket->slots;
@@ -450,6 +629,11 @@ int colyseus_predict_track(
     slot->type = meta->type;
     slot->opts.mode = options ? options->mode : COLYSEUS_PREDICT_LERP;
     slot->opts.delay = options && options->delay > 0 ? options->delay : 100;
+    if (slot->opts.mode == COLYSEUS_PREDICT_LERP) {
+        /* Lag comp must rewind to the instant we DRAW; keep the binding live. */
+        p->lerp_delay = slot->opts.delay;
+        predict_bind_render_delay_fwd(p);
+    }
     slot->opts.damping = options
         ? (options->damping < 0 ? 0 : (options->damping > 0 ? options->damping : 15))
         : 15;
@@ -588,8 +772,173 @@ void colyseus_predict_detach(colyseus_predict_t* p, colyseus_schema_t* instance)
     if (sim) { HASH_DEL(p->sims, sim); free_sim(sim); }
 }
 
-void colyseus_predict_tick(colyseus_predict_t* p, double now) {
+int colyseus_predict_tick(colyseus_predict_t* p, double now) {
+    if (!p) return 0;
     p->render_time = now;
+
+    /* Room-wide fixed-step accumulator -> whole input steps due this frame. */
+    int steps = 0;
+    if (p->fixed_step_ms > 0) {
+        double dt = p->has_last_frame ? now - p->last_frame_now : 0;
+        p->step_acc += dt;
+        steps = (int)floor(p->step_acc / p->fixed_step_ms);
+        if (steps > PREDICT_MAX_STEPS_PER_FRAME) {
+            p->step_acc = 0;                    /* hitch: drop the backlog */
+            steps = PREDICT_MAX_STEPS_PER_FRAME;
+        } else {
+            p->step_acc -= steps * p->fixed_step_ms;
+        }
+    }
+    p->has_last_frame = true;
+    p->last_frame_now = now;
+
+    /* Drive the children: one tick advances the whole prediction stack. */
+    for (driven_child_t* d = p->driven; d; d = d->next) {
+        switch (d->kind) {
+            case DRIVEN_RECONCILER:
+                colyseus_reconciler_tick((colyseus_reconciler_t*)d->ptr, now);
+                break;
+            case DRIVEN_EVENTS:
+                colyseus_event_channel_prune((colyseus_event_channel_t*)d->ptr);
+                break;
+            case DRIVEN_SPAWNS:
+                colyseus_spawns_tick((colyseus_spawns_t*)d->ptr, now);
+                colyseus_spawns_prune((colyseus_spawns_t*)d->ptr);
+                break;
+        }
+    }
+    return steps;
+}
+
+/* ── children ────────────────────────────────────────────────────────── */
+
+static void predict_drive(colyseus_predict_t* p, driven_kind_t kind, void* ptr) {
+    if (!p || !ptr) return;
+    for (driven_child_t* d = p->driven; d; d = d->next) {
+        if (d->ptr == ptr) return;
+    }
+    driven_child_t* d = calloc(1, sizeof(driven_child_t));
+    d->kind = kind;
+    d->ptr = ptr;
+    d->next = p->driven;
+    p->driven = d;
+}
+
+void colyseus_predict_undrive(colyseus_predict_t* p, void* child) {
+    if (!p) return;
+    driven_child_t** link = &p->driven;
+    while (*link) {
+        if ((*link)->ptr == child) {
+            driven_child_t* dead = *link;
+            *link = dead->next;
+            free(dead);
+            return;
+        }
+        link = &(*link)->next;
+    }
+}
+
+colyseus_callbacks_t* colyseus_predict_callbacks(colyseus_predict_t* p) {
+    return p ? p->callbacks : NULL;
+}
+
+static void predict_spawns_on_add(void* value, void* key, void* userdata) {
+    (void)key;
+    colyseus_spawns_handle_add((colyseus_spawns_t*)userdata, (colyseus_schema_t*)value);
+}
+
+static void predict_spawns_on_remove(void* value, void* key, void* userdata) {
+    (void)key;
+    colyseus_spawns_handle_remove((colyseus_spawns_t*)userdata, (colyseus_schema_t*)value);
+}
+
+void colyseus_predict_bind_spawns(colyseus_predict_t* p, colyseus_spawns_t* spawns,
+    colyseus_schema_t* state, const char* collection) {
+    if (!p || !spawns || !state || !collection) return;
+    /* Recorded as an attachment so predict_free() unregisters it: the room owns
+     * the callbacks layer, and a patch decoded after the store is freed would
+     * otherwise call into it. */
+    attach_all_ctx_t* a = calloc(1, sizeof(attach_all_ctx_t));
+    a->p = p;
+    a->on_add = colyseus_callbacks_on_add(p->callbacks, state, collection,
+        predict_spawns_on_add, spawns, true);
+    a->on_remove = colyseus_callbacks_on_remove(p->callbacks, state, collection,
+        predict_spawns_on_remove, spawns);
+    a->next = p->attachments;
+    p->attachments = a;
+    predict_drive(p, DRIVEN_SPAWNS, spawns);
+}
+
+void colyseus_predict_drive_events(colyseus_predict_t* p, colyseus_event_channel_t* channel) {
+    predict_drive(p, DRIVEN_EVENTS, channel);
+}
+
+void colyseus_predict_drive_spawns(colyseus_predict_t* p, colyseus_spawns_t* spawns) {
+    predict_drive(p, DRIVEN_SPAWNS, spawns);
+}
+
+/*
+ * Adopt a spawned reconciler's fixed step as this Predict's room-wide pacing
+ * rate (first one wins — the server has a single tick rate), and reset the
+ * accumulator so the first tick after the spawn doesn't emit a burst for all
+ * the time that elapsed before there was anything to predict.
+ */
+static void predict_adopt_fixed_step(colyseus_predict_t* p, double step_ms) {
+    if (step_ms <= 0) return;
+    if (p->fixed_step_ms <= 0) {
+        p->fixed_step_ms = step_ms;
+        p->step_acc = 0;
+        p->has_last_frame = false;
+        return;
+    }
+    if (fabs(p->fixed_step_ms - step_ms) > 1e-6) {
+        fprintf(stderr, "colyseus predict: a reconciler's fixed step (%.3fms) differs from this "
+            "Predict's (%.3fms); tick() paces one rate for the whole room\n",
+            step_ms, p->fixed_step_ms);
+    }
+}
+
+/* The lag-comp stamp must name the instant this client DISPLAYED, which is
+ * the lerp delay behind serverNow — see input_handle's render_delay note. */
+static void predict_bind_render_delay(colyseus_predict_t* p) {
+    if (p->bound_input) colyseus_input_handle_set_render_delay(p->bound_input, p->lerp_delay);
+}
+
+static void predict_bind_render_delay_fwd(colyseus_predict_t* p) { predict_bind_render_delay(p); }
+
+colyseus_reconciler_t* colyseus_predict_reconciler(
+    colyseus_predict_t* p,
+    colyseus_schema_t* truth,
+    const colyseus_schema_vtable_t* vtable,
+    colyseus_input_handle_t* input,
+    colyseus_reconciler_step_fn step,
+    const colyseus_reconciler_options_t* options) {
+    if (!p) return NULL;
+    colyseus_reconciler_t* r =
+        colyseus_reconciler_create(truth, vtable, input, p->clock, step, options);
+    if (!r) return NULL;
+    predict_adopt_fixed_step(p, colyseus_reconciler_step_ms(r));
+    predict_drive(p, DRIVEN_RECONCILER, r);
+    colyseus_reconciler_set_driver_(r, p);
+    p->bound_input = input;
+    predict_bind_render_delay(p);
+    return r;
+}
+
+colyseus_reconciler_t* colyseus_predict_sim_reconciler(
+    colyseus_predict_t* p,
+    colyseus_input_handle_t* input,
+    colyseus_sim_step_fn step,
+    const colyseus_sim_reconciler_options_t* options) {
+    if (!p) return NULL;
+    colyseus_reconciler_t* r = colyseus_sim_reconciler_create(input, p->clock, step, options);
+    if (!r) return NULL;
+    predict_adopt_fixed_step(p, colyseus_reconciler_step_ms(r));
+    predict_drive(p, DRIVEN_RECONCILER, r);
+    colyseus_reconciler_set_driver_(r, p);
+    p->bound_input = input;
+    predict_bind_render_delay(p);
+    return r;
 }
 
 static predict_slot_t* find_slot(colyseus_predict_t* p, colyseus_schema_t* instance, const char* field) {
@@ -606,12 +955,13 @@ static predict_slot_t* find_slot(colyseus_predict_t* p, colyseus_schema_t* insta
 double colyseus_predict_value(colyseus_predict_t* p, colyseus_schema_t* instance, const char* field) {
     predict_slot_t* slot = find_slot(p, instance, field);
     if (!slot) {
-        /* raw instance fallback */
+        /* Untracked is FINE — read the decoded field verbatim. A field that
+         * doesn't exist is not: NAN, so a typo can't render as a plausible 0. */
         if (instance->__vtable && !colyseus_vtable_is_dynamic(instance->__vtable)) {
             const colyseus_field_t* meta = find_field(instance->__vtable, field);
             if (meta) return field_read(instance, meta->offset, meta->type);
         }
-        return 0;
+        return NAN;
     }
     switch (slot->opts.mode) {
         case COLYSEUS_PREDICT_LERP:        return compute_lerp(p, slot);

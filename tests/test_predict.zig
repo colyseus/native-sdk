@@ -288,7 +288,7 @@ test "passive_smoothing" {
 
     // fixture reads @1150: lerp(a)=20, raw(d)=30, extrapolate(c)=40
     NOW = 1150;
-    c.colyseus_predict_tick(p, NOW);
+    _ = c.colyseus_predict_tick(p, NOW);
     try testing.expectEqual(@as(f64, 20), c.colyseus_predict_value(p, ent, "a"));
     try testing.expectEqual(@as(f64, 30), c.colyseus_predict_value(p, ent, "d"));
     try testing.expectEqual(@as(f64, 40), c.colyseus_predict_value(p, ent, "c"));
@@ -297,7 +297,7 @@ test "passive_smoothing" {
     try testing.expect(@abs(yaw_mid) > 3.0);
 
     NOW = 1175;
-    c.colyseus_predict_tick(p, NOW);
+    _ = c.colyseus_predict_tick(p, NOW);
     try testing.expectEqual(@as(f64, 25), c.colyseus_predict_value(p, ent, "a"));
     try testing.expectEqual(@as(f64, 45), c.colyseus_predict_value(p, ent, "c"));
 
@@ -307,13 +307,13 @@ test "passive_smoothing" {
     c.colyseus_room_clock_sample(clock, 1400, -1);
     decodeBytes(decoder, &[_]u8{ 128, 40 });
     NOW = 1455;
-    c.colyseus_predict_tick(p, NOW);
+    _ = c.colyseus_predict_tick(p, NOW);
     try testing.expectEqual(@as(f64, 31), c.colyseus_predict_value(p, ent, "a"));
     NOW = 1475;
-    c.colyseus_predict_tick(p, NOW);
+    _ = c.colyseus_predict_tick(p, NOW);
     try testing.expectEqual(@as(f64, 35), c.colyseus_predict_value(p, ent, "a"));
     NOW = 1500;
-    c.colyseus_predict_tick(p, NOW);
+    _ = c.colyseus_predict_tick(p, NOW);
     try testing.expectEqual(@as(f64, 40), c.colyseus_predict_value(p, ent, "a"));
 }
 
@@ -354,7 +354,7 @@ test "reckon_value_at" {
     const expect_x = [_][2]f64{ .{ 1000, 100 }, .{ 1050, 102.5 }, .{ 1100, 105 }, .{ 1200, 110 } };
     for (expect_x) |pair| {
         NOW = pair[0];
-        c.colyseus_predict_tick(p, NOW);
+        _ = c.colyseus_predict_tick(p, NOW);
         try testing.expectEqual(pair[1], c.colyseus_predict_value(p, ball, "x"));
     }
 
@@ -633,4 +633,47 @@ test "sim_reconciler_bound" {
     // Input 2 replayed on top of the adopted truth.
     try testing.expectEqual(@as(f64, 2), puck.px);
     try testing.expectEqual(@as(c_int, 1), c.colyseus_reconciler_reconcile_seq(recon));
+}
+
+test "predict_tick_paces_input" {
+    // tick() returns the fixed input steps due this frame — the pacing source
+    // an app sends one input per. Mirrors Predictor.tick's accumulator.
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    const ctx = makeCtx(0);
+    defer destroyCtx(ctx);
+
+    const p = c.colyseus_predict_create(null, null).?;
+    defer c.colyseus_predict_free(p);
+
+    var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
+    ropts.smoothing = 0;
+    ropts.step_ms = 50;
+    const truth = c.recon_state_create().?;
+    truth.*.__base.__vtable = &c.recon_state_vtable;
+    defer c.recon_state_vtable.destroy.?(@ptrCast(truth));
+    // Born from the Predict: driven by its tick, and it donates the fixed step.
+    const recon = c.colyseus_predict_reconciler(
+        p, @ptrCast(truth), &c.recon_state_vtable, ctx.handle, accelStep, &ropts).?;
+
+    // First tick has no previous frame: no elapsed time, no steps.
+    try testing.expectEqual(@as(c_int, 0), c.colyseus_predict_tick(p, 0));
+    try testing.expectEqual(@as(c_int, 0), c.colyseus_predict_tick(p, 20));  // 20ms < 50
+    try testing.expectEqual(@as(c_int, 1), c.colyseus_predict_tick(p, 60));  // 60ms -> 1, 10 left
+    try testing.expectEqual(@as(c_int, 0), c.colyseus_predict_tick(p, 90));  // 40ms -> 0, 40 left
+    try testing.expectEqual(@as(c_int, 3), c.colyseus_predict_tick(p, 200)); // 150ms -> 3, 0 left
+    // A hitch emits a bounded count and drops the backlog rather than bursting.
+    try testing.expectEqual(@as(c_int, 5), c.colyseus_predict_tick(p, 5000));
+    try testing.expectEqual(@as(c_int, 0), c.colyseus_predict_tick(p, 5000));
+
+    // Freeing a driven child deregisters it — a later tick must not touch it.
+    c.colyseus_reconciler_free(recon);
+    _ = c.colyseus_predict_tick(p, 5100);
+}
+
+test "value_of_unknown_field_is_nan" {
+    // A typo'd field name must never read as a plausible 0.
+    const ctx = makeCtx(0);
+    defer destroyCtx(ctx);
+    try testing.expect(std.math.isNan(c.colyseus_reconciler_value(ctx.recon, "nope")));
+    try testing.expect(!std.math.isNan(c.colyseus_reconciler_value(ctx.recon, "x")));
 }

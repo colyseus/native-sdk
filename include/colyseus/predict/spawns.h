@@ -42,6 +42,9 @@ typedef struct {
     bool has_spawn_time;
     /* advance a pending local by dt seconds (serverNow axis when clocked) */
     void (*step)(void* local, double dt, void* userdata);
+    /* read a named field off a predicted local — lets colyseus_spawns_value()
+     * span the handoff so the app has ONE render path (optional) */
+    double (*local_read)(void* local, const char* field, void* userdata);
     /* eviction window (ms) for unmatched predictions; 0 = max(2·rtt, 600) */
     double ttl_ms;
     void (*on_reject)(void* local, int id, void* userdata);
@@ -75,7 +78,30 @@ void colyseus_spawns_tick(colyseus_spawns_t* spawns, double now);
 /* Drop pending locals older than the TTL — mispredicts. */
 void colyseus_spawns_prune(colyseus_spawns_t* spawns);
 
-/* Reads. Entries iterate in insertion order via _next (NULL id-cursor = start). */
+/*
+ * Iterate entries in insertion order: pass NULL to start, then feed back what
+ * you got. One render path across the handoff — read the local while
+ * `confirmed` is false, the server instance after.
+ *
+ *     for (const colyseus_spawn_entry_t* e = colyseus_spawns_first(store);
+ *          e != NULL; e = colyseus_spawns_next(store, e)) { ... }
+ *
+ * Safe against entries dying between calls (the cursor is the id, not the node).
+ */
+const colyseus_spawn_entry_t* colyseus_spawns_first(colyseus_spawns_t* spawns);
+const colyseus_spawn_entry_t* colyseus_spawns_next(colyseus_spawns_t* spawns,
+    const colyseus_spawn_entry_t* entry);
+
+/*
+ * Render position of an entry, whichever side of the handoff it is on: the
+ * predicted local's field while pending, the authoritative instance's after.
+ * `local_field` reads the app's local struct through `local_read` (below);
+ * without one, a pending entry reads NAN.
+ */
+double colyseus_spawns_value(colyseus_spawns_t* spawns,
+    const colyseus_spawn_entry_t* entry, const char* field);
+
+/* Reads. */
 const colyseus_spawn_entry_t* colyseus_spawns_entry_for(colyseus_spawns_t* spawns, colyseus_schema_t* server);
 const colyseus_spawn_entry_t* colyseus_spawns_entry(colyseus_spawns_t* spawns, int id);
 bool colyseus_spawns_alive(colyseus_spawns_t* spawns, int id);

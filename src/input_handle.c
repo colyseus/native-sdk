@@ -19,6 +19,7 @@ struct colyseus_input_handle {
     bool stamp_render;
     bool stamp_reckon;
     double render_delay;
+    bool render_delay_explicit;   /* app-set: the predict layer must not override */
     bool (*allow_rewind)(void* data, void* userdata);
     void* allow_rewind_userdata;
     double last_stamp;      /* delta-coded stamp baseline */
@@ -89,6 +90,7 @@ colyseus_input_handle_t* colyseus_input_handle_create(
     handle->stamp_reckon = stamp_reckon;
     if (options) {
         handle->render_delay = options->render_delay;
+        handle->render_delay_explicit = options->render_delay > 0;
         handle->allow_rewind = options->allow_rewind;
         handle->allow_rewind_userdata = options->allow_rewind_userdata;
     }
@@ -128,6 +130,17 @@ void colyseus_input_handle_free(colyseus_input_handle_t* handle) {
 
 colyseus_schema_t* colyseus_input_handle_data(colyseus_input_handle_t* handle) {
     return handle->data;
+}
+
+/* An explicit room_input({render_delay}) wins: the predict layer only fills in
+ * a value the app never chose. */
+void colyseus_input_handle_set_render_delay(colyseus_input_handle_t* handle, double milliseconds) {
+    if (!handle || handle->render_delay_explicit) return;
+    handle->render_delay = milliseconds < 0 ? 0 : milliseconds;
+}
+
+double colyseus_input_handle_render_delay(const colyseus_input_handle_t* handle) {
+    return handle ? handle->render_delay : 0;
 }
 
 int colyseus_input_handle_sent_count(const colyseus_input_handle_t* handle) { return handle->sent_count; }

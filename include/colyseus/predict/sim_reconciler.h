@@ -3,6 +3,8 @@
 
 #include "colyseus/predict/reconciler.h"
 
+struct colyseus_predict;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -85,6 +87,17 @@ typedef struct {
 colyseus_reconciler_t* colyseus_sim_reconciler_create(
     colyseus_input_handle_t* input,
     colyseus_room_clock_t* clock,          /* resolves reckon_time; may be NULL */
+    colyseus_sim_step_fn step,
+    const colyseus_sim_reconciler_options_t* options);
+
+/**
+ * As above, but driven by `p`'s tick() and with the input handle's lag-comp
+ * render delay bound to the Predict's lerp delay. Prefer this in an app.
+ * (Declared here; implemented alongside colyseus_predict_reconciler.)
+ */
+colyseus_reconciler_t* colyseus_predict_sim_reconciler(
+    struct colyseus_predict* p,
+    colyseus_input_handle_t* input,
     colyseus_sim_step_fn step,
     const colyseus_sim_reconciler_options_t* options);
 
