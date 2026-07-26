@@ -1,4 +1,5 @@
 #include "colyseus/input_handle.h"
+#include "colyseus/schema/ref_tracker.h"
 #include "colyseus/protocol.h"
 #include "colyseus/schema/dynamic_schema.h"
 
@@ -125,6 +126,12 @@ void colyseus_input_handle_free(colyseus_input_handle_t* handle) {
     free(handle->send_times);
     colyseus_wbuf_free(&handle->frame);
     colyseus_input_encoder_free(handle->encoder);
+    /* The bound input instance: colyseus_room_input() creates it for us and
+     * nothing else owns it (the encoder only borrows the pointer). */
+    if (handle->data && handle->vtable && handle->vtable->destroy) {
+        colyseus_schema_free_string_fields(handle->data);
+        handle->vtable->destroy(handle->data);
+    }
     free(handle);
 }
 

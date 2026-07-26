@@ -8,6 +8,94 @@
 /* Forward declaration for recursive removal */
 static void schedule_children_for_removal(colyseus_ref_tracker_t* tracker, colyseus_ref_entry_t* entry);
 
+void colyseus_schema_free_string_fields(colyseus_schema_t* instance) {
+    const colyseus_schema_vtable_t* vt = instance ? instance->__vtable : NULL;
+    if (!vt || colyseus_vtable_is_dynamic(vt)) return;
+    for (int i = 0; i < vt->field_count; i++) {
+        const colyseus_field_t* f = &vt->fields[i];
+        if (f->type != COLYSEUS_FIELD_STRING) continue;
+        char** slot = (char**)((char*)instance + f->offset);
+        free(*slot);
+        *slot = NULL;
+    }
+}
+
+/* Drop the tracker's handle on a ref we just destroyed, so nothing frees it twice. */
+static void ref_tracker_forget(colyseus_ref_tracker_t* tracker, int ref_id) {
+    colyseus_ref_entry_t* entry = NULL;
+    HASH_FIND_INT(tracker->refs, &ref_id, entry);
+    if (entry) entry->ref = NULL;
+}
+
+typedef struct {
+    colyseus_ref_tracker_t* tracker;
+    const colyseus_schema_vtable_t* child_vtable;
+} destroy_children_ctx_t;
+
+static void destroy_collection_child(colyseus_schema_t* instance, destroy_children_ctx_t* ctx) {
+    if (!instance) return;
+    const colyseus_schema_vtable_t* vt = instance->__vtable ? instance->__vtable : ctx->child_vtable;
+    if (!vt || colyseus_vtable_is_dynamic(vt) || !vt->destroy) return;
+    int ref_id = instance->__refId;
+    colyseus_schema_free_string_fields(instance);
+    vt->destroy(instance);
+    ref_tracker_forget(ctx->tracker, ref_id);
+}
+
+static void destroy_map_child(const char* key, void* value, void* userdata) {
+    (void)key;
+    destroy_collection_child((colyseus_schema_t*)value, (destroy_children_ctx_t*)userdata);
+}
+
+static void destroy_array_child(int index, void* value, void* userdata) {
+    (void)index;
+    destroy_collection_child((colyseus_schema_t*)value, (destroy_children_ctx_t*)userdata);
+}
+
+void colyseus_ref_tracker_destroy_static_refs(colyseus_ref_tracker_t* tracker, void* except_ref) {
+    if (!tracker) return;
+    colyseus_ref_entry_t* entry;
+    colyseus_ref_entry_t* tmp;
+
+    /*
+     * Pass 1 — strings. Nothing else frees them: schema-codegen's destroy()
+     * ignores char* fields entirely. Freeing NULLs the slot, so the recursive
+     * destroy below can't trip over it.
+     */
+    HASH_ITER(hh, tracker->refs, entry, tmp) {
+        if (!entry->ref || entry->ref_type != COLYSEUS_REF_TYPE_SCHEMA) continue;
+        if (!entry->vtable || colyseus_vtable_is_dynamic(entry->vtable)) continue;
+        colyseus_schema_free_string_fields((colyseus_schema_t*)entry->ref);
+    }
+
+    /*
+     * Pass 2 — collections and the entries they hold. This is the ONLY orphaned
+     * part: codegen's destroy() recurses into t.ref() children (so the root
+     * frees those itself) but never into a map or array, so its items and the
+     * collection structure would otherwise be lost.
+     */
+    HASH_ITER(hh, tracker->refs, entry, tmp) {
+        if (!entry->ref || entry->ref == except_ref) continue;
+        if (entry->ref_type == COLYSEUS_REF_TYPE_MAP) {
+            colyseus_map_schema_t* map = (colyseus_map_schema_t*)entry->ref;
+            if (map->has_schema_child) {
+                destroy_children_ctx_t ctx = { tracker, map->child_vtable };
+                colyseus_map_schema_foreach(map, destroy_map_child, &ctx);
+            }
+            entry->ref = NULL;
+            colyseus_map_schema_free(map, NULL);
+        } else if (entry->ref_type == COLYSEUS_REF_TYPE_ARRAY) {
+            colyseus_array_schema_t* arr = (colyseus_array_schema_t*)entry->ref;
+            if (arr->has_schema_child) {
+                destroy_children_ctx_t ctx = { tracker, arr->child_vtable };
+                colyseus_array_schema_foreach(arr, destroy_array_child, &ctx);
+            }
+            entry->ref = NULL;
+            colyseus_array_schema_free(arr, NULL);
+        }
+    }
+}
+
 colyseus_ref_tracker_t* colyseus_ref_tracker_create(void) {
     colyseus_ref_tracker_t* tracker = malloc(sizeof(colyseus_ref_tracker_t));
     if (!tracker) return NULL;

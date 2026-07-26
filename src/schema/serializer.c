@@ -264,6 +264,9 @@ colyseus_schema_serializer_t* colyseus_schema_serializer_create(const colyseus_s
 void colyseus_schema_serializer_free(colyseus_schema_serializer_t* serializer) {
     if (!serializer) return;
 
+    /* A room freed without a close never ran teardown; idempotent either way
+     * (the first pass empties the tracker). */
+    colyseus_decoder_release_codegen_tree(serializer->decoder);
     colyseus_decoder_free(serializer->decoder);
     free(serializer);
 }
@@ -303,6 +306,8 @@ void colyseus_schema_serializer_patch(colyseus_schema_serializer_t* serializer,
 
 void colyseus_schema_serializer_teardown(colyseus_schema_serializer_t* serializer) {
     if (!serializer) return;
+    /* The room's state IS codegen output, so its children are ours to free. */
+    colyseus_decoder_release_codegen_tree(serializer->decoder);
     colyseus_decoder_teardown(serializer->decoder);
 }
 

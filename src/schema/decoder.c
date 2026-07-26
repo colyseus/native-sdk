@@ -120,6 +120,7 @@ void colyseus_decoder_free(colyseus_decoder_t* decoder) {
      * For static schemas, we need to call destroy here. */
     if (decoder->state && decoder->state_vtable && decoder->state_vtable->destroy) {
         if (!colyseus_vtable_is_dynamic(decoder->state_vtable)) {
+            colyseus_schema_free_string_fields(decoder->state);
             decoder->state_vtable->destroy(decoder->state);
         }
     }
@@ -141,6 +142,19 @@ colyseus_schema_t* colyseus_decoder_get_state(colyseus_decoder_t* decoder) {
 void colyseus_decoder_teardown(colyseus_decoder_t* decoder) {
     if (!decoder) return;
     colyseus_ref_tracker_clear(decoder->refs);
+}
+
+/*
+ * Release the tracked tree of a decoder whose vtables came from schema-codegen
+ * (see colyseus_ref_tracker_destroy_static_refs). NOT part of the generic
+ * teardown: hand-written vtables — the reflection types the handshake decodes
+ * through, for one — DO recurse in destroy(), and running this over those
+ * double-frees their children.
+ */
+void colyseus_decoder_release_codegen_tree(colyseus_decoder_t* decoder) {
+    if (!decoder || !decoder->state_vtable) return;
+    if (colyseus_vtable_is_dynamic(decoder->state_vtable)) return;
+    colyseus_ref_tracker_destroy_static_refs(decoder->refs, decoder->state);
 }
 
 /* ============================================================================

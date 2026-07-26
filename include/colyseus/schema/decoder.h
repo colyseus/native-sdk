@@ -112,6 +112,15 @@ colyseus_schema_t* colyseus_decoder_get_state(colyseus_decoder_t* decoder);
 /* Teardown - clear all refs */
 void colyseus_decoder_teardown(colyseus_decoder_t* decoder);
 
+/*
+ * Destroy the decoded tree below the root for a schema-codegen'd state, whose
+ * generated destroy() frees only its own struct. Terminal: the root's child
+ * pointers dangle afterwards. Only the room's state serializer calls this —
+ * hand-written vtables (the handshake's reflection types) recurse in destroy()
+ * and must NOT go through it.
+ */
+void colyseus_decoder_release_codegen_tree(colyseus_decoder_t* decoder);
+
 #ifdef __cplusplus
 }
 #endif
