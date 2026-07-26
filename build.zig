@@ -754,6 +754,59 @@ pub fn build(b: *std.Build) void {
     }
 
     // ========================================================================
+    // Prediction-playground interactive app (same sibling repo). Needs raylib
+    // from the system; skipped silently when pkg-config can't find it.
+    // ========================================================================
+    {
+        const app_src = "../demos/prediction-tools/clients/native-app/main.c";
+        const raylib = pkgConfig(b, "raylib");
+        if (std.fs.cwd().access(app_src, .{})) |_| {
+            if (raylib) |ray| {
+                const app_module = b.createModule(.{
+                    .target = target,
+                    .optimize = optimize,
+                });
+                const app = b.addExecutable(.{
+                    .name = "predict_playground",
+                    .root_module = app_module,
+                });
+                app.linkLibC();
+                app.addCSourceFile(.{
+                    .file = .{ .cwd_relative = app_src },
+                    .flags = &.{ "-Wall", "-Wextra", c_std },
+                });
+                app.addIncludePath(b.path("include"));
+                app.addIncludePath(b.path("third_party/uthash/src"));
+                app.addIncludePath(b.path("third_party/sds"));
+                app.addIncludePath(b.path("third_party/cJSON"));
+                app.addIncludePath(b.path("third_party/wslay/lib/includes"));
+                app.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
+                // Schema headers are shared with the headless probe.
+                app.addIncludePath(.{ .cwd_relative = "../demos/prediction-tools/clients/native" });
+                app.addIncludePath(.{ .cwd_relative = "../demos/prediction-tools/clients/native-app" });
+                app.addIncludePath(.{ .cwd_relative = ray.include });
+                app.addLibraryPath(.{ .cwd_relative = ray.lib });
+                app.linkSystemLibrary("raylib");
+                if (target.result.os.tag == .macos) {
+                    app.linkFramework("Cocoa");
+                    app.linkFramework("IOKit");
+                    app.linkFramework("CoreVideo");
+                    app.linkFramework("OpenGL");
+                }
+                app.linkLibrary(colyseus);
+                b.installArtifact(app);
+
+                const run_app = b.addRunArtifact(app);
+                if (b.args) |args| run_app.addArgs(args);
+                const run_step = b.step("run-playground", "Run the prediction playground app");
+                run_step.dependOn(&run_app.step);
+            } else {
+                std.debug.print("note: raylib not found (pkg-config) — skipping predict_playground\n", .{});
+            }
+        } else |_| {}
+    }
+
+    // ========================================================================
     // Build and run tests (skip for emscripten - can't run wasm tests directly)
     // ========================================================================
     if (is_emscripten) return;
@@ -844,6 +897,39 @@ pub fn build(b: *std.Build) void {
         const individual_test_step = b.step(test_file.name, test_file.description);
         individual_test_step.dependOn(&run_test.step);
     }
+}
+
+// ============================================================================
+// System-library discovery
+// ============================================================================
+
+const PkgPaths = struct { include: []const u8, lib: []const u8 };
+
+/// Resolve a system package's include/lib dirs via pkg-config. Returns null
+/// when pkg-config is missing or doesn't know the package — callers treat that
+/// as "skip this optional target".
+fn pkgConfig(b: *std.Build, name: []const u8) ?PkgPaths {
+    const query = struct {
+        fn run(bb: *std.Build, pkg: []const u8, variable: []const u8) ?[]const u8 {
+            const result = std.process.Child.run(.{
+                .allocator = bb.allocator,
+                .argv = &.{ "pkg-config", variable, pkg },
+            }) catch return null;
+            defer bb.allocator.free(result.stderr);
+            if (result.term != .Exited or result.term.Exited != 0 or result.stdout.len == 0) {
+                bb.allocator.free(result.stdout);
+                return null;
+            }
+            const trimmed = std.mem.trim(u8, result.stdout, " \n\r\"");
+            const owned = bb.allocator.dupe(u8, trimmed) catch null;
+            bb.allocator.free(result.stdout);
+            return owned;
+        }
+    }.run;
+
+    const include = query(b, name, "--variable=includedir") orelse return null;
+    const lib = query(b, name, "--variable=libdir") orelse return null;
+    return .{ .include = include, .lib = lib };
 }
 
 // ============================================================================
