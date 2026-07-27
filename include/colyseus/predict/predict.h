@@ -72,9 +72,45 @@ colyseus_predict_t* colyseus_predict_for_room(struct colyseus_room* room);
 
 void colyseus_predict_free(colyseus_predict_t* p);
 
+/* One field of an attach config: which field, and how to smooth it.
+ *
+ * The reference takes a per-field MAP (`{ x: "lerp", yaw: { mode: "damped",
+ * angle: true } }`); C has no map literal, so the same thing is an array of
+ * these. `opts` NULL = lerp with defaults. */
+typedef struct {
+    const char* field;
+    const colyseus_predict_field_options_t* opts;
+} colyseus_attach_field_t;
+
 /*
- * Track one numeric field for smoothing (modes lerp/extrapolate/damped/raw).
- * `options` NULL = lerp with defaults. Returns 0 on success.
+ * Attach prediction to ONE instance from a declarative config — each field
+ * picks its OWN mode, which the old (fields, options) pair could not express:
+ *
+ *   colyseus_predict_field_options_t yaw = { .mode = COLYSEUS_PREDICT_DAMPED,
+ *                                            .angle = true };
+ *   colyseus_attach_field_t cfg[] = { { "x", NULL }, { "yaw", &yaw } };
+ *   colyseus_predict_attach(p, boss, cfg, 2);
+ *
+ * Fields the instance's schema doesn't declare are DROPPED, not an error: one
+ * config can cover a heterogeneous collection. Returns 0 on success.
+ *
+ * NOTE the reference folds dead reckoning into this same call via a config
+ * union; C has no overloading, so reckon keeps its own name below
+ * (colyseus_predict_attach_reckon). That divergence is the language's, not a
+ * design choice.
+ */
+int colyseus_predict_attach(
+    colyseus_predict_t* p,
+    colyseus_schema_t* instance,
+    const colyseus_attach_field_t* config, int count);
+
+/*
+ * @internal Track one numeric field for smoothing (modes
+ * lerp/extrapolate/damped/raw). `options` NULL = lerp with defaults. The
+ * primitive under colyseus_predict_attach — PORTING.md strips
+ * track/untrack/trackStepped from the published surface; it stays exported here
+ * because C has no other way to keep it reachable from the library's own
+ * translation units. Returns 0 on success.
  */
 int colyseus_predict_track(
     colyseus_predict_t* p,
@@ -89,8 +125,11 @@ int colyseus_predict_track(
  * offset-decay smooths the result (steady-state exact; rebase discontinuities
  * decay out; `snap` pops teleports). `smoothing 0` = raw projection.
  * Static vtables only. Returns 0 on success.
+ *
+ * The reckon arm of the attach config. Named apart from
+ * colyseus_predict_attach only because C cannot overload.
  */
-int colyseus_predict_track_reckon(
+int colyseus_predict_attach_reckon(
     colyseus_predict_t* p,
     colyseus_schema_t* instance,
     const colyseus_schema_vtable_t* vtable,
@@ -108,17 +147,18 @@ void colyseus_predict_detach(colyseus_predict_t* p, colyseus_schema_t* instance)
  * arrive later — and stop tracking them as they are removed. This is the
  * common case: remote entities you smooth but do not control.
  *
- * `fields` NULL tracks every numeric field of each entry. `except_key` skips
- * one entry by map key (your own session id); NULL tracks all.
- * Returns 0 on success.
+ * Takes the same per-field config as colyseus_predict_attach. `config` NULL
+ * tracks every numeric field of each entry with `fallback` (itself NULL =
+ * lerp defaults). `except_key` skips one entry by map key (your own session
+ * id); NULL tracks all. Returns 0 on success.
  */
 int colyseus_predict_attach_all(
     colyseus_predict_t* p,
     colyseus_schema_t* state,
     const char* collection,
-    const char* const* fields, int field_count,
+    const colyseus_attach_field_t* config, int count,
     const char* except_key,
-    const colyseus_predict_field_options_t* options);
+    const colyseus_predict_field_options_t* fallback);
 
 /*
  * ── Children ────────────────────────────────────────────────────────────

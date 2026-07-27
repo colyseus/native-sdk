@@ -112,9 +112,10 @@ typedef struct driven_child {
 typedef struct attach_all_ctx {
     colyseus_predict_t* p;
     char** fields;                  /* NULL = every numeric field */
+    colyseus_predict_field_options_t* field_opts;  /* parallel to `fields` */
     int field_count;
     char* except_key;
-    colyseus_predict_field_options_t opts;
+    colyseus_predict_field_options_t opts;         /* the `fields == NULL` fallback */
     /* reckon variant */
     const colyseus_schema_vtable_t* entry_vtable;
     colyseus_predict_step_fn step;
@@ -476,14 +477,14 @@ static void attach_all_on_add(void* value, void* key, void* userdata) {
 
     colyseus_schema_t* instance = (colyseus_schema_t*)value;
     if (a->step) {
-        colyseus_predict_track_reckon(a->p, instance, a->entry_vtable,
+        colyseus_predict_attach_reckon(a->p, instance, a->entry_vtable,
             (const char* const*)a->fields, a->field_count, a->step,
             a->smoothing, a->substep_ms, a->snap, a->userdata);
         return;
     }
     if (a->fields) {
         for (int i = 0; i < a->field_count; i++) {
-            colyseus_predict_track(a->p, instance, a->fields[i], &a->opts);
+            colyseus_predict_track(a->p, instance, a->fields[i], &a->field_opts[i]);
         }
         return;
     }
@@ -505,22 +506,46 @@ static void attach_all_on_remove(void* value, void* key, void* userdata) {
     colyseus_predict_detach(a->p, (colyseus_schema_t*)value);
 }
 
+int colyseus_predict_attach(
+    colyseus_predict_t* p,
+    colyseus_schema_t* instance,
+    const colyseus_attach_field_t* config, int count) {
+    if (!p || !instance || !config || count <= 0) return -1;
+    for (int i = 0; i < count; i++) {
+        if (!config[i].field) continue;
+        /* Drop what this type doesn't declare: one config, many entry types. */
+        if (instance->__vtable && !colyseus_vtable_is_dynamic(instance->__vtable)
+            && !find_field(instance->__vtable, config[i].field)) {
+            continue;
+        }
+        colyseus_predict_track(p, instance, config[i].field, config[i].opts);
+    }
+    return 0;
+}
+
 int colyseus_predict_attach_all(
     colyseus_predict_t* p,
     colyseus_schema_t* state,
     const char* collection,
-    const char* const* fields, int field_count,
+    const colyseus_attach_field_t* config, int count,
     const char* except_key,
-    const colyseus_predict_field_options_t* options) {
+    const colyseus_predict_field_options_t* fallback) {
     if (!p || !state || !collection) return -1;
 
     attach_all_ctx_t* a = calloc(1, sizeof(attach_all_ctx_t));
     a->p = p;
-    if (options) a->opts = *options;
-    if (fields && field_count > 0) {
-        a->field_count = field_count;
-        a->fields = calloc((size_t)field_count, sizeof(char*));
-        for (int i = 0; i < field_count; i++) a->fields[i] = strdup(fields[i]);
+    if (fallback) a->opts = *fallback;
+    if (config && count > 0) {
+        a->field_count = count;
+        a->fields = calloc((size_t)count, sizeof(char*));
+        a->field_opts = calloc((size_t)count, sizeof(colyseus_predict_field_options_t));
+        for (int i = 0; i < count; i++) {
+            a->fields[i] = strdup(config[i].field);
+            /* Snapshot per-field options: the caller's structs are typically
+               stack locals that die at the end of mount(). */
+            if (config[i].opts) { a->field_opts[i] = *config[i].opts; }
+            else if (fallback) { a->field_opts[i] = *fallback; }
+        }
     }
     if (except_key) a->except_key = strdup(except_key);
 
@@ -600,6 +625,7 @@ void colyseus_predict_free(colyseus_predict_t* p) {
         colyseus_callbacks_remove(p->callbacks, a->on_remove);
         for (int i = 0; i < a->field_count; i++) free(a->fields[i]);
         free(a->fields);
+        free(a->field_opts);
         free(a->except_key);
         free(a);
     }
@@ -689,7 +715,7 @@ int colyseus_predict_track(
     return 0;
 }
 
-int colyseus_predict_track_reckon(
+int colyseus_predict_attach_reckon(
     colyseus_predict_t* p,
     colyseus_schema_t* instance,
     const colyseus_schema_vtable_t* vtable,
