@@ -617,6 +617,42 @@ void colyseus_reconciler_set_driver_(colyseus_reconciler_t* r, struct colyseus_p
     if (r) r->driver = driver;
 }
 
+int colyseus_reconciler_bound_fields_(const colyseus_reconciler_t* r,
+                                      colyseus_bound_field_t* out, int max) {
+    if (!r) return 0;
+    int n = 0;
+    if (!r->sim) {
+        /* Flat face: one mirrored instance, and the pose key IS the field name. */
+        if (!r->truth) return 0;
+        for (int i = 0; i < r->field_count; i++) {
+            if (!r->fields[i].numeric) continue;   /* booleans copy, never smooth */
+            if (out && n < max) {
+                out[n].source = r->truth;
+                out[n].field = r->fields[i].name;
+                out[n].pose_key = r->fields[i].name;
+            }
+            n++;
+        }
+        return n;
+    }
+    /* Composite face: the SOURCE per part, not the mirror that replaced it —
+     * that is the instance the app still holds and reads through. */
+    for (int i = 0; i < r->sim->part_count; i++) {
+        const sim_part_t* part = &r->sim->parts[i];
+        if (!part->source) continue;              /* opaque part — nothing to key on */
+        for (int k = 0; k < part->field_count; k++) {
+            if (!part->fields[k].numeric) continue;
+            if (out && n < max) {
+                out[n].source = part->source;
+                out[n].field = part->fields[k].name;
+                out[n].pose_key = r->sim->pose_keys[part->pose_base + k];
+            }
+            n++;
+        }
+    }
+    return n;
+}
+
 int colyseus_step_memo_vec(const colyseus_step_ctx_t* ctx, const char* key,
     int (*compute)(double* out, void* userdata), void* userdata, double* out) {
     colyseus_reconciler_t* r = (colyseus_reconciler_t*)ctx->_memo_backing;

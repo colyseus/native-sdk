@@ -154,6 +154,21 @@ int colyseus_reconciler_reconcile_seq(const colyseus_reconciler_t* r);
 /* @internal — set by colyseus_predict_reconciler() so free() can deregister. */
 void colyseus_reconciler_set_driver_(colyseus_reconciler_t* r, struct colyseus_predict* driver);
 
+/* One controller-owned (instance, field) and the pose key it reads back as.
+ * Flattened to triples rather than the reference's per-instance registration
+ * arrays: no nested ownership to hand across the module boundary. */
+typedef struct {
+    colyseus_schema_t* source;   /* the DECODED instance, never the mirror */
+    const char* field;           /* borrowed — outlives the call, owned by `r` */
+    const char* pose_key;        /* == field on the flat face */
+} colyseus_bound_field_t;
+
+/* @internal — enumerate what colyseus_predict_value() needs to reach this
+ * controller's poses. Returns the total count; pass out=NULL (max ignored) to
+ * size first. Writes at most `max`. */
+int colyseus_reconciler_bound_fields_(const colyseus_reconciler_t* r,
+                                      colyseus_bound_field_t* out, int max);
+
 #ifdef __cplusplus
 }
 #endif

@@ -29,9 +29,12 @@ extern "C" {
  * Everything else — tick(), value(), reset(), free(), the drift/correction
  * telemetry — is the shared colyseus_reconciler_* surface.
  *
- * NOT ported (see PORTING.md): custom `pose`/`interpolate` overlays, and the
- * boundRegistrations hook into Predict.value — read poses through
- * colyseus_reconciler_value() instead.
+ * Bound parts register into colyseus_predict_value(), so the render layer reads
+ * them the same way it reads any other entity — colyseus_predict_value(p,
+ * state->puck, "x") — and the "part.field" key stays an internal detail.
+ *
+ * NOT ported (see PORTING.md): the custom `pose`/`interpolate` overlays that
+ * give OPAQUE parts render smoothing.
  */
 
 /** Opaque handle to the world, passed to the step and adopt callbacks. */
@@ -78,8 +81,12 @@ typedef struct {
 
 /**
  * Create a composite reconciler. Returns a colyseus_reconciler_t — free it with
- * colyseus_reconciler_free(), tick it with colyseus_reconciler_tick(), and read
- * poses with colyseus_reconciler_value(r, "part.field").
+ * colyseus_reconciler_free() and tick it with colyseus_reconciler_tick().
+ *
+ * Read poses with colyseus_predict_value(p, source_instance, field); BOUND
+ * parts are routed there automatically. colyseus_reconciler_value(r,
+ * "part.field") remains the low-level escape hatch, and is the only way to read
+ * an OPAQUE part.
  *
  * Returns NULL when the fixed step can't be determined, a bound part has no
  * scalar fields, or nothing is bound and no `adopt` was supplied.

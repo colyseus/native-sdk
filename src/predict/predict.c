@@ -43,6 +43,14 @@ typedef struct predict_slot {
 
     colyseus_callback_handle_t listen_handle;
     void* listen_ctx;               /* owned (the listener's userdata) */
+
+    /* Controller-owned slot: non-NULL ctrl routes reads at this (instance,
+     * field) to the reconciler's pose instead of a smoothing curve. `stash` is
+     * the passive slot this displaced — restored when the controller goes. */
+    colyseus_reconciler_t* ctrl;
+    char* pose_key;                 /* owned */
+    struct predict_slot* stash;
+
     struct predict_slot* next;      /* per-instance chain */
 } predict_slot_t;
 
@@ -563,6 +571,8 @@ static void free_slot(colyseus_predict_t* p, predict_slot_t* slot) {
     if (slot->listen_handle >= 0) colyseus_callbacks_remove(p->callbacks, slot->listen_handle);
     free(slot->listen_ctx);
     free(slot->field);
+    free(slot->pose_key);
+    if (slot->stash) free_slot(p, slot->stash);
     free(slot);
 }
 
@@ -824,8 +834,29 @@ static void predict_drive(colyseus_predict_t* p, driven_kind_t kind, void* ptr) 
     p->driven = d;
 }
 
+/* Put back every passive slot a controller's overlay displaced, and drop the
+ * bound slots themselves. Called as the controller goes away, so reads fall
+ * back to smoothing (or to the raw decoded field) instead of a dangling ctrl. */
+static void predict_remove_bound_overlay(colyseus_predict_t* p, colyseus_reconciler_t* r) {
+    slot_bucket_t *bucket, *tmp;
+    HASH_ITER(hh, p->by_ref, bucket, tmp) {
+        predict_slot_t** link = &bucket->slots;
+        while (*link) {
+            predict_slot_t* slot = *link;
+            if (slot->ctrl != r) { link = &slot->next; continue; }
+            predict_slot_t* stash = slot->stash;
+            slot->stash = NULL;                 /* adopted below, not freed */
+            *link = stash ? stash : slot->next;
+            if (stash) stash->next = slot->next;
+            free_slot(p, slot);
+            link = stash ? &stash->next : link;
+        }
+    }
+}
+
 void colyseus_predict_undrive(colyseus_predict_t* p, void* child) {
     if (!p) return;
+    predict_remove_bound_overlay(p, (colyseus_reconciler_t*)child);
     driven_child_t** link = &p->driven;
     while (*link) {
         if ((*link)->ptr == child) {
@@ -906,6 +937,64 @@ static void predict_bind_render_delay(colyseus_predict_t* p) {
 
 static void predict_bind_render_delay_fwd(colyseus_predict_t* p) { predict_bind_render_delay(p); }
 
+/* Route colyseus_predict_value() at every field a controller predicts, so ONE
+ * read idiom covers the whole render layer: passively-smoothed remotes and
+ * controller-owned entities alike, with the caller never naming a pose key.
+ *
+ * A passive slot already on that field is STASHED, not dropped — its listener
+ * keeps sampling, and undrive() puts it back. */
+static void predict_install_bound_overlay(colyseus_predict_t* p, colyseus_reconciler_t* r) {
+    int n = colyseus_reconciler_bound_fields_(r, NULL, 0);
+    if (n <= 0) return;
+    colyseus_bound_field_t* regs = calloc((size_t)n, sizeof(*regs));
+    if (!regs) return;
+    colyseus_reconciler_bound_fields_(r, regs, n);
+
+    for (int i = 0; i < n; i++) {
+        if (!regs[i].source) continue;
+        int ref_id = regs[i].source->__refId;
+        slot_bucket_t* bucket = NULL;
+        HASH_FIND_INT(p->by_ref, &ref_id, bucket);
+        if (!bucket) {
+            bucket = calloc(1, sizeof(slot_bucket_t));
+            if (!bucket) continue;
+            bucket->ref_id = ref_id;
+            HASH_ADD_INT(p->by_ref, ref_id, bucket);
+        }
+
+        predict_slot_t* stash = NULL;
+        predict_slot_t** cursor = &bucket->slots;
+        while (*cursor) {
+            if (strcmp((*cursor)->field, regs[i].field) == 0) {
+                stash = *cursor;
+                *cursor = stash->next;
+                if (stash->ctrl) {
+                    /* Same (instance, field) claimed twice: newer wins, and it
+                     * inherits the ORIGINAL passive slot rather than nesting. */
+                    predict_slot_t* prior = stash;
+                    stash = prior->stash;
+                    prior->stash = NULL;
+                    free_slot(p, prior);
+                }
+                break;
+            }
+            cursor = &(*cursor)->next;
+        }
+
+        predict_slot_t* slot = calloc(1, sizeof(predict_slot_t));
+        if (!slot) { continue; }
+        slot->field = strdup(regs[i].field);
+        slot->pose_key = strdup(regs[i].pose_key);
+        slot->instance = regs[i].source;
+        slot->ctrl = r;
+        slot->stash = stash;
+        slot->listen_handle = -1;
+        slot->next = bucket->slots;
+        bucket->slots = slot;
+    }
+    free(regs);
+}
+
 colyseus_reconciler_t* colyseus_predict_reconciler(
     colyseus_predict_t* p,
     colyseus_schema_t* truth,
@@ -920,6 +1009,7 @@ colyseus_reconciler_t* colyseus_predict_reconciler(
     predict_adopt_fixed_step(p, colyseus_reconciler_step_ms(r));
     predict_drive(p, DRIVEN_RECONCILER, r);
     colyseus_reconciler_set_driver_(r, p);
+    predict_install_bound_overlay(p, r);
     p->bound_input = input;
     predict_bind_render_delay(p);
     return r;
@@ -936,6 +1026,7 @@ colyseus_reconciler_t* colyseus_predict_sim_reconciler(
     predict_adopt_fixed_step(p, colyseus_reconciler_step_ms(r));
     predict_drive(p, DRIVEN_RECONCILER, r);
     colyseus_reconciler_set_driver_(r, p);
+    predict_install_bound_overlay(p, r);
     p->bound_input = input;
     predict_bind_render_delay(p);
     return r;
@@ -963,6 +1054,8 @@ double colyseus_predict_value(colyseus_predict_t* p, colyseus_schema_t* instance
         }
         return NAN;
     }
+    /* Controller-owned: the pose comes from its rollback, not the server stream. */
+    if (slot->ctrl) return colyseus_reconciler_value(slot->ctrl, slot->pose_key);
     switch (slot->opts.mode) {
         case COLYSEUS_PREDICT_LERP:        return compute_lerp(p, slot);
         case COLYSEUS_PREDICT_DAMPED:      return compute_damped(p, slot);
