@@ -258,21 +258,26 @@ test "passive_smoothing" {
 
     var lerp_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
     lerp_opts.mode = c.COLYSEUS_PREDICT_LERP;
-    _ = c.colyseus_predict_track(p, ent, "a", &lerp_opts);
     var damped_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
     damped_opts.mode = c.COLYSEUS_PREDICT_DAMPED;
-    _ = c.colyseus_predict_track(p, ent, "b", &damped_opts);
     var ext_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
     ext_opts.mode = c.COLYSEUS_PREDICT_EXTRAPOLATE;
     ext_opts.damping = -1; // raw projection (no output EMA)
-    _ = c.colyseus_predict_track(p, ent, "c", &ext_opts);
     var raw_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
     raw_opts.mode = c.COLYSEUS_PREDICT_RAW;
-    _ = c.colyseus_predict_track(p, ent, "d", &raw_opts);
     var angle_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
     angle_opts.mode = c.COLYSEUS_PREDICT_LERP;
     angle_opts.angle = true;
-    _ = c.colyseus_predict_track(p, ent, "yaw", &angle_opts);
+    // One attach, five modes — the per-field config the (fields, options) pair
+    // could not express, exercised through the PUBLIC surface.
+    const cfg = [_]c.colyseus_attach_field_t{
+        .{ .field = "a", .opts = &lerp_opts },
+        .{ .field = "b", .opts = &damped_opts },
+        .{ .field = "c", .opts = &ext_opts },
+        .{ .field = "d", .opts = &raw_opts },
+        .{ .field = "yaw", .opts = &angle_opts },
+    };
+    _ = c.colyseus_predict_attach(p, ent, &cfg, cfg.len);
 
     // patches on the server-time axis: sample(sNow, -1) at NOW=sNow pins
     // offset 0 → serverNow == NOW, lastServerTime == sNow (fixture axis)
@@ -342,7 +347,7 @@ test "reckon_value_at" {
 
     const fields = [_][*c]const u8{"x"};
     // smoothing 0 → raw projection (exp()-free); substep 10
-    try testing.expectEqual(@as(c_int, 0), c.colyseus_predict_track_reckon(
+    try testing.expectEqual(@as(c_int, 0), c.colyseus_predict_attach_reckon(
         p, ball, &c.reckon_ball_vtable, @ptrCast(&fields), 1, ballStep, 0, 10, 0, null));
 
     // patch: x=100, vx=50 stamped sNow=1000 (offset 0 → serverNow == NOW)
