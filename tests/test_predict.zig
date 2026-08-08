@@ -428,6 +428,56 @@ test "passive_smoothing" {
     try testing.expectEqual(@as(f64, 40), c.colyseus_predict_value(p, ent, "a"));
 }
 
+// The attach-time immediate sample fires BEFORE any timed patch, so it is
+// stamped on the LOCAL clock (uptime-scale ms) while every later sample uses
+// the server axis (ms since room start). The stale larger stamp must restart
+// the ring, not clamp lerp to the attach value for RING_CAP patches — the
+// "entities don't move for the first second" bug.
+test "lerp_attach_survives_the_clock_axis_handoff" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+
+    const decoder = c.colyseus_decoder_create(&c.passive_ent_vtable).?;
+    defer c.colyseus_decoder_free(decoder);
+    const callbacks = c.colyseus_callbacks_create(decoder).?;
+    defer c.colyseus_callbacks_free(callbacks);
+    const clock = c.colyseus_room_clock_create().?;
+    defer c.colyseus_room_clock_free(clock);
+    c.colyseus_room_clock_set_patch_interval(clock, 50);
+
+    const p = c.colyseus_predict_create(callbacks, clock).?;
+    defer c.colyseus_predict_free(p);
+    const ent: *c.colyseus_schema_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
+
+    var lerp_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    lerp_opts.mode = c.COLYSEUS_PREDICT_LERP;
+    const cfg = [_]c.colyseus_attach_field_t{
+        .{ .field = "a", .opts = &lerp_opts },
+    };
+
+    // join: initial state decodes and the lab attaches on an unsynced clock
+    NOW = 900000;
+    decodeBytes(decoder, &[_]u8{ 128, 10 });
+    _ = c.colyseus_predict_attach(p, ent, &cfg, cfg.len);
+
+    // the first timed patches land — samples move onto the server axis
+    NOW = 900050;
+    c.colyseus_room_clock_sample(clock, 1000, -1);
+    decodeBytes(decoder, &[_]u8{ 128, 20 });
+    NOW = 900100;
+    c.colyseus_room_clock_sample(clock, 1050, -1);
+    decodeBytes(decoder, &[_]u8{ 128, 30 });
+    NOW = 900150;
+    c.colyseus_room_clock_sample(clock, 1100, -1);
+    decodeBytes(decoder, &[_]u8{ 128, 40 });
+
+    // serverNow = 1150 → lerp target 1050 lands ON the (1050, 30) sample.
+    // Before the ring guard this read 10: the 900000-stamped attach sample
+    // clamped the interpolation to the oldest value.
+    NOW = 900200;
+    _ = c.colyseus_predict_tick(p, NOW);
+    try testing.expectEqual(@as(f64, 30), c.colyseus_predict_value(p, ent, "a"));
+}
+
 // ─── reckon + valueAt (fixture scenario E) ──────────────────────────────────
 
 fn ballStep(state: ?*c.colyseus_schema_t, dt: f64, elapsed_ms: f64, userdata: ?*anyopaque) callconv(.c) void {

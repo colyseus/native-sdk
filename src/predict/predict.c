@@ -20,6 +20,7 @@
 #define GAP_RESUME_MULT 3.0
 #define GAP_RESUME_PATCH_MULT 1.5
 #define GAP_RESUME_MAX_MS 250.0
+#define RING_BACKJUMP_MS 500.0
 
 /* ── slot: one tracked (instance, field) ─────────────────────────────── */
 
@@ -231,6 +232,18 @@ static void on_sample(void* current_value, void* previous_value, void* userdata)
     double last_t1 = count == 0
         ? -INFINITY
         : slot->ring_t[head == 0 ? RING_CAP - 1 : head - 1];
+
+    /* time-axis guard: the immediate attach sample is stamped on the LOCAL
+     * clock when no timed patch has landed yet, and a reconnect resets the
+     * server axis. A stale larger stamp clamps lerp/extrapolate to the
+     * oldest sample until it ages out of the ring — a ~RING_CAP-patch
+     * on-screen freeze. A big backwards jump restarts the ring instead. */
+    if (isfinite(last_t1) && now < last_t1 - RING_BACKJUMP_MS) {
+        head = 0;
+        count = 0;
+        last_t1 = -INFINITY;
+        slot->aux_v = current;
+    }
 
     /* tick-snap arrival times onto a regular grid */
     double snap_t = now;
