@@ -6,6 +6,7 @@
 #include "../../../include/colyseus/schema/dynamic_schema.h"
 #include "../../../include/colyseus/schema/collections.h"
 #include "../../../include/colyseus/messages.h"
+#include "../../../include/colyseus/net_delay.h"
 #include "cJSON.h"
 #include <stdlib.h>
 #include <string.h>
@@ -19,80 +20,13 @@
 #include <pthread.h>
 #endif
 
-// Export macro for GameMaker DLL functions
-#ifndef GM_EXPORT
-#ifdef __EMSCRIPTEN__
-#define GM_EXPORT EMSCRIPTEN_KEEPALIVE
-#elif defined(_WIN32)
-#define GM_EXPORT __declspec(dllexport)
-#else
-#define GM_EXPORT __attribute__((visibility("default")))
-#endif
-#endif
+#include "gamemaker_internal.h"
 
 // Maximum number of events in the queue
 #define MAX_EVENT_QUEUE_SIZE 1024
 
 // Maximum number of callback entries
 #define MAX_GM_CALLBACK_ENTRIES 256
-
-// Event types for GameMaker polling
-typedef enum {
-    GM_EVENT_NONE = 0,
-    GM_EVENT_ROOM_JOIN = 1,
-    GM_EVENT_ROOM_STATE_CHANGE = 2,
-    GM_EVENT_ROOM_MESSAGE = 3,
-    GM_EVENT_ROOM_ERROR = 4,
-    GM_EVENT_ROOM_LEAVE = 5,
-    GM_EVENT_CLIENT_ERROR = 6,
-    GM_EVENT_PROPERTY_CHANGE = 7,
-    GM_EVENT_ITEM_ADD = 8,
-    GM_EVENT_ITEM_REMOVE = 9,
-    GM_EVENT_HTTP_RESPONSE = 10,
-    GM_EVENT_HTTP_ERROR = 11,
-    GM_EVENT_INSTANCE_CHANGE = 12,
-    GM_EVENT_COLLECTION_CHANGE = 13,
-    GM_EVENT_ROOM_DROP = 14,
-    GM_EVENT_ROOM_RECONNECT = 15,
-    GM_EVENT_LATENCY_RESPONSE = 16,  // get_latency success
-    GM_EVENT_LATENCY_ERROR = 17,     // get_latency failure
-    GM_EVENT_LATENCY_SELECTED = 18,  // select_by_latency complete
-} gm_event_type_t;
-
-// Event structure for the queue
-typedef struct {
-    gm_event_type_t type;
-    double room_handle;  // Room pointer as double (for GameMaker)
-    double callback_handle;  // Shared across schema & HTTP & latency (request id) events
-    int code;
-    double latency_ms;   // latency events: measured / best round-trip ms
-    char message[1024];
-
-    union {
-        // Message events (type 3)
-        struct {
-            uint8_t data[8192];
-            size_t data_length;
-        } msg;
-
-        // Schema callback events (types 7, 8, 9)
-        struct {
-            double instance_handle;
-            int value_type;
-            double value_number;
-            double prev_value_number;
-            char value_string[1024];
-            char prev_value_string[1024];
-            char key_string[256];
-            int key_index;
-        } schema;
-
-        // HTTP response/error events (types 10, 11)
-        struct {
-            char* body;  // dynamically allocated, freed on next poll
-        } http;
-    };
-} gm_event_t;
 
 // Event queue (circular buffer, thread-safe)
 typedef struct {
@@ -120,7 +54,7 @@ typedef struct {
 } gm_callbacks_wrapper_t;
 
 // Room reference table — maps small integer refs to room pointers
-#define MAX_ROOM_REFS 16
+#define MAX_ROOM_REFS GM_MAX_ROOM_REFS
 #define MAX_CALLBACKS_PER_ROOM 4
 
 typedef struct {
@@ -179,7 +113,7 @@ static int gm_room_ref_alloc(void) {
     return 0;
 }
 
-static colyseus_room_t* gm_room_ref_get(int ref) {
+colyseus_room_t* gm_room_ref_get(int ref) {
     if (ref < 1 || ref > MAX_ROOM_REFS) return NULL;
     return g_room_refs[ref - 1].room;
 }
@@ -239,6 +173,10 @@ static void gm_room_ref_release(int ref) {
     if (ref >= 1 && ref <= MAX_ROOM_REFS) {
         gm_room_ref_t* entry = &g_room_refs[ref - 1];
 
+        // idempotent — colyseus_gm_room_free already ran it before the room
+        // died; this covers the on_client_error release path
+        gm_predict_room_released(ref);
+
         // Auto-free all callbacks associated with this room
         for (int i = 0; i < entry->callbacks_count; i++) {
             gm_callbacks_wrapper_free(entry->callbacks[i]);
@@ -275,7 +213,7 @@ static void event_queue_unlock(void) {
 #endif
 }
 
-static void event_queue_push(const gm_event_t* event) {
+void gm_event_queue_push(const gm_event_t* event) {
     event_queue_lock();
 
     if (g_event_queue.count >= MAX_EVENT_QUEUE_SIZE) {
@@ -428,7 +366,7 @@ static void gm_property_change_trampoline(void* value, void* previous_value, voi
         &event.schema.prev_value_number, event.schema.prev_value_string,
         sizeof(event.schema.prev_value_string), NULL);
 
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void gm_item_add_trampoline(void* value, void* key, void* userdata) {
@@ -456,7 +394,7 @@ static void gm_item_add_trampoline(void* value, void* key, void* userdata) {
         }
     }
 
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void gm_item_remove_trampoline(void* value, void* key, void* userdata) {
@@ -483,7 +421,7 @@ static void gm_item_remove_trampoline(void* value, void* key, void* userdata) {
         }
     }
 
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void gm_instance_change_trampoline(void* userdata) {
@@ -494,7 +432,7 @@ static void gm_instance_change_trampoline(void* userdata) {
     event.type = GM_EVENT_INSTANCE_CHANGE;
     event.room_handle = entry->room_handle;
     event.callback_handle = (double)entry->index;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void gm_collection_change_trampoline(void* key, void* value, void* userdata) {
@@ -521,7 +459,7 @@ static void gm_collection_change_trampoline(void* key, void* value, void* userda
         }
     }
 
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 // =============================================================================
@@ -533,7 +471,7 @@ static void on_room_join(void* userdata) {
     gm_event_t event = {0};
     event.type = GM_EVENT_ROOM_JOIN;
     event.room_handle = (double)ref;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_state_change(void* userdata) {
@@ -541,7 +479,7 @@ static void on_room_state_change(void* userdata) {
     gm_event_t event = {0};
     event.type = GM_EVENT_ROOM_STATE_CHANGE;
     event.room_handle = (double)ref;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_message_with_type_encoded(const char* type, const uint8_t* data, size_t length, void* userdata) {
@@ -552,7 +490,7 @@ static void on_room_message_with_type_encoded(const char* type, const uint8_t* d
     strncpy(event.message, type ? type : "", sizeof(event.message) - 1);
     event.msg.data_length = length < sizeof(event.msg.data) ? length : sizeof(event.msg.data);
     memcpy(event.msg.data, data, event.msg.data_length);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_error(int code, const char* message, void* userdata) {
@@ -562,7 +500,7 @@ static void on_room_error(int code, const char* message, void* userdata) {
     event.room_handle = (double)ref;
     event.code = code;
     strncpy(event.message, message ? message : "", sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_leave(int code, const char* reason, void* userdata) {
@@ -572,7 +510,7 @@ static void on_room_leave(int code, const char* reason, void* userdata) {
     event.room_handle = (double)ref;
     event.code = code;
     strncpy(event.message, reason ? reason : "", sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_drop(int code, const char* reason, void* userdata) {
@@ -582,20 +520,28 @@ static void on_room_drop(int code, const char* reason, void* userdata) {
     event.room_handle = (double)ref;
     event.code = code;
     strncpy(event.message, reason ? reason : "", sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_reconnect(void* userdata) {
     int ref = (int)(intptr_t)userdata;
+    // the reconnect built a FRESH transport — re-arm the serializing wrap
+    colyseus_room_t* room = gm_room_ref_get(ref);
+    if (room) colyseus_netdelay_wrap(room, true);
     gm_event_t event = {0};
     event.type = GM_EVENT_ROOM_RECONNECT;
     event.room_handle = (double)ref;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_client_room_success(colyseus_room_t* room, void* userdata) {
     int ref = (int)(intptr_t)userdata;
     gm_room_ref_set(ref, room);
+
+    // Serialize ALL inbound onto the GML thread from the very first packet:
+    // decode must never run concurrently with GML state reads. Delivery
+    // happens inside colyseus_process() via colyseus_gm_netdelay_pump().
+    colyseus_netdelay_wrap(room, true);
 
     // Set up room callbacks — pass ref as userdata
     void* ref_as_ptr = (void*)(intptr_t)ref;
@@ -615,7 +561,7 @@ static void on_client_error(int code, const char* message, void* userdata) {
     event.room_handle = (double)ref;
     event.code = code;
     strncpy(event.message, message ? message : "", sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 
     // Release the room ref slot on error
     gm_room_ref_release(ref);
@@ -820,6 +766,11 @@ GM_EXPORT void colyseus_gm_room_leave(double room_handle) {
 
 GM_EXPORT void colyseus_gm_room_free(double room_handle) {
     colyseus_room_t* room = gm_room_ref_get((int)room_handle);
+    if (room && room->transport) {
+        colyseus_netdelay_unwrap(room->transport);
+    }
+    /* predict objects deregister from room-owned layers — free BEFORE the room */
+    gm_predict_room_released((int)room_handle);
     if (room) {
         colyseus_room_free(room);
     }
@@ -1380,18 +1331,25 @@ GM_EXPORT double colyseus_gm_poll_event(void) {
         g_current_http_body = NULL;
     }
 
-    if (event_queue_pop(&g_current_event)) {
-        // Save HTTP body pointer for accessor (valid until next poll)
-        if ((g_current_event.type == GM_EVENT_HTTP_RESPONSE ||
-             g_current_event.type == GM_EVENT_HTTP_ERROR) &&
-            g_current_event.http.body) {
-            g_current_http_body = g_current_event.http.body;
+    if (!event_queue_pop(&g_current_event)) {
+        // Queue drained — deliver anything already RECEIVED (sitting in the
+        // serializing netdelay queue) within this same poll loop, so the
+        // wrap's thread serialization never delays a packet that has landed
+        // (JOIN and its state arrive in the same colyseus_process() call).
+        colyseus_netdelay_pump();
+        if (!event_queue_pop(&g_current_event)) {
+            memset(&g_current_event, 0, sizeof(g_current_event));
+            return 0.0;
         }
-        return (double)g_current_event.type;
     }
 
-    memset(&g_current_event, 0, sizeof(g_current_event));
-    return 0.0;
+    // Save HTTP body pointer for accessor (valid until next poll)
+    if ((g_current_event.type == GM_EVENT_HTTP_RESPONSE ||
+         g_current_event.type == GM_EVENT_HTTP_ERROR) &&
+        g_current_event.http.body) {
+        g_current_http_body = g_current_event.http.body;
+    }
+    return (double)g_current_event.type;
 }
 
 GM_EXPORT double colyseus_gm_event_get_room(void) {
@@ -1724,7 +1682,7 @@ static void on_http_success(const colyseus_http_response_t* response, void* user
     event.callback_handle = args->request_id;
     event.code = response->status_code;
     event.http.body = response->body ? strdup(response->body) : NULL;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 // HTTP error trampoline — pushes GM_EVENT_HTTP_ERROR to event queue
@@ -1738,7 +1696,7 @@ static void on_http_error(const colyseus_http_error_t* error, void* userdata) {
         strncpy(event.message, error->message, sizeof(event.message) - 1);
     }
     event.http.body = NULL;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 // Thread function — runs the blocking HTTP call
@@ -1882,7 +1840,7 @@ static void on_gm_get_latency(const colyseus_latency_result_t* r, void* userdata
         event.code = r->error_code;
         if (r->error) strncpy(event.message, r->error, sizeof(event.message) - 1);
     }
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
     free(req);
 }
 
@@ -1897,7 +1855,7 @@ static void on_gm_select_by_latency(const char* best_endpoint, double best_laten
     } else {
         event.latency_ms = -1.0;
     }
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
     free(req);
 }
 
@@ -1983,7 +1941,7 @@ GM_EXPORT void colyseus_gm_http_push_response(double request_id, double status_c
     event.callback_handle = request_id;
     event.code = (int)status_code;
     event.http.body = body ? strdup(body) : NULL;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 GM_EXPORT void colyseus_gm_http_push_error(double request_id, double code, const char* message) {
@@ -1995,7 +1953,7 @@ GM_EXPORT void colyseus_gm_http_push_error(double request_id, double code, const
         strncpy(event.message, message, sizeof(event.message) - 1);
     }
     event.http.body = NULL;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 // Latency push helpers (WASM shim + tests — synthesize latency events)
@@ -2005,7 +1963,7 @@ GM_EXPORT void colyseus_gm_latency_push_response(double request_id, double laten
     event.callback_handle = request_id;
     event.latency_ms = latency_ms;
     if (endpoint) strncpy(event.message, endpoint, sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 GM_EXPORT void colyseus_gm_latency_push_error(double request_id, double code, const char* message) {
@@ -2014,7 +1972,7 @@ GM_EXPORT void colyseus_gm_latency_push_error(double request_id, double code, co
     event.callback_handle = request_id;
     event.code = (int)code;
     if (message) strncpy(event.message, message, sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 GM_EXPORT void colyseus_gm_latency_push_selected(double request_id, const char* best_endpoint,
@@ -2024,7 +1982,7 @@ GM_EXPORT void colyseus_gm_latency_push_selected(double request_id, const char* 
     event.callback_handle = request_id;
     event.latency_ms = latency_ms;
     if (best_endpoint) strncpy(event.message, best_endpoint, sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 // Get HTTP base endpoint from client (used by WASM shim for URL construction)

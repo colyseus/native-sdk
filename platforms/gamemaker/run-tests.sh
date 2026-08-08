@@ -62,6 +62,19 @@ if [[ -z "$user_dir" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Server preflight — legacy suites use example-server (:2567); the predict
+# suites use the prediction-tools playground server (:5173).
+# ---------------------------------------------------------------------------
+if ! curl -s -o /dev/null --max-time 2 http://127.0.0.1:2567; then
+  log "[WARN] example-server not reachable on :2567 — legacy suites will fail"
+  log "       (cd example-server && npx tsx src/index.ts)"
+fi
+if ! curl -s -o /dev/null --max-time 2 http://127.0.0.1:5173; then
+  log "[WARN] playground server not reachable on :5173 — predict suites will fail"
+  log "       (cd ../../../demos/prediction-tools && pnpm dev --host 0.0.0.0)"
+fi
+
+# ---------------------------------------------------------------------------
 # Build the native library
 # ---------------------------------------------------------------------------
 log "Building native library..."
@@ -90,7 +103,8 @@ log "Building and running tests..."
 echo ""
 
 OUTPUT_FILE=$(mktemp /tmp/colyseus_test_XXXXXX.log)
-TIMEOUT=90
+# the predict suites drive live rooms for many seconds each
+TIMEOUT=300
 
 # Igor "Run" compiles and launches the game, debug output goes to stdout.
 # Run in background so we can monitor for test completion.
@@ -154,11 +168,13 @@ else
   tail -30 "$OUTPUT_FILE"
   echo ""
   fail "Tests did not complete (no 'Tests Finished!' found in output)"
+  log "Full output kept at: $OUTPUT_FILE"
+  KEEP_OUTPUT=1
   EXIT_CODE=1
 fi
 
 # Cleanup
-rm -f "$OUTPUT_FILE"
+[[ -z "${KEEP_OUTPUT:-}" ]] && rm -f "$OUTPUT_FILE"
 rm -rf "$TEMP_DIR"
 
 exit $EXIT_CODE

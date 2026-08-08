@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Colyseus GM wasm harness</title>
+</head>
+<body>
+<pre id="log"></pre>
+<script src="/wasm-out/colyseus_wasm.js"></script>
+<script>
+// Drives window.colyseus_gm_* exactly as GML-on-HTML5 does (the shim IS the
+// GML calling convention on web). Needs the prediction-tools playground dev
+// server on :5173 (`pnpm dev --host 0.0.0.0`).
+//
+// Emits "TEST PASS <name>" / "TEST FAIL <name>: <why>" console lines and a
+// final "WEB TESTS FINISHED <pass>/<total>" — web-tests.mjs keys on them.
+(function () {
+  "use strict";
+  var SERVER = "ws://127.0.0.1:5173";
+  var pass = 0, total = 0;
+
+  function log(line) {
+    console.log(line);
+    document.getElementById("log").textContent += line + "\n";
+  }
+  function report(name, ok, why) {
+    total++;
+    if (ok) { pass++; log("TEST PASS " + name); }
+    else log("TEST FAIL " + name + ": " + (why || ""));
+  }
+  function finish() {
+    log("WEB TESTS FINISHED " + pass + "/" + total);
+  }
+
+  // ── the demo's shared movement step (src/shared/movement.ts, verbatim) ──
+  var ARENA_W = 100, ARENA_H = 60, PLAYER_HALF = 1.6;
+  var PLAYER_ACCEL = 220, PLAYER_MAX_SPEED = 34, PLAYER_FRICTION_K = 0.72;
+  function stepEntity(e, inp, dt) {
+    var ax = inp.moveX, ay = inp.moveY;
+    if (ax !== 0 && ay !== 0) { ax *= Math.SQRT1_2; ay *= Math.SQRT1_2; }
+    if (ax !== 0 || ay !== 0) {
+      e.vx += ax * PLAYER_ACCEL * dt;
+      e.vy += ay * PLAYER_ACCEL * dt;
+    } else {
+      e.vx *= PLAYER_FRICTION_K;
+      e.vy *= PLAYER_FRICTION_K;
+      if (e.vx > -0.05 && e.vx < 0.05) e.vx = 0;
+      if (e.vy > -0.05 && e.vy < 0.05) e.vy = 0;
+    }
+    var sq = e.vx * e.vx + e.vy * e.vy;
+    if (sq > PLAYER_MAX_SPEED * PLAYER_MAX_SPEED) {
+      var s = PLAYER_MAX_SPEED / Math.sqrt(sq);
+      e.vx *= s; e.vy *= s;
+    }
+    e.x += e.vx * dt;
+    e.y += e.vy * dt;
+    var minX = PLAYER_HALF, maxX = ARENA_W - PLAYER_HALF;
+    var minY = PLAYER_HALF, maxY = ARENA_H - PLAYER_HALF;
+    if (e.x < minX) { e.x = minX; if (e.vx < 0) e.vx = 0; }
+    else if (e.x > maxX) { e.x = maxX; if (e.vx > 0) e.vx = 0; }
+    if (e.y < minY) { e.y = minY; if (e.vy < 0) e.vy = 0; }
+    else if (e.y > maxY) { e.y = maxY; if (e.vy > 0) e.vy = 0; }
+  }
+
+  // ── frame loop state ────────────────────────────────────────────────────
+  var roomRef = 0, pid = 0, rid = 0;
+  var moveX = 0, moveY = 0;
+  var joined = false, reconnected = false, dropped = false, left = false;
+  var sawInFlight = 0;
+
+  function pumpRecon() {
+    if (!rid) return;
+    while (window.colyseus_gm_recon_pump_begin(rid) > 0) {
+      while (window.colyseus_gm_recon_pump_next(rid) !== 0) {
+        var dt = window.colyseus_gm_step_ctx(0);
+        var mirror = window.colyseus_gm_recon_state(rid);
+        var e = {
+          x: window.colyseus_gm_mirror_get(mirror, "x"),
+          y: window.colyseus_gm_mirror_get(mirror, "y"),
+          vx: window.colyseus_gm_mirror_get(mirror, "vx"),
+          vy: window.colyseus_gm_mirror_get(mirror, "vy"),
+        };
+        var inp = {
+          moveX: window.colyseus_gm_step_cmd("moveX"),
+          moveY: window.colyseus_gm_step_cmd("moveY"),
+        };
+        stepEntity(e, inp, dt);
+        window.colyseus_gm_mirror_set(mirror, "x", e.x);
+        window.colyseus_gm_mirror_set(mirror, "y", e.y);
+        window.colyseus_gm_mirror_set(mirror, "vx", e.vx);
+        window.colyseus_gm_mirror_set(mirror, "vy", e.vy);
+        window.colyseus_gm_recon_pump_commit(rid);
+      }
+      window.colyseus_gm_recon_pump_end(rid);
+    }
+  }
+
+  function frame() {
+    var t;
+    while ((t = window.colyseus_gm_poll_event()) !== 0) {
+      if (t === 1) joined = true;           // ROOM_JOIN
+      if (t === 5) { left = true; log("EVT leave: " + window.colyseus_gm_event_get_message()); }
+      if (t === 14) dropped = true;         // ROOM_DROP
+      if (t === 15) reconnected = true;     // ROOM_RECONNECT
+    }
+    window.colyseus_gm_netdelay_pump();
+    window.colyseus_gm_reconnect_poll();
+    var inflight = window.colyseus_gm_netdelay_in_flight();
+    if (inflight > sawInFlight) sawInFlight = inflight;
+    if (pid && roomRef) {
+      var steps = window.colyseus_gm_predict_tick(pid, window.colyseus_gm_now());
+      pumpRecon(); // replay burst detected by tick
+      for (var i = 0; i < steps; i++) {
+        window.colyseus_gm_input_set(roomRef, "moveX", moveX);
+        window.colyseus_gm_input_set(roomRef, "moveY", moveY);
+        window.colyseus_gm_input_send(roomRef);
+        pumpRecon(); // live step
+      }
+    }
+  }
+  setInterval(frame, 16);
+
+  function waitFor(cond, timeoutMs) {
+    return new Promise(function (resolve) {
+      var t0 = performance.now();
+      (function poll() {
+        if (cond()) return resolve(true);
+        if (performance.now() - t0 > timeoutMs) return resolve(false);
+        setTimeout(poll, 25);
+      })();
+    });
+  }
+
+  async function main() {
+    // T1: module boot
+    var ready = await waitFor(function () {
+      return window.colyseus_gm_is_ready() === 1;
+    }, 8000);
+    report("boot", ready, "wasm module never became ready");
+    if (!ready) return finish();
+    report("abi", window.colyseus_gm_predict_abi_version() >= 1,
+      "abi_version returned 0 — stale bundle?");
+
+    // T2: join lab-move on the playground server
+    var client = window.colyseus_gm_client_create(SERVER);
+    roomRef = window.colyseus_gm_client_join_or_create(client, "lab-move", "{}");
+    var ok = await waitFor(function () { return joined; }, 8000);
+    var state = ok ? window.colyseus_gm_room_get_state(roomRef) : 0;
+    ok = ok && (await waitFor(function () {
+      return window.colyseus_gm_room_get_state(roomRef) !== 0;
+    }, 5000));
+    state = window.colyseus_gm_room_get_state(roomRef);
+    var sid = window.colyseus_gm_room_get_session_id(roomRef);
+    report("join", ok && state !== 0 && sid.length > 0,
+      "joined=" + joined + " state=" + state + " sid=" + sid);
+    if (!ok || !state) return finish();
+
+    // T3: reflection walk (the previously-missing shim functions)
+    var me = 0;
+    ok = await waitFor(function () {
+      me = window.colyseus_gm_map_get(state, "players", sid);
+      return me !== 0;
+    }, 5000);
+    var nfields = ok ? window.colyseus_gm_schema_field_count(me) : 0;
+    var sawX = false;
+    for (var i = 0; i < nfields; i++) {
+      if (window.colyseus_gm_schema_field_name(me, i) === "x") sawX = true;
+    }
+    report("reflection", ok && nfields >= 4 && sawX,
+      "me=" + me + " fields=" + nfields + " sawX=" + sawX);
+
+    // T4: input handle synthesis + acks + rtt
+    ok = window.colyseus_gm_input_init(roomRef, 0, 0, 0) === 1;
+    var tickRate = window.colyseus_gm_input_stat(roomRef, 4);
+    pid = window.colyseus_gm_predict_create(roomRef);
+    moveX = 1;
+    await waitFor(function () {
+      return window.colyseus_gm_input_stat(roomRef, 0) > 5 &&
+             window.colyseus_gm_input_stat(roomRef, 1) > 0;
+    }, 4000);
+    var rtt = window.colyseus_gm_clock_stat(roomRef, 2);
+    report("input", ok && tickRate === 20 &&
+      window.colyseus_gm_input_stat(roomRef, 0) > 5 &&
+      window.colyseus_gm_input_stat(roomRef, 1) > 0 && rtt > 0,
+      "init=" + ok + " tickRate=" + tickRate +
+      " sent=" + window.colyseus_gm_input_stat(roomRef, 0) +
+      " acked=" + window.colyseus_gm_input_stat(roomRef, 1) + " rtt=" + rtt);
+
+    // T5: manual-pump reconciler — drift at wire precision
+    moveX = 0;
+    // re-resolve the player: the decoder may have replaced the instance
+    state = window.colyseus_gm_room_get_state(roomRef);
+    me = window.colyseus_gm_map_get(state, "players", sid);
+    rid = window.colyseus_gm_predict_reconciler(pid, me, 0,
+      JSON.stringify({ fields: "x,y,vx,vy", smoothing: 15, snap: 8 }));
+    ok = rid > 0;
+    var x0 = window.colyseus_gm_recon_value(rid, "x");
+    moveX = 1; // drive right
+    await waitFor(function () { return false; }, 2500); // just run the loop
+    moveX = 0;
+    var x1 = window.colyseus_gm_recon_value(rid, "x");
+    var drift = window.colyseus_gm_recon_stat(rid, 4);
+    var seq = window.colyseus_gm_recon_stat(rid, 3);
+    report("reconciler", ok && seq > 10 && (x1 - x0) > 5 && drift < 0.01,
+      "rid=" + rid + " seq=" + seq + " dx=" + (x1 - x0) + " drift_ema=" + drift);
+
+    // T6: netdelay injector — rtt tracks the injected delay
+    window.colyseus_gm_netdelay_set(roomRef, 150, 0);
+    await waitFor(function () {
+      return window.colyseus_gm_clock_stat(roomRef, 3) > 250;
+    }, 5000);
+    var srtt = window.colyseus_gm_clock_stat(roomRef, 3);
+    report("netdelay", sawInFlight > 0 && srtt > 250,
+      "sawInFlight=" + sawInFlight + " smoothedRtt=" + srtt);
+    window.colyseus_gm_netdelay_set(roomRef, 0, 0);
+
+    // T7: drop + polled reconnect (web lane's headline feature).
+    // Fast options: min_uptime 500ms — the default 5s gate races the harness.
+    window.colyseus_gm_room_set_reconnection_options(roomRef, 1, 10, 100, 1000, 500, 100, -1);
+    window.colyseus_gm_netdelay_drop(roomRef);
+    ok = await waitFor(function () { return dropped; }, 5000);
+    await waitFor(function () { return false; }, 1000);
+    log("DIAG is_reconnecting=" + window.colyseus_gm_room_is_reconnecting(roomRef) +
+        " left=" + left + " is_connected=" + window.colyseus_gm_room_is_connected(roomRef));
+    ok = ok && (await waitFor(function () { return reconnected; }, 15000));
+    report("drop_reconnect", ok, "dropped=" + dropped + " reconnected=" + reconnected +
+      " left=" + left + " is_reconnecting=" + window.colyseus_gm_room_is_reconnecting(roomRef));
+
+    window.colyseus_gm_room_leave(roomRef);
+    finish();
+  }
+
+  main();
+})();
+</script>
+</body>
+</html>

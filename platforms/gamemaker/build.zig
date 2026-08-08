@@ -218,6 +218,7 @@ fn buildGameMakerExtension(
         .root = b.path("."),
         .files = &.{
             "src/gamemaker_export.c",
+            "src/gamemaker_predict.c",
         },
         .flags = &.{
             "-Wall",

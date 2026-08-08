@@ -67,10 +67,24 @@ global.__colyseus_current_room_ref = -1;  // set during event processing / state
 // Client creation — wraps native + restores auth token
 // =============================================================================
 
+// Must match GM_PREDICT_ABI_VERSION in gamemaker_predict.c. A stale dylib or
+// wasm bundle otherwise fails as silent 0s from every unbound function.
+#macro __COLYSEUS_GM_ABI 1
+
 /// Create a Colyseus client. Automatically restores a previously saved auth token.
 /// @param {String} _endpoint  Server endpoint (e.g., "http://localhost:2567")
 /// @returns {Real} Client handle
 function colyseus_client_create(_endpoint) {
+    static _abi_checked = false;
+    if (!_abi_checked) {
+        _abi_checked = true;
+        var _abi = __colyseus_gm_predict_abi_version();
+        if (_abi != __COLYSEUS_GM_ABI) {
+            show_debug_message("[Colyseus] FATAL: extension ABI " + string(_abi)
+                + " != wrapper ABI " + string(__COLYSEUS_GM_ABI)
+                + " — rebuild/recopy libcolyseus + colyseus_wasm.js");
+        }
+    }
     var _client = __colyseus_gm_client_create(_endpoint);
     if (_client > 0) {
         __colyseus_auth_restore(_client);
@@ -638,6 +652,11 @@ function __colyseus_decode_message() {
 
 /// Poll and dispatch all queued Colyseus events. Call once per frame in Step.
 function colyseus_process() {
+    // netdelay-wrapped rooms deliver inbound ONLY here (thread serialization);
+    // reconnect_poll drives the web build's polled auto-reconnect (no-op native)
+    __colyseus_gm_netdelay_pump();
+    __colyseus_gm_reconnect_poll();
+
     var _evt = colyseus_poll_event();
 
     while (_evt != COLYSEUS_EVENT_NONE) {
@@ -855,6 +874,13 @@ function colyseus_process() {
                         });
                     }
                 }
+                break;
+
+            default:
+                // predict layer (event-channel settlement, spawn rejects).
+                // Hard name reference: ColyseusPredict.gml must ship with
+                // this script — GML compiles unknown functions as errors.
+                __colyseus_predict_dispatch(_evt);
                 break;
         }
 

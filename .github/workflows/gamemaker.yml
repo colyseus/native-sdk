@@ -16,6 +16,17 @@ jobs:
   test:
     uses: ./.github/workflows/tests.yml
 
+  # Binding parity: every GM_EXPORT registered in the shim, the .yy function
+  # lists, and matched by the GML call sites (gen-bindings.mjs --check).
+  binding-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Audit binding parity
+        run: node platforms/gamemaker/gen-bindings.mjs --check
+
   check-version:
     runs-on: ubuntu-latest
     outputs:
