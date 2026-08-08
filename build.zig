@@ -501,6 +501,7 @@ pub fn build(b: *std.Build) void {
         "src/predict/events.c",
         "src/predict/spawns.c",
         "src/network/latency.c",
+        "src/network/net_delay.c",
         // Schema
         "src/schema/decode.c",
         "src/schema/encode.c",
@@ -723,9 +724,10 @@ pub fn build(b: *std.Build) void {
 
     // ========================================================================
     // Prediction-playground validation client (lives in the sibling demos
-    // repo; built only when that checkout is present).
+    // repo; built only when that checkout is present). Not for emscripten —
+    // zig cannot link exes against emscripten's libc.
     // ========================================================================
-    {
+    if (!is_emscripten) {
         const probe_src = "../demos/prediction-tools/clients/native/predict_probe.c";
         if (std.fs.cwd().access(probe_src, .{})) |_| {
             const probe_module = b.createModule(.{
@@ -756,8 +758,10 @@ pub fn build(b: *std.Build) void {
     // ========================================================================
     // Prediction-playground interactive app (same sibling repo). Needs raylib
     // from the system; skipped silently when pkg-config can't find it.
+    // Never for emscripten — the web build links via emcc (see the app's
+    // run-web.sh), and pkg-config would hand us the NATIVE raylib anyway.
     // ========================================================================
-    {
+    if (!is_emscripten) {
         const app_src = "../demos/prediction-tools/clients/native-app/main.c";
         const raylib = pkgConfig(b, "raylib");
         if (std.fs.cwd().access(app_src, .{})) |_| {
@@ -830,6 +834,8 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_quantized", .file = "tests/test_quantized.zig", .description = "Run 5.0 reflection + t.quantized tests (byte fixtures)" },
         .{ .name = "test_input", .file = "tests/test_input.zig", .description = "Run input layer + RoomClock tests (byte fixtures)" },
         .{ .name = "test_predict", .file = "tests/test_predict.zig", .description = "Run Predict layer tests (behavior fixtures)" },
+        .{ .name = "test_netdelay", .file = "tests/test_netdelay.zig", .description = "Run network-delay injector tests (offline)" },
+        .{ .name = "test_gamemaker_predict", .file = "tests/test_gamemaker_predict.zig", .description = "Run GameMaker predict-bridge tests (offline, drives the GML FFI surface)" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
@@ -881,6 +887,20 @@ pub fn build(b: *std.Build) void {
         test_exe.addIncludePath(b.path("third_party/wslay/lib/includes"));
         test_exe.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
         test_exe.linkLibrary(colyseus);
+
+        // The GM bridge isn't part of libcolyseus — compile it into its test
+        // exe so the exact GML-facing FFI surface is what gets exercised.
+        if (std.mem.eql(u8, test_file.name, "test_gamemaker_predict")) {
+            test_exe.addCSourceFiles(.{
+                .root = b.path("."),
+                .files = &.{
+                    "platforms/gamemaker/src/gamemaker_export.c",
+                    "platforms/gamemaker/src/gamemaker_predict.c",
+                },
+                .flags = &.{"-Wall"},
+            });
+            test_exe.addIncludePath(b.path("platforms/gamemaker/src"));
+        }
 
         // If debug-tests is enabled, install the test executable
         if (debug_tests) {

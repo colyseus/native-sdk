@@ -3,6 +3,7 @@
 #include "colyseus/room.h"
 #include "colyseus/schema.h"
 #include "colyseus/schema/dynamic_schema.h"
+#include "field_access.h"
 #include "uthash.h"
 
 #include <stdio.h>
@@ -25,7 +26,7 @@
 typedef struct predict_slot {
     char* field;                    /* owned */
     colyseus_schema_t* instance;
-    size_t offset;                  /* field storage (static vtable) */
+    predict_fref_t fref;            /* resolved storage (either model) */
     colyseus_field_type_t type;
 
     colyseus_predict_field_options_t opts;
@@ -67,11 +68,11 @@ typedef struct predict_sim {
     double substep_ms;
     double snap;
 
-    /* the reckoned field view */
-    struct { size_t offset; colyseus_field_type_t type; char* name; }* fields;
+    /* the reckoned field view (names borrowed from the vtable) */
+    predict_fref_t* fields;
     int field_count;
     /* all scalar fields of the vtable (the scratch refill set) */
-    struct { size_t offset; colyseus_field_type_t type; }* copy_fields;
+    predict_fref_t* copy_fields;
     int copy_count;
 
     double* smoothed;               /* displayed = out + offset */
@@ -83,6 +84,11 @@ typedef struct predict_sim {
     double last_base_t;             /* NAN until a clocked apply */
     double last_apply_time;         /* -INFINITY until first read */
     bool first_apply;
+    /* Extra forward horizon on top of the snapshot age, in ms — the spawn
+     * store's measured input lead. 0 for every other reckon. The other ports
+     * pass a closure computing (age + lead); with no closures here the lead
+     * is just added, which is the same number. */
+    double lead_ms;
 
     struct predict_sim* next;
     UT_hash_handle hh;
@@ -109,6 +115,20 @@ typedef struct driven_child {
 
 /* ── attach_all registrations (collection -> per-entry tracking) ─────── */
 
+/* What the spawn-store collection callbacks need to reach: the store, and
+ * (optionally) the reckon config to attach per confirmed entity. */
+typedef struct spawns_bind_ctx {
+    colyseus_predict_t* p;
+    colyseus_spawns_t* spawns;
+    bool reckon;
+    const colyseus_schema_vtable_t* entry_vtable;
+    char** fields;
+    int field_count;
+    colyseus_predict_step_fn step;
+    double smoothing, substep_ms;
+    void* userdata;
+} spawns_bind_ctx_t;
+
 typedef struct attach_all_ctx {
     colyseus_predict_t* p;
     char** fields;                  /* NULL = every numeric field */
@@ -125,6 +145,8 @@ typedef struct attach_all_ctx {
      * Predict dies or a later patch calls back into freed state. */
     colyseus_callback_handle_t on_add;
     colyseus_callback_handle_t on_remove;
+    /* set only by bind_spawns; owned, freed with this attachment */
+    struct spawns_bind_ctx* spawns_bind;
     struct attach_all_ctx* next;
 } attach_all_ctx_t;
 
@@ -153,48 +175,7 @@ struct colyseus_predict {
 
 #define PREDICT_MAX_STEPS_PER_FRAME 5
 
-/* ── field value access (static offsets) ─────────────────────────────── */
-
-static double field_read(const colyseus_schema_t* instance, size_t offset, colyseus_field_type_t type) {
-    const void* p = (const char*)instance + offset;
-    switch (type) {
-        case COLYSEUS_FIELD_BOOLEAN: return *(const bool*)p ? 1 : 0;
-        case COLYSEUS_FIELD_FLOAT32: return (double)*(const float*)p;
-        case COLYSEUS_FIELD_INT8:    return (double)*(const int8_t*)p;
-        case COLYSEUS_FIELD_UINT8:   return (double)*(const uint8_t*)p;
-        case COLYSEUS_FIELD_INT16:   return (double)*(const int16_t*)p;
-        case COLYSEUS_FIELD_UINT16:  return (double)*(const uint16_t*)p;
-        case COLYSEUS_FIELD_INT32:   return (double)*(const int32_t*)p;
-        case COLYSEUS_FIELD_UINT32:  return (double)*(const uint32_t*)p;
-        case COLYSEUS_FIELD_INT64:   return (double)*(const int64_t*)p;
-        case COLYSEUS_FIELD_UINT64:  return (double)*(const uint64_t*)p;
-        default:                     return *(const double*)p;
-    }
-}
-
-static void field_write(colyseus_schema_t* instance, size_t offset, colyseus_field_type_t type, double v) {
-    void* p = (char*)instance + offset;
-    switch (type) {
-        case COLYSEUS_FIELD_BOOLEAN: *(bool*)p = v != 0; break;
-        case COLYSEUS_FIELD_FLOAT32: *(float*)p = (float)v; break;
-        case COLYSEUS_FIELD_INT8:    *(int8_t*)p = (int8_t)v; break;
-        case COLYSEUS_FIELD_UINT8:   *(uint8_t*)p = (uint8_t)v; break;
-        case COLYSEUS_FIELD_INT16:   *(int16_t*)p = (int16_t)v; break;
-        case COLYSEUS_FIELD_UINT16:  *(uint16_t*)p = (uint16_t)v; break;
-        case COLYSEUS_FIELD_INT32:   *(int32_t*)p = (int32_t)v; break;
-        case COLYSEUS_FIELD_UINT32:  *(uint32_t*)p = (uint32_t)v; break;
-        case COLYSEUS_FIELD_INT64:   *(int64_t*)p = (int64_t)v; break;
-        case COLYSEUS_FIELD_UINT64:  *(uint64_t*)p = (uint64_t)v; break;
-        default:                     *(double*)p = v; break;
-    }
-}
-
-static const colyseus_field_t* find_field(const colyseus_schema_vtable_t* vtable, const char* name) {
-    for (int i = 0; i < vtable->field_count; i++) {
-        if (strcmp(vtable->fields[i].name, name) == 0) return &vtable->fields[i];
-    }
-    return NULL;
-}
+/* Field access lives in field_access.h — one seam for both storage models. */
 
 /* ── sample listener ─────────────────────────────────────────────────── */
 
@@ -386,8 +367,8 @@ static double compute_extrapolate(colyseus_predict_t* p, predict_slot_t* slot) {
 static void sim_advance(predict_sim_t* sim, double forward_ms, double* out, double end_elapsed) {
     /* refill the scratch from the live instance (all scalar fields) */
     for (int i = 0; i < sim->copy_count; i++) {
-        field_write(sim->scratch, sim->copy_fields[i].offset, sim->copy_fields[i].type,
-            field_read(sim->instance, sim->copy_fields[i].offset, sim->copy_fields[i].type));
+        predict_fwrite(sim->scratch, &sim->copy_fields[i],
+            predict_fread(sim->instance, &sim->copy_fields[i]));
     }
     double remaining = forward_ms;
     double elapsed = end_elapsed - forward_ms; /* last substep lands ON end_elapsed */
@@ -398,7 +379,7 @@ static void sim_advance(predict_sim_t* sim, double forward_ms, double* out, doub
         remaining -= step_ms;
     }
     for (int k = 0; k < sim->field_count; k++) {
-        out[k] = field_read(sim->scratch, sim->fields[k].offset, sim->fields[k].type);
+        out[k] = predict_fread(sim->scratch, &sim->fields[k]);
     }
 }
 
@@ -411,6 +392,7 @@ static void sim_apply(colyseus_predict_t* p, predict_sim_t* sim) {
     double present = p->clock ? colyseus_room_clock_server_now(p->clock) : 0;
     double forward = (!isnan(base_t) && base_t > 0) ? present - base_t : 0;
     if (forward < 0) forward = 0;
+    forward += sim->lead_ms;
     sim_advance(sim, forward, sim->out, present);
 
     if (sim->first_apply || sim->smoothing <= 0) {
@@ -477,7 +459,10 @@ static void attach_all_on_add(void* value, void* key, void* userdata) {
 
     colyseus_schema_t* instance = (colyseus_schema_t*)value;
     if (a->step) {
-        colyseus_predict_attach_reckon(a->p, instance, a->entry_vtable,
+        /* NULL entry_vtable: resolve from the entry itself — dynamic vtables
+         * (reflection / GDScript) have no name to pass up front. */
+        colyseus_predict_attach_reckon(a->p, instance,
+            a->entry_vtable ? a->entry_vtable : instance->__vtable,
             (const char* const*)a->fields, a->field_count, a->step,
             a->smoothing, a->substep_ms, a->snap, a->userdata);
         return;
@@ -490,13 +475,12 @@ static void attach_all_on_add(void* value, void* key, void* userdata) {
     }
     /* No explicit list: every numeric field of the entry. */
     const colyseus_schema_vtable_t* vt = instance->__vtable;
-    if (!vt || colyseus_vtable_is_dynamic(vt)) return;
-    for (int i = 0; i < vt->field_count; i++) {
-        const colyseus_field_t* f = &vt->fields[i];
-        if (f->type == COLYSEUS_FIELD_REF || f->type == COLYSEUS_FIELD_ARRAY
-            || f->type == COLYSEUS_FIELD_MAP || f->type == COLYSEUS_FIELD_STRING
-            || f->type == COLYSEUS_FIELD_BOOLEAN) continue;
-        colyseus_predict_track(a->p, instance, f->name, &a->opts);
+    if (!vt) return;
+    for (int i = 0; i < predict_vt_count(vt); i++) {
+        predict_fref_t f;
+        if (!predict_vt_at(vt, i, &f)) continue;
+        if (!predict_fref_scalar(&f) || f.type == COLYSEUS_FIELD_BOOLEAN) continue;
+        colyseus_predict_track(a->p, instance, f.name, &a->opts);
     }
 }
 
@@ -514,8 +498,8 @@ int colyseus_predict_attach(
     for (int i = 0; i < count; i++) {
         if (!config[i].field) continue;
         /* Drop what this type doesn't declare: one config, many entry types. */
-        if (instance->__vtable && !colyseus_vtable_is_dynamic(instance->__vtable)
-            && !find_field(instance->__vtable, config[i].field)) {
+        predict_fref_t f;
+        if (instance->__vtable && !predict_vt_find(instance->__vtable, config[i].field, &f)) {
             continue;
         }
         colyseus_predict_track(p, instance, config[i].field, config[i].opts);
@@ -569,7 +553,8 @@ int colyseus_predict_attach_all_reckon(
     colyseus_predict_step_fn step,
     double smoothing, double substep_ms, double snap,
     void* userdata) {
-    if (!p || !state || !collection || !entry_vtable || !step || field_count <= 0) return -1;
+    /* entry_vtable may be NULL — resolved per entry at on_add (dynamic vtables). */
+    if (!p || !state || !collection || !step || field_count <= 0) return -1;
 
     attach_all_ctx_t* a = calloc(1, sizeof(attach_all_ctx_t));
     a->p = p;
@@ -603,7 +588,7 @@ static void free_slot(colyseus_predict_t* p, predict_slot_t* slot) {
 
 static void free_sim(predict_sim_t* sim) {
     if (sim->scratch && sim->vtable->destroy) sim->vtable->destroy(sim->scratch);
-    for (int i = 0; i < sim->field_count; i++) free(sim->fields[i].name);
+    /* field names are borrowed from the vtable — nothing per-field to free */
     free(sim->fields);
     free(sim->copy_fields);
     free(sim->smoothed);
@@ -615,19 +600,33 @@ static void free_sim(predict_sim_t* sim) {
     free(sim);
 }
 
+/* Unregister an attachment's collection callbacks and free it. For a spawns
+ * bind this also resets the store's confirmed-value reader — the store is
+ * app-owned and may outlive this Predict. */
+static void free_attachment(colyseus_predict_t* p, attach_all_ctx_t* a) {
+    colyseus_callbacks_remove(p->callbacks, a->on_add);
+    colyseus_callbacks_remove(p->callbacks, a->on_remove);
+    for (int i = 0; i < a->field_count; i++) free(a->fields[i]);
+    free(a->fields);
+    free(a->field_opts);
+    free(a->except_key);
+    if (a->spawns_bind) {
+        spawns_bind_ctx_t* b = a->spawns_bind;
+        if (b->reckon) colyseus_spawns_bind_reader(b->spawns, NULL, NULL);
+        for (int i = 0; i < b->field_count; i++) free(b->fields[i]);
+        free(b->fields);
+        free(b);
+    }
+    free(a);
+}
+
 void colyseus_predict_free(colyseus_predict_t* p) {
     if (!p) return;
     while (p->driven) { driven_child_t* d = p->driven; p->driven = d->next; free(d); }
     while (p->attachments) {
         attach_all_ctx_t* a = p->attachments;
         p->attachments = a->next;
-        colyseus_callbacks_remove(p->callbacks, a->on_add);
-        colyseus_callbacks_remove(p->callbacks, a->on_remove);
-        for (int i = 0; i < a->field_count; i++) free(a->fields[i]);
-        free(a->fields);
-        free(a->field_opts);
-        free(a->except_key);
-        free(a);
+        free_attachment(p, a);
     }
     slot_bucket_t *bucket, *tmp;
     HASH_ITER(hh, p->by_ref, bucket, tmp) {
@@ -654,15 +653,14 @@ int colyseus_predict_track(
     const char* field,
     const colyseus_predict_field_options_t* options) {
     if (!p || !instance || !field || !instance->__vtable) return -1;
-    if (colyseus_vtable_is_dynamic(instance->__vtable)) return -1; /* v1: static */
-    const colyseus_field_t* meta = find_field(instance->__vtable, field);
-    if (!meta) return -1;
+    predict_fref_t meta;
+    if (!predict_vt_find(instance->__vtable, field, &meta)) return -1;
 
     predict_slot_t* slot = calloc(1, sizeof(predict_slot_t));
     slot->field = strdup(field);
     slot->instance = instance;
-    slot->offset = meta->offset;
-    slot->type = meta->type;
+    slot->fref = meta;
+    slot->type = meta.type;
     slot->opts.mode = options ? options->mode : COLYSEUS_PREDICT_LERP;
     slot->opts.delay = options && options->delay > 0 ? options->delay : 100;
     if (slot->opts.mode == COLYSEUS_PREDICT_LERP) {
@@ -678,7 +676,7 @@ int colyseus_predict_track(
     slot->opts.snap = options && options->snap > 0 ? options->snap : 0;
     slot->opts.angle = options ? options->angle : false;
 
-    double initial = field_read(instance, slot->offset, slot->type);
+    double initial = predict_fread(instance, &slot->fref);
     slot->v1 = initial;
     slot->aux_v = initial;
     slot->aux_t = colyseus_room_clock_now(NULL);
@@ -724,7 +722,6 @@ int colyseus_predict_attach_reckon(
     double smoothing, double substep_ms, double snap,
     void* userdata) {
     if (!p || !instance || !vtable || !fields || field_count <= 0 || !step) return -1;
-    if (colyseus_vtable_is_dynamic(vtable)) return -1;
 
     predict_sim_t* sim = calloc(1, sizeof(predict_sim_t));
     sim->ref_id = instance->__refId;
@@ -742,25 +739,20 @@ int colyseus_predict_attach_reckon(
     sim->fields = calloc(field_count, sizeof(*sim->fields));
     sim->field_count = field_count;
     for (int k = 0; k < field_count; k++) {
-        const colyseus_field_t* meta = find_field(vtable, fields[k]);
-        if (!meta) { free_sim(sim); return -1; }
-        sim->fields[k].offset = meta->offset;
-        sim->fields[k].type = meta->type;
-        sim->fields[k].name = strdup(fields[k]);
+        if (!predict_vt_find(vtable, fields[k], &sim->fields[k])) { free_sim(sim); return -1; }
     }
 
     /* scratch refill set: every scalar field of the vtable */
-    sim->copy_fields = calloc(vtable->field_count, sizeof(*sim->copy_fields));
-    for (int i = 0; i < vtable->field_count; i++) {
-        const colyseus_field_t* meta = &vtable->fields[i];
-        if (meta->type == COLYSEUS_FIELD_REF || meta->type == COLYSEUS_FIELD_ARRAY
-            || meta->type == COLYSEUS_FIELD_MAP || meta->type == COLYSEUS_FIELD_STRING) continue;
-        sim->copy_fields[sim->copy_count].offset = meta->offset;
-        sim->copy_fields[sim->copy_count].type = meta->type;
-        sim->copy_count++;
+    int declared = predict_vt_count(vtable);
+    sim->copy_fields = calloc((size_t)(declared > 0 ? declared : 1), sizeof(*sim->copy_fields));
+    for (int i = 0; i < declared; i++) {
+        predict_fref_t meta;
+        if (!predict_vt_at(vtable, i, &meta) || !predict_fref_scalar(&meta)) continue;
+        sim->copy_fields[sim->copy_count++] = meta;
     }
 
-    sim->scratch = vtable->create();
+    sim->scratch = predict_instance_create(vtable);
+    if (!sim->scratch) { free_sim(sim); return -1; }
     sim->scratch->__vtable = vtable;
 
     sim->smoothed = calloc(field_count, sizeof(double));
@@ -770,7 +762,7 @@ int colyseus_predict_attach_reckon(
     sim->out_prev = calloc(field_count, sizeof(double));
     sim->frame_vel = calloc(field_count, sizeof(double));
     for (int k = 0; k < field_count; k++) {
-        sim->smoothed[k] = field_read(instance, sim->fields[k].offset, sim->fields[k].type);
+        sim->smoothed[k] = predict_fread(instance, &sim->fields[k]);
     }
 
     predict_sim_t* existing = NULL;
@@ -883,6 +875,18 @@ static void predict_remove_bound_overlay(colyseus_predict_t* p, colyseus_reconci
 void colyseus_predict_undrive(colyseus_predict_t* p, void* child) {
     if (!p) return;
     predict_remove_bound_overlay(p, (colyseus_reconciler_t*)child);
+    /* a spawns child came with an attachment (collection callbacks + reader);
+     * unwind it too, so the store can be freed before the Predict */
+    attach_all_ctx_t** alink = &p->attachments;
+    while (*alink) {
+        attach_all_ctx_t* a = *alink;
+        if (a->spawns_bind && a->spawns_bind->spawns == child) {
+            *alink = a->next;
+            free_attachment(p, a);
+        } else {
+            alink = &a->next;
+        }
+    }
     driven_child_t** link = &p->driven;
     while (*link) {
         if ((*link)->ptr == child) {
@@ -899,28 +903,83 @@ colyseus_callbacks_t* colyseus_predict_callbacks(colyseus_predict_t* p) {
     return p ? p->callbacks : NULL;
 }
 
+/* The confirmed side of colyseus_spawns_value(): the reckon slot, not the raw
+ * decoded field. */
+static double predict_spawns_read(colyseus_schema_t* server, const char* field, void* userdata) {
+    return colyseus_predict_value((colyseus_predict_t*)userdata, server, field);
+}
+
+/* Per-instance forward-horizon bump (the spawn store's measured input lead). */
+static void predict_sim_set_lead(colyseus_predict_t* p, colyseus_schema_t* instance, double lead_ms) {
+    predict_sim_t* sim = NULL;
+    int ref_id = instance->__refId;
+    HASH_FIND_INT(p->sims, &ref_id, sim);
+    if (sim) sim->lead_ms = lead_ms;
+}
+
 static void predict_spawns_on_add(void* value, void* key, void* userdata) {
     (void)key;
-    colyseus_spawns_handle_add((colyseus_spawns_t*)userdata, (colyseus_schema_t*)value);
+    spawns_bind_ctx_t* b = (spawns_bind_ctx_t*)userdata;
+    colyseus_schema_t* server = (colyseus_schema_t*)value;
+    colyseus_spawns_handle_add(b->spawns, server);
+    if (!b->reckon) return;
+
+    /* AFTER handle_add: the lead is only measured once the entry collapses onto
+     * its prediction. Reading it before would silently see 0 — which looks
+     * exactly like not applying the lead at all. */
+    const colyseus_spawn_entry_t* entry = colyseus_spawns_entry_for(b->spawns, server);
+    double lead = entry ? entry->lead_ms : 0;
+    if (lead < 0) lead = 0;
+
+    if (colyseus_predict_attach_reckon(b->p, server,
+            b->entry_vtable ? b->entry_vtable : server->__vtable,
+            (const char* const*)b->fields, b->field_count, b->step,
+            b->smoothing, b->substep_ms, 0, b->userdata) != 0) return;
+    predict_sim_set_lead(b->p, server, lead);
 }
 
 static void predict_spawns_on_remove(void* value, void* key, void* userdata) {
     (void)key;
-    colyseus_spawns_handle_remove((colyseus_spawns_t*)userdata, (colyseus_schema_t*)value);
+    spawns_bind_ctx_t* b = (spawns_bind_ctx_t*)userdata;
+    colyseus_schema_t* server = (colyseus_schema_t*)value;
+    if (b->reckon) colyseus_predict_detach(b->p, server);
+    colyseus_spawns_handle_remove(b->spawns, server);
 }
 
 void colyseus_predict_bind_spawns(colyseus_predict_t* p, colyseus_spawns_t* spawns,
-    colyseus_schema_t* state, const char* collection) {
+    colyseus_schema_t* state, const char* collection,
+    const colyseus_spawns_reckon_t* reckon) {
     if (!p || !spawns || !state || !collection) return;
+
+    spawns_bind_ctx_t* b = calloc(1, sizeof(spawns_bind_ctx_t));
+    b->p = p;
+    b->spawns = spawns;
+    /* entry_vtable may be NULL — resolved per entry at on_add (dynamic
+     * vtables have no name to pass up front, same rule as attach_all_reckon). */
+    if (reckon && reckon->fields && reckon->field_count > 0 && reckon->step) {
+        b->reckon = true;
+        b->entry_vtable = reckon->entry_vtable;
+        b->step = reckon->step;
+        b->smoothing = reckon->smoothing;
+        b->substep_ms = reckon->substep_ms;
+        b->userdata = reckon->userdata;
+        b->field_count = reckon->field_count;
+        b->fields = calloc((size_t)reckon->field_count, sizeof(char*));
+        for (int i = 0; i < reckon->field_count; i++) b->fields[i] = strdup(reckon->fields[i]);
+        /* route store value() confirmed reads through the reckon slots */
+        colyseus_spawns_bind_reader(spawns, predict_spawns_read, p);
+    }
+
     /* Recorded as an attachment so predict_free() unregisters it: the room owns
      * the callbacks layer, and a patch decoded after the store is freed would
      * otherwise call into it. */
     attach_all_ctx_t* a = calloc(1, sizeof(attach_all_ctx_t));
     a->p = p;
+    a->spawns_bind = b;
     a->on_add = colyseus_callbacks_on_add(p->callbacks, state, collection,
-        predict_spawns_on_add, spawns, true);
+        predict_spawns_on_add, b, true);
     a->on_remove = colyseus_callbacks_on_remove(p->callbacks, state, collection,
-        predict_spawns_on_remove, spawns);
+        predict_spawns_on_remove, b);
     a->next = p->attachments;
     p->attachments = a;
     predict_drive(p, DRIVEN_SPAWNS, spawns);
@@ -1074,9 +1133,10 @@ double colyseus_predict_value(colyseus_predict_t* p, colyseus_schema_t* instance
     if (!slot) {
         /* Untracked is FINE — read the decoded field verbatim. A field that
          * doesn't exist is not: NAN, so a typo can't render as a plausible 0. */
-        if (instance->__vtable && !colyseus_vtable_is_dynamic(instance->__vtable)) {
-            const colyseus_field_t* meta = find_field(instance->__vtable, field);
-            if (meta) return field_read(instance, meta->offset, meta->type);
+        if (instance->__vtable) {
+            predict_fref_t meta;
+            if (predict_vt_find(instance->__vtable, field, &meta) && predict_fref_scalar(&meta))
+                return predict_fread(instance, &meta);
         }
         return NAN;
     }

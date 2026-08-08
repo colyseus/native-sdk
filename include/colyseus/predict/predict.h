@@ -185,7 +185,9 @@ colyseus_reconciler_t* colyseus_predict_reconciler(
 /**
  * Like colyseus_predict_attach_all, but DEAD-RECKONS every entry through a step
  * function shared with the server (the bot patterns in a lab, an NPC's mover)
- * instead of smoothing samples.
+ * instead of smoothing samples. `entry_vtable` may be NULL: each entry then
+ * reckons with its own vtable, which is the only option for dynamic
+ * (reflection / GDScript) schemas.
  */
 int colyseus_predict_attach_all_reckon(
     colyseus_predict_t* p,
@@ -206,11 +208,37 @@ int colyseus_predict_attach_all_reckon(
 colyseus_callbacks_t* colyseus_predict_callbacks(colyseus_predict_t* p);
 
 /**
+ * Optional dead reckoning of a spawn collection's CONFIRMED entities, passed to
+ * colyseus_predict_bind_spawns(). With it the store also owns the collection's
+ * motion (no separate attach_all_reckon): each confirmed entity forwards by the
+ * snapshot age PLUS the entry's measured input lead — 0 for a foreign entity,
+ * the exact per-spawn uplink for an owned one (see spawn_time). An owned
+ * projectile thus keeps flying the shooter's timeline through the handoff
+ * instead of snapping back by lead x velocity.
+ */
+typedef struct {
+    const colyseus_schema_vtable_t* entry_vtable;
+    const char* const* fields;
+    int field_count;
+    /* The step, SHARED with the server — the same motion the store's `step`
+     * integrates for pending locals, against a schema scratch. */
+    colyseus_predict_step_fn step;
+    /* 0 = raw projection, the right default here: a deterministic constant-step
+     * projectile rebases exactly, so smoothing only adds lag. */
+    double smoothing;
+    double substep_ms;              /* 0 -> 16 */
+    void* userdata;
+} colyseus_spawns_reckon_t;
+
+/**
  * Route a collection's adds/removes into a spawn store AND drive the store
  * from tick(). This is the whole wiring a predicted-spawn collection needs.
+ *
+ * `reckon` is optional (NULL = confirmed entities read raw, un-reckoned).
  */
 void colyseus_predict_bind_spawns(colyseus_predict_t* p, colyseus_spawns_t* spawns,
-    colyseus_schema_t* state, const char* collection);
+    colyseus_schema_t* state, const char* collection,
+    const colyseus_spawns_reckon_t* reckon);
 
 /** Drive an event channel's settlement (its prune) from tick(). */
 void colyseus_predict_drive_events(colyseus_predict_t* p, colyseus_event_channel_t* channel);

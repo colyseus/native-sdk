@@ -150,6 +150,13 @@ double colyseus_input_handle_render_delay(const colyseus_input_handle_t* handle)
     return handle ? handle->render_delay : 0;
 }
 
+void colyseus_input_handle_set_allow_rewind(colyseus_input_handle_t* handle,
+    bool (*allow_rewind)(void* data, void* userdata), void* userdata) {
+    if (!handle) return;
+    handle->allow_rewind = allow_rewind;
+    handle->allow_rewind_userdata = userdata;
+}
+
 int colyseus_input_handle_sent_count(const colyseus_input_handle_t* handle) { return handle->sent_count; }
 int colyseus_input_handle_last_processed(const colyseus_input_handle_t* handle) { return handle->last_processed; }
 int colyseus_input_handle_pending_count(const colyseus_input_handle_t* handle) { return handle->sent_count - handle->last_processed; }

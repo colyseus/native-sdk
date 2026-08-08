@@ -1053,3 +1053,12 @@ dkms.conf
 *.uf2
 # Raspberry Pi Pico disassembler file
 *.dis
+
+# GameMaker/Igor build droppings + zig package cache copies
+output/
+zig-pkg/
+.test-cache/
+.accept-cache/
+.accept-temp/
+.html5-cache/
+.html5-temp/

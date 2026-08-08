@@ -101,6 +101,16 @@ const colyseus_spawn_entry_t* colyseus_spawns_next(colyseus_spawns_t* spawns,
 double colyseus_spawns_value(colyseus_spawns_t* spawns,
     const colyseus_spawn_entry_t* entry, const char* field);
 
+/*
+ * Route the CONFIRMED side of colyseus_spawns_value() somewhere other than a
+ * raw field read — colyseus_predict_bind_spawns() points it at its reckon
+ * slots so a confirmed entry reads lead-aware instead of at the last decoded
+ * snapshot. Pass NULL to restore the raw read.
+ */
+void colyseus_spawns_bind_reader(colyseus_spawns_t* spawns,
+    double (*read)(colyseus_schema_t* server, const char* field, void* userdata),
+    void* userdata);
+
 /* Reads. */
 const colyseus_spawn_entry_t* colyseus_spawns_entry_for(colyseus_spawns_t* spawns, colyseus_schema_t* server);
 const colyseus_spawn_entry_t* colyseus_spawns_entry(colyseus_spawns_t* spawns, int id);

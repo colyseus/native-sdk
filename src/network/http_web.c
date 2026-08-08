@@ -248,6 +248,9 @@ typedef struct {
     colyseus_http_success_callback_t on_success;
     colyseus_http_error_callback_t on_error;
     void* userdata;
+    /* emscripten_fetch reads requestData when the browser SENDS, not at the
+     * call — the bytes must outlive the caller's buffer, so ctx owns a copy */
+    char* body_copy;
 } http_request_context_t;
 
 static void on_fetch_success(emscripten_fetch_t* fetch) {
@@ -264,6 +267,7 @@ static void on_fetch_success(emscripten_fetch_t* fetch) {
         free(response.body);
     }
     
+    if (ctx) free(ctx->body_copy);
     free(ctx);
     emscripten_fetch_close(fetch);
 }
@@ -281,6 +285,7 @@ static void on_fetch_error(emscripten_fetch_t* fetch) {
         free(error.message);
     }
     
+    if (ctx) free(ctx->body_copy);
     free(ctx);
     emscripten_fetch_close(fetch);
 }
@@ -317,6 +322,7 @@ static void http_fetch_request(
     ctx->on_success = on_success;
     ctx->on_error = on_error;
     ctx->userdata = userdata;
+    ctx->body_copy = NULL;
     
     emscripten_fetch_attr_t attr;
     emscripten_fetch_attr_init(&attr);
@@ -334,8 +340,9 @@ static void http_fetch_request(
     attr.requestHeaders = headers;
     
     if (json_body && strcmp(method, "GET") != 0) {
-        attr.requestData = json_body;
-        attr.requestDataSize = strlen(json_body);
+        ctx->body_copy = strdup(json_body);
+        attr.requestData = ctx->body_copy;
+        attr.requestDataSize = strlen(ctx->body_copy);
     }
     
     emscripten_fetch(&attr, full_url);

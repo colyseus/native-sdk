@@ -149,17 +149,18 @@ void colyseus_dynamic_value_set_map(colyseus_dynamic_value_t* value, colyseus_ma
 /* Forward declare internal create function for vtable */
 static colyseus_schema_t* dynamic_schema_create_internal(void);
 
-colyseus_dynamic_schema_t* colyseus_dynamic_schema_create(const colyseus_dynamic_vtable_t* vtable) {
+static colyseus_dynamic_schema_t* dynamic_schema_create_impl(
+    const colyseus_dynamic_vtable_t* vtable, bool with_userdata) {
     colyseus_dynamic_schema_t* schema = calloc(1, sizeof(colyseus_dynamic_schema_t));
     if (!schema) return NULL;
-    
+
     schema->__refId = -1;
     schema->__vtable = vtable ? &vtable->base : NULL;
     schema->__dyn_vtable = vtable;
     schema->fields = NULL;
     schema->userdata = NULL;
     schema->free_userdata = NULL;
-    
+
     /* Initialize fields from vtable if available */
     if (vtable && vtable->dyn_fields) {
         for (int i = 0; i < vtable->dyn_field_count; i++) {
@@ -176,14 +177,41 @@ colyseus_dynamic_schema_t* colyseus_dynamic_schema_create(const colyseus_dynamic
             }
         }
     }
-    
+
     /* Create platform-specific userdata if callback is set */
-    if (vtable && vtable->create_userdata) {
+    if (with_userdata && vtable && vtable->create_userdata) {
         schema->userdata = vtable->create_userdata(vtable, vtable->callback_context);
         schema->free_userdata = vtable->free_userdata;
     }
-    
+
     return schema;
+}
+
+colyseus_dynamic_schema_t* colyseus_dynamic_schema_create(const colyseus_dynamic_vtable_t* vtable) {
+    return dynamic_schema_create_impl(vtable, true);
+}
+
+colyseus_dynamic_schema_t* colyseus_dynamic_schema_create_bare(const colyseus_dynamic_vtable_t* vtable) {
+    return dynamic_schema_create_impl(vtable, false);
+}
+
+colyseus_dynamic_value_t* colyseus_dynamic_schema_ensure(colyseus_dynamic_schema_t* schema,
+    int field_index, colyseus_field_type_t type) {
+    if (!schema) return NULL;
+
+    colyseus_dynamic_field_entry_t* entry = NULL;
+    HASH_FIND_INT(schema->fields, &field_index, entry);
+    if (!entry) {
+        entry = calloc(1, sizeof(colyseus_dynamic_field_entry_t));
+        if (!entry) return NULL;
+        entry->index = field_index;
+        const colyseus_dynamic_field_t* field = schema->__dyn_vtable
+            ? colyseus_dynamic_vtable_find_field(schema->__dyn_vtable, field_index) : NULL;
+        entry->name = field && field->name ? strdup(field->name) : NULL;
+        HASH_ADD_INT(schema->fields, index, entry);
+    }
+    if (!entry->value) entry->value = colyseus_dynamic_value_create(type);
+    return entry->value;
 }
 
 void colyseus_dynamic_schema_free(colyseus_dynamic_schema_t* schema) {

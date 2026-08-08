@@ -101,6 +101,15 @@ double colyseus_input_handle_reckon_time_at(colyseus_input_handle_t* handle, int
 void colyseus_input_handle_set_render_delay(colyseus_input_handle_t* handle, double milliseconds);
 double colyseus_input_handle_render_delay(const colyseus_input_handle_t* handle);
 
+/*
+ * Install (or replace) the allow_rewind stamp gate after creation — for
+ * bindings whose room_input() call can't thread options through (reflection
+ * handles are created on first access, options are first-call-wins). The
+ * gate is consulted at send(): truthy = stamp lag-comp times on this input.
+ */
+void colyseus_input_handle_set_allow_rewind(colyseus_input_handle_t* handle,
+    bool (*allow_rewind)(void* data, void* userdata), void* userdata);
+
 /* Round-trip state. */
 int colyseus_input_handle_sent_count(const colyseus_input_handle_t* handle);
 int colyseus_input_handle_last_processed(const colyseus_input_handle_t* handle);

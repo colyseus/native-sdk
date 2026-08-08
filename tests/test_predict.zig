@@ -19,6 +19,7 @@ const c = @cImport({
     @cInclude("colyseus/schema/input_encoder.h");
     @cInclude("colyseus/schema/decoder.h");
     @cInclude("colyseus/schema/callbacks.h");
+    @cInclude("colyseus/schema/dynamic_schema.h");
     @cInclude("schema/recon_state.h");
     @cInclude("schema/passive_ent.h");
     @cInclude("schema/reckon_ball.h");
@@ -141,6 +142,111 @@ test "reconciler_core" {
 
     // value() with smoothing 0: equals state at clamped alpha
     try testing.expectEqual(@as(f64, 100.3), c.colyseus_reconciler_value(ctx.recon, "x"));
+}
+
+// ============================================================================
+// Dynamic-vtable twin of reconciler_core: same step math, same fixture, but
+// the TRUTH and MIRROR are dynamic schemas (hash storage — the GDScript /
+// reflection path). Every number must match the static fixture exactly; the
+// storage model must be invisible to the rollback engine.
+// ============================================================================
+
+fn dynNum(s: *c.colyseus_dynamic_schema_t, index: c_int) *c.colyseus_dynamic_value_t {
+    return c.colyseus_dynamic_schema_ensure(s, index, c.COLYSEUS_FIELD_NUMBER);
+}
+
+// step shared with the "server", against dynamic storage: vx += ax·dt; x += vx·dt
+fn accelStepDyn(ctx: [*c]const c.colyseus_step_ctx_t, state: ?*c.colyseus_schema_t, command: ?*const c.colyseus_schema_t, userdata: ?*anyopaque) callconv(.c) void {
+    _ = userdata;
+    const s: *c.colyseus_dynamic_schema_t = @ptrCast(@alignCast(state.?));
+    const cmd: *const c.accel_input_t = @ptrCast(@alignCast(command.?));
+    const vx = dynNum(s, 1);
+    const x = dynNum(s, 0);
+    vx.*.data.num += cmd.ax * ctx.*.dt;
+    x.*.data.num += vx.*.data.num * ctx.*.dt;
+}
+
+fn serverStepDyn(truth: *c.colyseus_dynamic_schema_t, ax: f64) void {
+    const vx = dynNum(truth, 1);
+    const x = dynNum(truth, 0);
+    vx.*.data.num += ax * 0.05;
+    x.*.data.num += vx.*.data.num * 0.05;
+}
+
+test "reconciler_dynamic_truth" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+
+    // hand-built dynamic vtable: { x: number@0, vx: number@1 }
+    const dvt = c.colyseus_dynamic_vtable_create("recon_state_dyn").?;
+    defer c.colyseus_dynamic_vtable_free(dvt);
+    c.colyseus_dynamic_vtable_add_field(dvt, c.colyseus_dynamic_field_create(0, "x", c.COLYSEUS_FIELD_NUMBER, "number"));
+    c.colyseus_dynamic_vtable_add_field(dvt, c.colyseus_dynamic_field_create(1, "vx", c.COLYSEUS_FIELD_NUMBER, "number"));
+
+    // static input schema over a dynamic state — the GDExtension's exact mix
+    const input_instance = c.accel_input_create().?;
+    input_instance.*.__base.__vtable = &c.accel_input_vtable;
+    const encoder = c.colyseus_input_encoder_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, false, 0).?;
+    var options = std.mem.zeroes(c.colyseus_input_options_t);
+    const handle = c.colyseus_input_handle_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, encoder,
+        false, false, &options, 0, 0, 0,
+        stubSend, stubIsOpen, stubGetClock, null).?;
+    defer c.colyseus_input_handle_free(handle);
+
+    const truth = c.colyseus_dynamic_schema_create(dvt).?;
+    defer c.colyseus_dynamic_schema_free(truth);
+
+    var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
+    ropts.smoothing = 0;
+    ropts.step_ms = 50;
+    const recon = c.colyseus_reconciler_create(
+        @ptrCast(truth), &dvt.*.base, handle, null, accelStepDyn, &ropts).?;
+    defer c.colyseus_reconciler_free(recon);
+
+    const mirror: *c.colyseus_dynamic_schema_t =
+        @ptrCast(@alignCast(c.colyseus_reconciler_state(recon)));
+
+    NOW = 0;
+    c.colyseus_reconciler_tick(recon, NOW);
+
+    // the reconciler_core fixture, verbatim
+    const expected_x = [_]f64{ 0.025, 0.07500000000000001, 0.15000000000000002, 0.21250000000000002, 0.2625, 0.30000000000000004 };
+    const expected_vx = [_]f64{ 0.5, 1, 1.5, 1.25, 1, 0.75 };
+    var sent_ax: [8]f64 = undefined;
+    var i: usize = 1;
+    while (i <= 6) : (i += 1) {
+        NOW = @as(f64, @floatFromInt(i)) * 50;
+        c.colyseus_reconciler_tick(recon, NOW);
+        const ax: f64 = if (i <= 3) 10 else -5;
+        sent_ax[i] = ax;
+        input_instance.*.ax = ax;
+        _ = c.colyseus_input_handle_send(handle);
+        if (i >= 3) {
+            serverStepDyn(truth, sent_ax[i - 2]);
+            _ = c.colyseus_input_handle_ack_input(handle, @intCast(i - 2));
+            c.colyseus_reconciler_tick(recon, NOW);
+        }
+        try testing.expectEqual(expected_x[i - 1], dynNum(mirror, 0).*.data.num);
+        try testing.expectEqual(expected_vx[i - 1], dynNum(mirror, 1).*.data.num);
+        try testing.expectEqual(@as(f64, 0), c.colyseus_reconciler_last_correction_mag(recon));
+    }
+    try testing.expectEqual(@as(c_int, 4), c.colyseus_reconciler_reconcile_seq(recon));
+
+    // divergent truth: server-side teleport the client didn't predict
+    serverStepDyn(truth, sent_ax[4]);
+    dynNum(truth, 0).*.data.num += 100;
+    _ = c.colyseus_input_handle_ack_input(handle, 5);
+    NOW = 350;
+    c.colyseus_reconciler_tick(recon, NOW);
+    try testing.expectEqual(@as(f64, 100.3), dynNum(mirror, 0).*.data.num);
+    try testing.expectEqual(@as(f64, 0.75), dynNum(mirror, 1).*.data.num);
+    try testing.expectEqual(@as(f64, -100), c.colyseus_reconciler_last_correction(recon, "x"));
+    try testing.expectEqual(@as(f64, 100), c.colyseus_reconciler_last_correction_mag(recon));
+    try testing.expectEqual(@as(f64, 100.3), c.colyseus_reconciler_value(recon, "x"));
+
+    // a bare mirror must have NO userdata shadow
+    try testing.expect(mirror.*.userdata == null);
 }
 
 // memo compute counter for the next scenario
@@ -638,6 +744,318 @@ test "sim_reconciler_bound" {
     // Input 2 replayed on top of the adopted truth.
     try testing.expectEqual(@as(f64, 2), puck.px);
     try testing.expectEqual(@as(c_int, 1), c.colyseus_reconciler_reconcile_seq(recon));
+}
+
+// ============================================================================
+// Manual pump — the pull-driven face for hosts without C→script callbacks
+// (GameMaker). An auto reconciler and a manual one observe the SAME input
+// handle and truth; the manual one is drained through pump_begin/next/commit/
+// end with the step applied by the host loop. Every number must be
+// bit-identical at every checkpoint, including the deferred-decay ordering.
+// ============================================================================
+
+fn pumpDrainAccel(recon: *c.colyseus_reconciler_t) void {
+    while (c.colyseus_reconciler_pump_begin(recon) > 0) {
+        while (true) {
+            var ctx_ptr: [*c]const c.colyseus_step_ctx_t = null;
+            const cmd = c.colyseus_reconciler_pump_next(recon, &ctx_ptr);
+            if (cmd == null) break;
+            const s: *c.recon_state_t = @ptrCast(@alignCast(c.colyseus_reconciler_state(recon)));
+            const cmd_t: *const c.accel_input_t = @ptrCast(@alignCast(cmd.?));
+            s.vx += cmd_t.ax * ctx_ptr.*.dt;
+            s.x += s.vx * ctx_ptr.*.dt;
+            c.colyseus_reconciler_pump_commit(recon);
+        }
+        c.colyseus_reconciler_pump_end(recon);
+    }
+}
+
+test "reconciler_pull_equals_callback" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    const input_instance = c.accel_input_create().?;
+    input_instance.*.__base.__vtable = &c.accel_input_vtable;
+    const encoder = c.colyseus_input_encoder_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, false, 0).?;
+    var in_opts = std.mem.zeroes(c.colyseus_input_options_t);
+    const handle = c.colyseus_input_handle_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, encoder,
+        false, false, &in_opts, 0, 0, 0,
+        stubSend, stubIsOpen, stubGetClock, null).?;
+    defer c.colyseus_input_handle_free(handle);
+
+    const truth = c.recon_state_create().?;
+    truth.*.__base.__vtable = &c.recon_state_vtable;
+    defer c.recon_state_vtable.destroy.?(@ptrCast(truth));
+
+    var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
+    ropts.smoothing = 15; // exercise the decay path, not just hard snaps
+    ropts.step_ms = 50;
+    const auto = c.colyseus_reconciler_create(
+        @ptrCast(truth), &c.recon_state_vtable, handle, null, accelStep, &ropts).?;
+    defer c.colyseus_reconciler_free(auto);
+    ropts.manual_step = true;
+    const manual = c.colyseus_reconciler_create(
+        @ptrCast(truth), &c.recon_state_vtable, handle, null, null, &ropts).?;
+    defer c.colyseus_reconciler_free(manual);
+
+    const s_auto: *c.recon_state_t = @ptrCast(@alignCast(c.colyseus_reconciler_state(auto)));
+    const s_manual: *c.recon_state_t = @ptrCast(@alignCast(c.colyseus_reconciler_state(manual)));
+
+    NOW = 0;
+    c.colyseus_reconciler_tick(auto, NOW);
+    c.colyseus_reconciler_tick(manual, NOW);
+    pumpDrainAccel(manual);
+
+    // the reconciler_core cadence: 6 sends at 50ms, acks trailing by 2
+    var sent_ax: [8]f64 = undefined;
+    var i: usize = 1;
+    while (i <= 6) : (i += 1) {
+        NOW = @as(f64, @floatFromInt(i)) * 50;
+        c.colyseus_reconciler_tick(auto, NOW);
+        c.colyseus_reconciler_tick(manual, NOW);
+        pumpDrainAccel(manual);
+        const ax: f64 = if (i <= 3) 10 else -5;
+        sent_ax[i] = ax;
+        input_instance.*.ax = ax;
+        _ = c.colyseus_input_handle_send(handle); // auto steps eagerly here
+        pumpDrainAccel(manual);                   // manual pumps the live step
+        if (i >= 3) {
+            serverStep(truth, sent_ax[i - 2]);
+            _ = c.colyseus_input_handle_ack_input(handle, @intCast(i - 2));
+            c.colyseus_reconciler_tick(auto, NOW);
+            c.colyseus_reconciler_tick(manual, NOW);
+            pumpDrainAccel(manual);
+        }
+        try testing.expectEqual(s_auto.x, s_manual.x);
+        try testing.expectEqual(s_auto.vx, s_manual.vx);
+        try testing.expectEqual(
+            c.colyseus_reconciler_value(auto, "x"),
+            c.colyseus_reconciler_value(manual, "x"));
+        try testing.expectEqual(
+            c.colyseus_reconciler_last_correction_mag(auto),
+            c.colyseus_reconciler_last_correction_mag(manual));
+    }
+    try testing.expectEqual(
+        c.colyseus_reconciler_reconcile_seq(auto),
+        c.colyseus_reconciler_reconcile_seq(manual));
+
+    // divergence + an ack tick that ALSO advances time: the auto path
+    // reconciles then decays inside one tick; the manual path must defer the
+    // decay to pump_end to keep the rebase-then-decay order — bit-identical.
+    serverStep(truth, sent_ax[4]);
+    truth.*.x += 100;
+    _ = c.colyseus_input_handle_ack_input(handle, 5);
+    NOW = 316; // +16ms: dt > 0 on the reconciling tick
+    c.colyseus_reconciler_tick(auto, NOW);
+    c.colyseus_reconciler_tick(manual, NOW);
+    pumpDrainAccel(manual);
+    try testing.expectEqual(s_auto.x, s_manual.x);
+    try testing.expectEqual(
+        c.colyseus_reconciler_value(auto, "x"),
+        c.colyseus_reconciler_value(manual, "x"));
+    try testing.expectEqual(
+        c.colyseus_reconciler_last_correction(auto, "x"),
+        c.colyseus_reconciler_last_correction(manual, "x"));
+
+    // the correction offsets must now decay identically frame by frame
+    var f: usize = 0;
+    while (f < 20) : (f += 1) {
+        NOW += 16;
+        c.colyseus_reconciler_tick(auto, NOW);
+        c.colyseus_reconciler_tick(manual, NOW);
+        pumpDrainAccel(manual);
+        try testing.expectEqual(
+            c.colyseus_reconciler_value(auto, "x"),
+            c.colyseus_reconciler_value(manual, "x"));
+    }
+}
+
+// Like pumpDrainAccel, but tallies how the pump labeled each served step.
+fn pumpDrainAccelTally(recon: *c.colyseus_reconciler_t, live: *u32, replayed: *u32) void {
+    while (c.colyseus_reconciler_pump_begin(recon) > 0) {
+        while (true) {
+            var ctx_ptr: [*c]const c.colyseus_step_ctx_t = null;
+            const cmd = c.colyseus_reconciler_pump_next(recon, &ctx_ptr);
+            if (cmd == null) break;
+            if (ctx_ptr.*.is_replay) replayed.* += 1 else live.* += 1;
+            const s: *c.recon_state_t = @ptrCast(@alignCast(c.colyseus_reconciler_state(recon)));
+            const cmd_t: *const c.accel_input_t = @ptrCast(@alignCast(cmd.?));
+            s.vx += cmd_t.ax * ctx_ptr.*.dt;
+            s.x += s.vx * ctx_ptr.*.dt;
+            c.colyseus_reconciler_pump_commit(recon);
+        }
+        c.colyseus_reconciler_pump_end(recon);
+    }
+}
+
+// The single-drain cadence: tick → send → ONE drain per frame, so an ack and
+// a fresh send land in the same drain. The fresh input must be served in the
+// LIVE phase (auto steps it live at send()); labeling it a replay skips its
+// memo/prev/render bookkeeping and settles against the wrong pose.
+test "reconciler_pump_single_drain_cadence" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    const input_instance = c.accel_input_create().?;
+    input_instance.*.__base.__vtable = &c.accel_input_vtable;
+    const encoder = c.colyseus_input_encoder_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, false, 0).?;
+    var in_opts = std.mem.zeroes(c.colyseus_input_options_t);
+    const handle = c.colyseus_input_handle_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, encoder,
+        false, false, &in_opts, 0, 0, 0,
+        stubSend, stubIsOpen, stubGetClock, null).?;
+    defer c.colyseus_input_handle_free(handle);
+
+    const truth = c.recon_state_create().?;
+    truth.*.__base.__vtable = &c.recon_state_vtable;
+    defer c.recon_state_vtable.destroy.?(@ptrCast(truth));
+
+    var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
+    ropts.smoothing = 15;
+    ropts.step_ms = 50;
+    const auto = c.colyseus_reconciler_create(
+        @ptrCast(truth), &c.recon_state_vtable, handle, null, accelStep, &ropts).?;
+    defer c.colyseus_reconciler_free(auto);
+    ropts.manual_step = true;
+    const manual = c.colyseus_reconciler_create(
+        @ptrCast(truth), &c.recon_state_vtable, handle, null, null, &ropts).?;
+    defer c.colyseus_reconciler_free(manual);
+
+    const s_auto: *c.recon_state_t = @ptrCast(@alignCast(c.colyseus_reconciler_state(auto)));
+    const s_manual: *c.recon_state_t = @ptrCast(@alignCast(c.colyseus_reconciler_state(manual)));
+
+    var live: u32 = 0;
+    var replayed: u32 = 0;
+    var sent_ax: [10]f64 = undefined;
+    NOW = 0;
+    c.colyseus_reconciler_tick(auto, NOW);
+    c.colyseus_reconciler_tick(manual, NOW);
+    pumpDrainAccelTally(manual, &live, &replayed);
+
+    var i: usize = 1;
+    while (i <= 8) : (i += 1) {
+        NOW = @as(f64, @floatFromInt(i)) * 50;
+        // ack BEFORE the tick so tick and send share one drain
+        if (i >= 3) {
+            serverStep(truth, sent_ax[i - 2]);
+            _ = c.colyseus_input_handle_ack_input(handle, @intCast(i - 2));
+        }
+        c.colyseus_reconciler_tick(auto, NOW);
+        c.colyseus_reconciler_tick(manual, NOW);
+        const ax: f64 = if (i <= 4) 10 else -5;
+        sent_ax[i] = ax;
+        input_instance.*.ax = ax;
+        const live_before = live;
+        _ = c.colyseus_input_handle_send(handle); // auto live-steps here
+        pumpDrainAccelTally(manual, &live, &replayed); // ONE drain: replay burst + live
+        // the input sent this frame was served live, never as a replay
+        try testing.expectEqual(live_before + 1, live);
+        try testing.expectEqual(s_auto.x, s_manual.x);
+        try testing.expectEqual(s_auto.vx, s_manual.vx);
+        try testing.expectEqual(
+            c.colyseus_reconciler_value(auto, "x"),
+            c.colyseus_reconciler_value(manual, "x"));
+        try testing.expectEqual(
+            c.colyseus_reconciler_last_correction_mag(auto),
+            c.colyseus_reconciler_last_correction_mag(manual));
+    }
+    try testing.expectEqual(
+        c.colyseus_reconciler_reconcile_seq(auto),
+        c.colyseus_reconciler_reconcile_seq(manual));
+    try testing.expect(replayed > 0); // the reconcile bursts really replayed
+}
+
+fn pumpDrainSim(recon: *c.colyseus_reconciler_t) void {
+    const world = c.colyseus_sim_reconciler_world(recon).?;
+    while (c.colyseus_reconciler_pump_begin(recon) > 0) {
+        while (true) {
+            var ctx_ptr: [*c]const c.colyseus_step_ctx_t = null;
+            const cmd = c.colyseus_reconciler_pump_next(recon, &ctx_ptr);
+            if (cmd == null) break;
+            const paddle: *c.sim_paddle_t = @ptrCast(@alignCast(c.colyseus_sim_world_part(world, "paddle").?));
+            const puck: *c.sim_puck_t = @ptrCast(@alignCast(c.colyseus_sim_world_part(world, "puck").?));
+            const cmd_t: *const c.accel_input_t = @ptrCast(@alignCast(cmd.?));
+            paddle.vx = cmd_t.ax;
+            paddle.x += paddle.vx * ctx_ptr.*.dt;
+            puck.px += 1;
+            c.colyseus_reconciler_pump_commit(recon);
+        }
+        c.colyseus_reconciler_pump_end(recon);
+    }
+}
+
+test "sim_reconciler_pull_equals_callback" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    const input_instance = c.accel_input_create().?;
+    input_instance.*.__base.__vtable = &c.accel_input_vtable;
+    const encoder = c.colyseus_input_encoder_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, false, 0).?;
+    var in_opts = std.mem.zeroes(c.colyseus_input_options_t);
+    const handle = c.colyseus_input_handle_create(
+        @ptrCast(input_instance), &c.accel_input_vtable, encoder,
+        false, false, &in_opts, 0, 0, 0,
+        stubSend, stubIsOpen, stubGetClock, null).?;
+    defer c.colyseus_input_handle_free(handle);
+
+    const paddle_truth = c.sim_paddle_create().?;
+    paddle_truth.*.__base.__vtable = &c.sim_paddle_vtable;
+    const puck_truth = c.sim_puck_create().?;
+    puck_truth.*.__base.__vtable = &c.sim_puck_vtable;
+    defer c.sim_paddle_vtable.destroy.?(@ptrCast(paddle_truth));
+    defer c.sim_puck_vtable.destroy.?(@ptrCast(puck_truth));
+
+    const parts = [_]c.colyseus_sim_part_t{
+        .{ .name = "paddle", .source = @ptrCast(paddle_truth), .vtable = &c.sim_paddle_vtable, .@"opaque" = null },
+        .{ .name = "puck", .source = @ptrCast(puck_truth), .vtable = &c.sim_puck_vtable, .@"opaque" = null },
+    };
+    var opts = std.mem.zeroes(c.colyseus_sim_reconciler_options_t);
+    opts.parts = &parts;
+    opts.part_count = 2;
+    opts.smoothing = 0;
+    opts.step_ms = 50;
+    const auto = c.colyseus_sim_reconciler_create(handle, null, simStep, &opts).?;
+    defer c.colyseus_reconciler_free(auto);
+    opts.manual_step = true;
+    const manual = c.colyseus_sim_reconciler_create(handle, null, null, &opts).?;
+    defer c.colyseus_reconciler_free(manual);
+
+    NOW = 0;
+    c.colyseus_reconciler_tick(auto, NOW);
+    c.colyseus_reconciler_tick(manual, NOW);
+    pumpDrainSim(manual);
+
+    input_instance.*.ax = 2;
+    _ = c.colyseus_input_handle_send(handle);
+    _ = c.colyseus_input_handle_send(handle);
+    pumpDrainSim(manual);
+
+    try testing.expectEqual(
+        c.colyseus_reconciler_value(auto, "paddle.x"),
+        c.colyseus_reconciler_value(manual, "paddle.x"));
+    try testing.expectEqual(
+        c.colyseus_reconciler_value(auto, "puck.px"),
+        c.colyseus_reconciler_value(manual, "puck.px"));
+
+    // scenario C's adopt+replay (f32 wire noise correction) through the pump
+    paddle_truth.*.x = @as(f64, @as(f32, 0.1));
+    paddle_truth.*.vx = 2;
+    puck_truth.*.px = 1;
+    _ = c.colyseus_input_handle_ack_input(handle, 1);
+    NOW = 50;
+    c.colyseus_reconciler_tick(auto, NOW);
+    c.colyseus_reconciler_tick(manual, NOW);
+    pumpDrainSim(manual);
+
+    try testing.expectEqual(
+        c.colyseus_reconciler_last_correction_mag(auto),
+        c.colyseus_reconciler_last_correction_mag(manual));
+    try testing.expect(c.colyseus_reconciler_last_correction_mag(manual) > 0);
+    try testing.expect(c.colyseus_reconciler_last_correction_mag(manual) < 1e-6);
+    try testing.expectEqual(
+        c.colyseus_reconciler_value(auto, "puck.px"),
+        c.colyseus_reconciler_value(manual, "puck.px"));
+    try testing.expectEqual(
+        c.colyseus_reconciler_reconcile_seq(auto),
+        c.colyseus_reconciler_reconcile_seq(manual));
 }
 
 test "predict_tick_paces_input" {

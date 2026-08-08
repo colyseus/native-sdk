@@ -101,6 +101,10 @@ typedef struct {
     int field_count;
     /* End-of-reconcile hook (after adopt+replay), with the acked seq. */
     void (*on_reconcile)(int acked, void* userdata);
+    /* Manual pump mode: the reconciler never invokes a step callback (`step`
+     * may be NULL) — the host drains due steps through the pump API below.
+     * For hosts whose FFI cannot call back into script (GameMaker). */
+    bool manual_step;
     /* Divergence warning tolerance (world units); 0/negative = telemetry
      * armed but never warns; NAN = telemetry off (production default is
      * simply 0 — the C port always records telemetry, it's two flops). */
@@ -150,6 +154,45 @@ const colyseus_drift_t* colyseus_reconciler_drift(const colyseus_reconciler_t* r
 double colyseus_reconciler_last_correction_mag(const colyseus_reconciler_t* r);
 double colyseus_reconciler_last_correction(const colyseus_reconciler_t* r, const char* field);
 int colyseus_reconciler_reconcile_seq(const colyseus_reconciler_t* r);
+
+/*
+ * Manual pump — inverted control for hosts whose FFI cannot call back into
+ * script (GameMaker's one-way extension ABI). Create with
+ * `options.manual_step = true` (`step` may be NULL); the reconciler then
+ * never invokes a step callback. Each frame, AFTER colyseus_reconciler_tick()
+ * and after any colyseus_input_handle_send(), drain the due steps:
+ *
+ *   int n;
+ *   while ((n = colyseus_reconciler_pump_begin(r)) > 0) {
+ *       const colyseus_step_ctx_t* ctx;
+ *       const colyseus_schema_t* cmd;
+ *       while ((cmd = colyseus_reconciler_pump_next(r, &ctx)) != NULL) {
+ *           // THE STEP: apply cmd to colyseus_reconciler_state(r) over ctx->dt
+ *           colyseus_reconciler_pump_commit(r);
+ *       }
+ *       colyseus_reconciler_pump_end(r);
+ *   }
+ *
+ * One begin() serves ONE phase — a pending reconcile's replay burst
+ * (ctx->is_replay = true; only seqs that already ran live are replayed), or
+ * the live catch-up for inputs sent since the last drain — so loop until
+ * begin() returns 0 to drain both. A send that coincides with an ack is
+ * served in the live phase, never mislabeled a replay. Error decay that
+ * tick() deferred while a reconcile was pending is applied inside
+ * pump_end(), preserving the auto path's rebase-then-decay ordering exactly.
+ * Reads (value(), state()) between tick() and the drain see pre-reconcile
+ * state; read after draining.
+ *
+ * Misuse: a phase left open (a missed pump_end) is auto-closed by the next
+ * begin(); serving a step without pump_commit abandons that step at
+ * pump_end. The live phase only advances through pump_next/pump_commit —
+ * a host that begins but never drains will see begin() > 0 again.
+ */
+int colyseus_reconciler_pump_begin(colyseus_reconciler_t* r);
+const colyseus_schema_t* colyseus_reconciler_pump_next(colyseus_reconciler_t* r,
+                                                       const colyseus_step_ctx_t** out_ctx);
+void colyseus_reconciler_pump_commit(colyseus_reconciler_t* r);
+void colyseus_reconciler_pump_end(colyseus_reconciler_t* r);
 
 /* @internal — set by colyseus_predict_reconciler() so free() can deregister. */
 void colyseus_reconciler_set_driver_(colyseus_reconciler_t* r, struct colyseus_predict* driver);

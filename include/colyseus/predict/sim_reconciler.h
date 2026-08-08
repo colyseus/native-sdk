@@ -76,6 +76,9 @@ typedef struct {
      */
     void (*adopt)(colyseus_sim_world_t* world, void* userdata);
     void (*on_reconcile)(int acked, void* userdata);
+    /** Manual pump mode: `step` may be NULL, the host drains steps through
+     * colyseus_reconciler_pump_*() (see reconciler.h). */
+    bool manual_step;
     void* userdata;       /* passed to step/adopt/on_reconcile/memo computes */
 } colyseus_sim_reconciler_options_t;
 

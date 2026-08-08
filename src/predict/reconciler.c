@@ -2,6 +2,7 @@
 #include "colyseus/predict/sim_reconciler.h"
 #include "colyseus/predict/predict.h"
 #include "colyseus/schema/dynamic_schema.h"
+#include "field_access.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -42,7 +43,8 @@ typedef struct {
 
 typedef struct {
     colyseus_field_type_t type;
-    size_t offset;
+    size_t offset;   /* static instances */
+    int index;       /* dynamic instances */
     const char* name;
     bool numeric; /* number-family (booleans reconcile verbatim, not smoothed) */
 } recon_field_t;
@@ -122,45 +124,28 @@ struct colyseus_reconciler {
 
     memo_slot_t* memos;   /* [history_size] */
 
+    /* manual pump (hosts that can't receive C callbacks — see reconciler.h) */
+    bool manual;
+    int pump_phase;        /* 0 idle, 1 replay, 2 live catch-up */
+    bool pump_step_open;   /* a served step awaits pump_commit() */
+    int pump_seq;          /* seq being served */
+    int pump_end_seq;
+    int pump_acked;        /* ack awaiting a pumped reconcile; -1 = none */
+    double pump_decay_dt;  /* decay deferred while a reconcile is pending */
+
     /* The Predict driving this controller, if it was born from one — free()
      * deregisters so a dropped reconciler can never be ticked again. */
     struct colyseus_predict* driver;
 };
 
-/* ── value access on schema instances (static offsets) ───────────────── */
+/* ── value access on schema instances (either storage model) ─────────── */
 
 static double read_num(const colyseus_schema_t* instance, const recon_field_t* f) {
-    const void* p = (const char*)instance + f->offset;
-    switch (f->type) {
-        case COLYSEUS_FIELD_BOOLEAN: return *(const bool*)p ? 1 : 0;
-        case COLYSEUS_FIELD_FLOAT32: return (double)*(const float*)p;
-        case COLYSEUS_FIELD_INT8:    return (double)*(const int8_t*)p;
-        case COLYSEUS_FIELD_UINT8:   return (double)*(const uint8_t*)p;
-        case COLYSEUS_FIELD_INT16:   return (double)*(const int16_t*)p;
-        case COLYSEUS_FIELD_UINT16:  return (double)*(const uint16_t*)p;
-        case COLYSEUS_FIELD_INT32:   return (double)*(const int32_t*)p;
-        case COLYSEUS_FIELD_UINT32:  return (double)*(const uint32_t*)p;
-        case COLYSEUS_FIELD_INT64:   return (double)*(const int64_t*)p;
-        case COLYSEUS_FIELD_UINT64:  return (double)*(const uint64_t*)p;
-        default:                     return *(const double*)p; /* NUMBER / FLOAT64 / QUANTIZED */
-    }
+    return predict_scalar_read(instance, f->type, f->offset, f->index);
 }
 
 static void write_num(colyseus_schema_t* instance, const recon_field_t* f, double v) {
-    void* p = (char*)instance + f->offset;
-    switch (f->type) {
-        case COLYSEUS_FIELD_BOOLEAN: *(bool*)p = v != 0; break;
-        case COLYSEUS_FIELD_FLOAT32: *(float*)p = (float)v; break;
-        case COLYSEUS_FIELD_INT8:    *(int8_t*)p = (int8_t)v; break;
-        case COLYSEUS_FIELD_UINT8:   *(uint8_t*)p = (uint8_t)v; break;
-        case COLYSEUS_FIELD_INT16:   *(int16_t*)p = (int16_t)v; break;
-        case COLYSEUS_FIELD_UINT16:  *(uint16_t*)p = (uint16_t)v; break;
-        case COLYSEUS_FIELD_INT32:   *(int32_t*)p = (int32_t)v; break;
-        case COLYSEUS_FIELD_UINT32:  *(uint32_t*)p = (uint32_t)v; break;
-        case COLYSEUS_FIELD_INT64:   *(int64_t*)p = (int64_t)v; break;
-        case COLYSEUS_FIELD_UINT64:  *(uint64_t*)p = (uint64_t)v; break;
-        default:                     *(double*)p = v; break;
-    }
+    predict_scalar_write(instance, f->type, f->offset, f->index, f->name, v);
 }
 
 /* Mirror of the codec's dynamic `number` wire rule (see schema.ts's
@@ -252,32 +237,52 @@ static double cur_value(const colyseus_reconciler_t* r, int i) {
     return r->sim ? r->sim->cur_pose[i] : read_num(r->mirror, &r->fields[i]);
 }
 
-static void run_step(colyseus_reconciler_t* r, int seq, const colyseus_schema_t* command) {
+/* Pre-step: load this seq's context (shared by the auto path and the pump). */
+static void step_ctx_load(colyseus_reconciler_t* r, int seq) {
     r->ctx.tick = seq;
     double raw = colyseus_input_handle_reckon_time_at(r->input, seq);
     r->ctx.lag_comp_active = raw > 0;
     r->ctx.reckon_time = raw > 0 ? raw
         : (r->clock ? colyseus_room_clock_server_now(r->clock) : 0);
+}
 
+/* Post-step: record this seq's predicted state (live and replay alike). */
+static void step_record(colyseus_reconciler_t* r, int seq) {
     if (r->sim) {
-        r->sim->step(&r->ctx, r->sim, command, r->userdata);
-        sim_refresh_pose(r);
         /* No wire-precision ring: a composite sim always adopts. */
+        sim_refresh_pose(r);
         return;
     }
-
-    r->step(&r->ctx, r->mirror, command, r->userdata);
-
-    /* record this seq's predicted state (live and replay alike) */
     int slot = seq % r->history_size;
     double* base = &r->history[(size_t)slot * r->field_count];
     for (int i = 0; i < r->field_count; i++) base[i] = read_num(r->mirror, &r->fields[i]);
     r->history_seq[slot] = (double)seq;
 }
 
+static void run_step(colyseus_reconciler_t* r, int seq, const colyseus_schema_t* command) {
+    step_ctx_load(r, seq);
+    if (r->sim) r->sim->step(&r->ctx, r->sim, command, r->userdata);
+    else r->step(&r->ctx, r->mirror, command, r->userdata);
+    step_record(r, seq);
+}
+
 static void snapshot_prev(colyseus_reconciler_t* r) {
     for (int i = 0; i < r->field_count; i++) {
         if (r->fields[i].numeric) r->prev[i] = cur_value(r, i) + r->error[i];
+    }
+}
+
+/* Consume one step of the render clock, resyncing into [0, stepMs). */
+static void consume_render_step(colyseus_reconciler_t* r) {
+    r->render_acc -= r->step_ms;
+    if (r->render_acc < 0) r->render_acc = 0;
+    else if (r->render_acc >= r->step_ms) r->render_acc = fmod(r->render_acc, r->step_ms);
+}
+
+static void decay_error(colyseus_reconciler_t* r, double dt) {
+    double k = r->smoothing <= 0 ? 1 : 1 - exp(-r->smoothing * dt / 1000);
+    for (int i = 0; i < r->field_count; i++) {
+        if (r->fields[i].numeric) r->error[i] -= r->error[i] * k;
     }
 }
 
@@ -291,10 +296,7 @@ static void catch_up(colyseus_reconciler_t* r) {
         if (inp != NULL) {
             snapshot_prev(r);
             run_step(r, seq, inp);
-            /* consume one step of the render clock, resyncing into [0, stepMs) */
-            r->render_acc -= r->step_ms;
-            if (r->render_acc < 0) r->render_acc = 0;
-            else if (r->render_acc >= r->step_ms) r->render_acc = fmod(r->render_acc, r->step_ms);
+            consume_render_step(r);
         }
         r->predicted_seq = seq;
     }
@@ -337,39 +339,34 @@ static bool truth_matches_at(colyseus_reconciler_t* r, int acked) {
     return true;
 }
 
-static void reconcile(colyseus_reconciler_t* r, int acked) {
-    if (truth_matches_at(r, acked)) {
-        for (int i = 0; i < r->field_count; i++) r->last_correction[i] = 0;
-        r->last_correction_mag = 0;
-        colyseus_drift_update(&r->drift, 0);
-        r->reconcile_seq++;
-        memos_prune(r, acked);
-        if (r->on_reconcile) r->on_reconcile(acked, r->userdata);
-        return;
-    }
+/* Wire-precision short-circuit: prediction at `acked` matched — no adopt, no
+ * replay. Returns false when a full reconcile is needed. */
+static bool reconcile_short_circuit(colyseus_reconciler_t* r, int acked) {
+    if (!truth_matches_at(r, acked)) return false;
+    for (int i = 0; i < r->field_count; i++) r->last_correction[i] = 0;
+    r->last_correction_mag = 0;
+    colyseus_drift_update(&r->drift, 0);
+    r->reconcile_seq++;
+    memos_prune(r, acked);
+    if (r->on_reconcile) r->on_reconcile(acked, r->userdata);
+    return true;
+}
 
+/* Pre-replay half of a full reconcile: snapshot the rendered pose, adopt
+ * authority. The replay loop runs between this and reconcile_settle(). */
+static void reconcile_adopt(colyseus_reconciler_t* r) {
     for (int i = 0; i < r->field_count; i++) {
         if (r->fields[i].numeric) r->rendered_before[i] = cur_value(r, i) + r->error[i];
     }
-
     adopt_truth(r);
     /* refreshRender: with nothing to replay the pose would still hold the
      * pre-adopt values, and the correction below would read them. */
     if (r->sim) sim_refresh_pose(r);
+}
 
-    /* replay still-unacked inputs from the handle's buffer */
-    int from = acked > r->replay_from ? acked : r->replay_from;
-    int sent = colyseus_input_handle_sent_count(r->input);
-    r->ctx.is_replay = true;
-    r->catching = true;
-    for (int seq = from + 1; seq <= sent; seq++) {
-        colyseus_schema_t* inp = colyseus_input_handle_at(r->input, seq);
-        if (inp != NULL) run_step(r, seq, inp);
-    }
-    r->catching = false;
-    r->predicted_seq = sent;
-
-    /* re-base the error so the rendered pose is unchanged at this instant */
+/* Post-replay half: re-base the error so the rendered pose is unchanged at
+ * this instant, then snap/drift/memo bookkeeping. */
+static void reconcile_settle(colyseus_reconciler_t* r, int acked) {
     bool hard = r->smoothing <= 0;
     double mag = 0;
     for (int i = 0; i < r->field_count; i++) {
@@ -397,6 +394,25 @@ static void reconcile(colyseus_reconciler_t* r, int acked) {
     if (r->on_reconcile) r->on_reconcile(acked, r->userdata);
 }
 
+static void reconcile(colyseus_reconciler_t* r, int acked) {
+    if (reconcile_short_circuit(r, acked)) return;
+    reconcile_adopt(r);
+
+    /* replay still-unacked inputs from the handle's buffer */
+    int from = acked > r->replay_from ? acked : r->replay_from;
+    int sent = colyseus_input_handle_sent_count(r->input);
+    r->ctx.is_replay = true;
+    r->catching = true;
+    for (int seq = from + 1; seq <= sent; seq++) {
+        colyseus_schema_t* inp = colyseus_input_handle_at(r->input, seq);
+        if (inp != NULL) run_step(r, seq, inp);
+    }
+    r->catching = false;
+    r->predicted_seq = sent;
+
+    reconcile_settle(r, acked);
+}
+
 /* ── public API ──────────────────────────────────────────────────────── */
 
 colyseus_reconciler_t* colyseus_reconciler_create(
@@ -406,9 +422,8 @@ colyseus_reconciler_t* colyseus_reconciler_create(
     colyseus_room_clock_t* clock,
     colyseus_reconciler_step_fn step,
     const colyseus_reconciler_options_t* options) {
-    if (!truth || !vtable || !input || !step) return NULL;
-    /* v1: static vtables only (a predicted state is a codegen'd struct) */
-    if (colyseus_vtable_is_dynamic(vtable)) return NULL;
+    bool manual = options && options->manual_step;
+    if (!truth || !vtable || !input || (!step && !manual)) return NULL;
 
     colyseus_reconciler_t* r = calloc(1, sizeof(colyseus_reconciler_t));
     r->truth = truth;
@@ -416,6 +431,8 @@ colyseus_reconciler_t* colyseus_reconciler_create(
     r->input = input;
     r->clock = clock;
     r->step = step;
+    r->manual = manual;
+    r->pump_acked = -1;
     if (options) {
         r->on_reconcile = options->on_reconcile;
         r->userdata = options->userdata;
@@ -451,15 +468,16 @@ colyseus_reconciler_t* colyseus_reconciler_create(
     /* resolve the field view: explicit names, or every numeric/boolean field */
     const char* const* names = options ? options->fields : NULL;
     int name_count = options ? options->field_count : 0;
-    r->fields = calloc(vtable->field_count, sizeof(recon_field_t));
-    for (int i = 0; i < vtable->field_count; i++) {
-        const colyseus_field_t* field = &vtable->fields[i];
-        bool scalar = field->type != COLYSEUS_FIELD_REF && field->type != COLYSEUS_FIELD_ARRAY
-            && field->type != COLYSEUS_FIELD_MAP && field->type != COLYSEUS_FIELD_STRING;
+    int declared = predict_vt_count(vtable);
+    r->fields = calloc((size_t)(declared > 0 ? declared : 1), sizeof(recon_field_t));
+    for (int i = 0; i < declared; i++) {
+        predict_fref_t field;
+        if (!predict_vt_at(vtable, i, &field)) continue;
+        bool scalar = predict_fref_scalar(&field);
         if (names != NULL) {
             bool listed = false;
             for (int k = 0; k < name_count; k++) {
-                if (strcmp(names[k], field->name) == 0) { listed = true; break; }
+                if (strcmp(names[k], field.name) == 0) { listed = true; break; }
             }
             if (!listed) continue;
             if (!scalar) { free(r->fields); free(r); return NULL; } /* unsupported field */
@@ -467,10 +485,11 @@ colyseus_reconciler_t* colyseus_reconciler_create(
             continue;
         }
         recon_field_t* rf = &r->fields[r->field_count++];
-        rf->type = field->type;
-        rf->offset = field->offset;
-        rf->name = field->name;
-        rf->numeric = field->type != COLYSEUS_FIELD_BOOLEAN;
+        rf->type = field.type;
+        rf->offset = field.offset;
+        rf->index = field.index;
+        rf->name = field.name;
+        rf->numeric = field.type != COLYSEUS_FIELD_BOOLEAN;
     }
     if (r->field_count == 0) { free(r->fields); free(r); return NULL; }
 
@@ -480,7 +499,12 @@ colyseus_reconciler_t* colyseus_reconciler_create(
     r->last_correction = calloc(r->field_count, sizeof(double));
 
     /* the predicted mirror: a fresh instance seeded from truth */
-    r->mirror = vtable->create();
+    r->mirror = predict_instance_create(vtable);
+    if (!r->mirror) {
+        free(r->error); free(r->prev); free(r->rendered_before);
+        free(r->last_correction); free(r->fields); free(r);
+        return NULL;
+    }
     r->mirror->__vtable = vtable;
     adopt_truth(r);
     for (int i = 0; i < r->field_count; i++) {
@@ -505,7 +529,9 @@ colyseus_reconciler_t* colyseus_reconciler_create(
     r->last_acked = colyseus_input_handle_last_processed(input);
     r->last_epoch = colyseus_input_handle_epoch(input);
     r->predicted_seq = colyseus_input_handle_sent_count(input);
-    r->send_subscription = colyseus_input_handle_on_send(input, on_send_hook, r);
+    /* manual mode pumps live steps itself — no eager step at send() */
+    r->send_subscription = r->manual ? -1
+        : colyseus_input_handle_on_send(input, on_send_hook, r);
     return r;
 }
 
@@ -556,14 +582,17 @@ void colyseus_reconciler_tick(colyseus_reconciler_t* r, double now) {
     int acked = colyseus_input_handle_last_processed(r->input);
     if (acked > r->last_acked) {
         r->last_acked = acked;
-        reconcile(r, acked);
+        if (r->manual) r->pump_acked = acked;   /* reconcile runs at the pump */
+        else reconcile(r, acked);
     }
 
     if (dt <= 0) return;
-    double k = r->smoothing <= 0 ? 1 : 1 - exp(-r->smoothing * dt / 1000);
-    for (int i = 0; i < r->field_count; i++) {
-        if (r->fields[i].numeric) r->error[i] -= r->error[i] * k;
+    if (r->manual && r->pump_acked >= 0) {
+        /* preserve the auto path's rebase-then-decay order: defer to pump_end */
+        r->pump_decay_dt += dt;
+        return;
     }
+    decay_error(r, dt);
 }
 
 double colyseus_reconciler_value(colyseus_reconciler_t* r, const char* field) {
@@ -594,7 +623,113 @@ void colyseus_reconciler_reset(colyseus_reconciler_t* r) {
     r->predicted_seq = r->replay_from;
     r->last_acked = colyseus_input_handle_last_processed(r->input);
     r->render_acc = 0;
+    r->pump_acked = -1;
+    r->pump_decay_dt = 0;
+    r->pump_phase = 0;
+    r->pump_step_open = false;
     memos_clear(r);
+}
+
+/* ── manual pump (see reconciler.h) ──────────────────────────────────── */
+
+static void pump_apply_deferred_decay(colyseus_reconciler_t* r) {
+    if (r->pump_decay_dt <= 0) return;
+    decay_error(r, r->pump_decay_dt);
+    r->pump_decay_dt = 0;
+}
+
+int colyseus_reconciler_pump_begin(colyseus_reconciler_t* r) {
+    if (!r || !r->manual) return 0;
+    /* a phase the host abandoned (missed pump_end) self-heals instead of
+     * freezing every future drain */
+    if (r->pump_phase != 0) colyseus_reconciler_pump_end(r);
+
+    if (r->pump_acked >= 0) {
+        int acked = r->pump_acked;
+        if (reconcile_short_circuit(r, acked)) {
+            r->pump_acked = -1;
+            pump_apply_deferred_decay(r);
+            /* matched — nothing replays; fall through to live catch-up */
+        } else {
+            int from = acked > r->replay_from ? acked : r->replay_from;
+            /* replay ONLY seqs that ran live (auto keeps predicted_seq==sent
+             * via the send hook; the pump must not label a never-stepped
+             * input a replay — its memo would never compute and settle would
+             * rebase against a step auto ran after settling) */
+            int end = r->predicted_seq > from ? r->predicted_seq : from;
+            reconcile_adopt(r);
+            if (from >= end) {
+                /* nothing predicted past the ack: settle now; inputs sent but
+                 * never stepped stay for the live phase */
+                if (from > r->predicted_seq) r->predicted_seq = from;
+                reconcile_settle(r, acked);
+                r->pump_acked = -1;
+                pump_apply_deferred_decay(r);
+            } else {
+                r->pump_seq = from + 1;
+                r->pump_end_seq = end;
+                r->ctx.is_replay = true;
+                r->catching = true;
+                r->pump_phase = 1;
+                return end - from;
+            }
+        }
+    }
+
+    int sent = colyseus_input_handle_sent_count(r->input);
+    if (r->predicted_seq < sent) {
+        r->pump_seq = r->predicted_seq + 1;
+        r->pump_end_seq = sent;
+        r->ctx.is_replay = false;
+        r->catching = true;
+        r->pump_phase = 2;
+        return sent - r->predicted_seq;
+    }
+    return 0;
+}
+
+const colyseus_schema_t* colyseus_reconciler_pump_next(colyseus_reconciler_t* r,
+                                                       const colyseus_step_ctx_t** out_ctx) {
+    if (!r || r->pump_phase == 0 || r->pump_step_open) return NULL;
+    while (r->pump_seq <= r->pump_end_seq) {
+        colyseus_schema_t* inp = colyseus_input_handle_at(r->input, r->pump_seq);
+        if (inp == NULL) {
+            /* aged out of the ring — live catch-up still consumes the seq */
+            if (r->pump_phase == 2) r->predicted_seq = r->pump_seq;
+            r->pump_seq++;
+            continue;
+        }
+        if (r->pump_phase == 2) snapshot_prev(r);
+        step_ctx_load(r, r->pump_seq);
+        r->pump_step_open = true;
+        if (out_ctx) *out_ctx = &r->ctx;
+        return inp;
+    }
+    return NULL;
+}
+
+void colyseus_reconciler_pump_commit(colyseus_reconciler_t* r) {
+    if (!r || !r->pump_step_open) return;
+    step_record(r, r->pump_seq);
+    if (r->pump_phase == 2) {
+        consume_render_step(r);
+        r->predicted_seq = r->pump_seq;
+    }
+    r->pump_step_open = false;
+    r->pump_seq++;
+}
+
+void colyseus_reconciler_pump_end(colyseus_reconciler_t* r) {
+    if (!r || r->pump_phase == 0) return;
+    r->pump_step_open = false;   /* an uncommitted served step is abandoned */
+    r->catching = false;
+    if (r->pump_phase == 1) {
+        r->predicted_seq = r->pump_end_seq;
+        reconcile_settle(r, r->pump_acked);
+        r->pump_acked = -1;
+        pump_apply_deferred_decay(r);
+    }
+    r->pump_phase = 0;
 }
 
 int colyseus_reconciler_pending_count(const colyseus_reconciler_t* r) {
@@ -745,12 +880,15 @@ colyseus_reconciler_t* colyseus_sim_reconciler_create(
     colyseus_room_clock_t* clock,
     colyseus_sim_step_fn step,
     const colyseus_sim_reconciler_options_t* options) {
-    if (!input || !step || !options || options->part_count <= 0) return NULL;
+    if (!input || !options || options->part_count <= 0) return NULL;
+    if (!step && !options->manual_step) return NULL;
 
     colyseus_reconciler_t* r = calloc(1, sizeof(colyseus_reconciler_t));
     r->send_subscription = -1;   /* the early-error paths run through free() */
     r->input = input;
     r->clock = clock;
+    r->manual = options->manual_step;
+    r->pump_acked = -1;
     r->on_reconcile = options->on_reconcile;
     r->userdata = options->userdata;
 
@@ -800,26 +938,28 @@ colyseus_reconciler_t* colyseus_sim_reconciler_create(
         part->opaque = spec->opaque;
         part->pose_base = pose_count;
         if (!spec->source) continue;
-        if (!spec->vtable || colyseus_vtable_is_dynamic(spec->vtable)) {
+        if (!spec->vtable) {
             colyseus_reconciler_free(r); return NULL;
         }
         part->source = spec->source;
         part->vtable = spec->vtable;
-        part->fields = calloc((size_t)spec->vtable->field_count, sizeof(recon_field_t));
-        for (int f = 0; f < spec->vtable->field_count; f++) {
-            const colyseus_field_t* field = &spec->vtable->fields[f];
-            if (field->type == COLYSEUS_FIELD_REF || field->type == COLYSEUS_FIELD_ARRAY
-                || field->type == COLYSEUS_FIELD_MAP || field->type == COLYSEUS_FIELD_STRING
-                || field->type == COLYSEUS_FIELD_BOOLEAN) { continue; }
+        int part_declared = predict_vt_count(spec->vtable);
+        part->fields = calloc((size_t)(part_declared > 0 ? part_declared : 1), sizeof(recon_field_t));
+        for (int f = 0; f < part_declared; f++) {
+            predict_fref_t field;
+            if (!predict_vt_at(spec->vtable, f, &field)) continue;
+            if (!predict_fref_scalar(&field) || field.type == COLYSEUS_FIELD_BOOLEAN) continue;
             recon_field_t* rf = &part->fields[part->field_count++];
-            rf->type = field->type;
-            rf->offset = field->offset;
-            rf->name = field->name;
+            rf->type = field.type;
+            rf->offset = field.offset;
+            rf->index = field.index;
+            rf->name = field.name;
             rf->numeric = true;
         }
         /* A bound entry with no scalar fields has nothing to predict. */
         if (part->field_count == 0) { colyseus_reconciler_free(r); return NULL; }
-        part->mirror = spec->vtable->create();
+        part->mirror = predict_instance_create(spec->vtable);
+        if (!part->mirror) { colyseus_reconciler_free(r); return NULL; }
         part->mirror->__vtable = spec->vtable;
         pose_count += part->field_count;
         bound++;
@@ -871,6 +1011,7 @@ colyseus_reconciler_t* colyseus_sim_reconciler_create(
     r->last_acked = colyseus_input_handle_last_processed(input);
     r->last_epoch = colyseus_input_handle_epoch(input);
     r->predicted_seq = colyseus_input_handle_sent_count(input);
-    r->send_subscription = colyseus_input_handle_on_send(input, on_send_hook, r);
+    r->send_subscription = r->manual ? -1
+        : colyseus_input_handle_on_send(input, on_send_hook, r);
     return r;
 }

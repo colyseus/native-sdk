@@ -1,31 +1,10 @@
 #include "colyseus/predict/spawns.h"
+#include "field_access.h"
 #include "uthash.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* Read a scalar field off a decoded instance (mirrors reconciler.c's read_num). */
-static double spawns_field_read(const colyseus_schema_t* instance, const colyseus_field_t* f) {
-    const void* p = (const char*)instance + f->offset;
-    switch (f->type) {
-        case COLYSEUS_FIELD_BOOLEAN: return *(const bool*)p ? 1 : 0;
-        case COLYSEUS_FIELD_FLOAT32: return (double)*(const float*)p;
-        case COLYSEUS_FIELD_INT8:    return (double)*(const int8_t*)p;
-        case COLYSEUS_FIELD_UINT8:   return (double)*(const uint8_t*)p;
-        case COLYSEUS_FIELD_INT16:   return (double)*(const int16_t*)p;
-        case COLYSEUS_FIELD_UINT16:  return (double)*(const uint16_t*)p;
-        case COLYSEUS_FIELD_INT32:   return (double)*(const int32_t*)p;
-        case COLYSEUS_FIELD_UINT32:  return (double)*(const uint32_t*)p;
-        case COLYSEUS_FIELD_INT64:   return (double)*(const int64_t*)p;
-        case COLYSEUS_FIELD_UINT64:  return (double)*(const uint64_t*)p;
-        case COLYSEUS_FIELD_REF:
-        case COLYSEUS_FIELD_ARRAY:
-        case COLYSEUS_FIELD_MAP:
-        case COLYSEUS_FIELD_STRING:  return NAN;
-        default:                     return *(const double*)p;
-    }
-}
 
 typedef struct spawn_entry_internal {
     colyseus_spawn_entry_t pub;
@@ -46,6 +25,9 @@ struct colyseus_spawns {
     int next_id;
     double last_tick_at;
     bool has_last_tick;
+    /* confirmed-side read override — predict's reckon slots when bound */
+    double (*read_server)(colyseus_schema_t* server, const char* field, void* userdata);
+    void* read_server_userdata;
 };
 
 static double spawns_now(const colyseus_spawns_t* spawns) {
@@ -246,18 +228,28 @@ double colyseus_spawns_value(colyseus_spawns_t* spawns,
     const colyseus_spawn_entry_t* entry, const char* field) {
     if (!spawns || !entry || !field) return NAN;
     if (entry->confirmed && entry->server) {
+        if (spawns->read_server) {
+            return spawns->read_server(entry->server, field, spawns->read_server_userdata);
+        }
         const colyseus_schema_vtable_t* vt = entry->server->__vtable;
         if (!vt) return NAN;
-        for (int i = 0; i < vt->field_count; i++) {
-            if (strcmp(vt->fields[i].name, field) != 0) continue;
-            return spawns_field_read(entry->server, &vt->fields[i]);
-        }
+        predict_fref_t f;
+        if (predict_vt_find(vt, field, &f) && predict_fref_scalar(&f))
+            return predict_fread(entry->server, &f);
         return NAN;
     }
     if (entry->local && spawns->opts.local_read) {
         return spawns->opts.local_read(entry->local, field, spawns->opts.userdata);
     }
     return NAN;
+}
+
+void colyseus_spawns_bind_reader(colyseus_spawns_t* spawns,
+    double (*read)(colyseus_schema_t* server, const char* field, void* userdata),
+    void* userdata) {
+    if (!spawns) return;
+    spawns->read_server = read;
+    spawns->read_server_userdata = userdata;
 }
 
 int colyseus_spawns_size(const colyseus_spawns_t* spawns) {

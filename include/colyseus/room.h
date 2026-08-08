@@ -128,8 +128,9 @@ typedef struct {
     colyseus_pending_msg_t* queue_tail;
     int queue_count;
 
-    /* Worker thread + condvar. Defined opaquely to keep platform headers out
-     * of this public header. Implementation file allocates and casts. */
+    /* Scheduler state — worker thread + condvar, or the polled deadline
+     * machine on Emscripten/COLYSEUS_RECONNECT_POLLED builds. Defined
+     * opaquely to keep platform headers out of this public header. */
     void* worker;
 } colyseus_reconnection_state_t;
 
@@ -309,6 +310,17 @@ void colyseus_room_on_reconnect(colyseus_room_t* room, colyseus_room_on_reconnec
 void colyseus_room_set_reconnection_options(colyseus_room_t* room, const colyseus_reconnection_options_t* options);
 void colyseus_room_get_reconnection_options(const colyseus_room_t* room, colyseus_reconnection_options_t* out_options);
 bool colyseus_room_is_reconnecting(const colyseus_room_t* room);
+
+/**
+ * Advance pending auto-reconnections (polled-scheduler builds).
+ *
+ * On Emscripten — and on native builds compiled with
+ * -DCOLYSEUS_RECONNECT_POLLED — reconnection is driven by this poll instead
+ * of a worker thread: call it once per frame, alongside the transport poll.
+ * On threaded-scheduler builds it is a no-op, so hosts may call it
+ * unconditionally.
+ */
+void colyseus_reconnect_poll(void);
 
 /* Message handlers - default (msgpack reader, auto-decoded) */
 void colyseus_room_on_message(colyseus_room_t* room, const char* type, colyseus_room_on_message_fn callback, void* userdata);
