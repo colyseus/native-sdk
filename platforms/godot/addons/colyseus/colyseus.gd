@@ -631,6 +631,400 @@ class Room extends RefCounted:
 	func set_state_type(state_type) -> void:
 		_native.set_state_type(state_type)
 
+	var _input_handle: InputHandle = null
+	var _clock: Clock = null
+
+	## The per-room input handle: stage fields on `.data`, then `.send()`.
+	## The input schema comes from the server's handshake (INPUT_REFLECTION) —
+	## GDScript declares nothing. Returns the same handle on later calls.
+	## Null until the room has joined and the server declared defineInput().
+	func input() -> InputHandle:
+		if _input_handle == null:
+			var native_handle = _native.input()
+			if native_handle == null:
+				return null
+			_input_handle = InputHandle.new(native_handle)
+		return _input_handle
+
+	## Server-time + RTT estimator readouts (the SDK's room clock).
+	var clock: Clock:
+		get:
+			if _clock == null:
+				_clock = Clock.new(_native)
+			return _clock
+
+	## Latency injector: delay + jitter on BOTH directions at the transport
+	## seam (never reorders; the handshake is never delayed — call after
+	## join). Call net_pump() once per frame, right after Colyseus.poll(),
+	## or delayed packets never deliver.
+	func set_latency(delay_ms: float, jitter_ms := 0.0) -> void:
+		_native.set_latency(delay_ms, jitter_ms)
+
+	func net_pump() -> void:
+		_native.net_pump()
+
+	var net_in_flight: int:
+		get: return _native.net_in_flight()
+
+	## Kill the socket UNCLEANLY (close code 4010): the SDK sees a drop, not
+	## a leave, and auto-reconnects — `dropped` then `reconnected` fire, the
+	## input handle resets (epoch bump -> reconcilers self-reset), and state
+	## re-decodes (rebind instances in your reconnect handler). The room must
+	## be up past the reconnection min-uptime or the SDK gives up instead.
+	## Native only — web has no auto-reconnect. Re-apply set_latency after
+	## reconnect: the fresh transport is unwrapped.
+	func drop() -> void:
+		_native.drop_transport()
+
+# =============================================================================
+# Input — the per-room input handle (predict layer, phase 1)
+# =============================================================================
+
+## Staged input fields. Assign like plain properties — `input.data.move_x = 1`
+## — each assignment lands in the C-side instance the encoder reads at send().
+class InputData extends RefCounted:
+	var _native
+
+	func _init(native_handle):
+		_native = native_handle
+
+	func _set(property: StringName, value) -> bool:
+		_native.set_field(String(property), float(value))
+		return true
+
+	func _get(property: StringName):
+		return _native.get_field(String(property))
+
+## Mutate `.data`, then `send()` — which delta-encodes and transmits one input
+## and returns its 1-based seq (0 = nothing sent). See input_handle.h for the
+## wire contract.
+class InputHandle extends RefCounted:
+	var _native
+	var data: InputData
+
+	func _init(native_handle):
+		_native = native_handle
+		data = InputData.new(native_handle)
+
+	func send() -> int:
+		return _native.send()
+
+	## Reset encoder + round-trip state (the SDK calls this on reconnect).
+	func reset() -> void:
+		_native.reset()
+
+	var pending_count: int:
+		get: return _native.pending_count()
+
+	var last_processed: int:
+		get: return _native.last_processed()
+
+	var sent_count: int:
+		get: return _native.sent_count()
+
+	var epoch: int:
+		get: return _native.epoch()
+
+	var tick_rate: int:
+		get: return _native.tick_rate()
+
+	var patch_rate: int:
+		get: return _native.patch_rate()
+
+	## Lag-comp render delay (ms) — the predict layer binds this automatically
+	## from its lerp delay; set by hand only when interpolating outside it.
+	var render_delay: float:
+		get: return _native.render_delay()
+		set(value): _native.set_render_delay(value)
+
+	## Stamp lag-comp rewind times ONLY on inputs whose named field is truthy
+	## (e.g. "fire") — movement inputs skip the extra wire bytes. Equivalent
+	## to the JS SDK's allowRewind option.
+	func set_rewind_field(field: String) -> void:
+		_native.set_rewind_field(field)
+
+## Room clock readouts — all milliseconds on the axes the SDK maintains.
+class Clock extends RefCounted:
+	var _native
+
+	func _init(native_room):
+		_native = native_room
+
+	func now() -> float: return _native.clock_now()
+	func server_now() -> float: return _native.clock_server_now()
+	func render_now() -> float: return _native.clock_render_now()
+	func rtt() -> float: return _native.clock_rtt()
+	func smoothed_rtt() -> float: return _native.clock_smoothed_rtt()
+	func jitter() -> float: return _native.clock_jitter()
+	func last_server_time() -> float: return _native.clock_last_server_time()
+	func patch_interval() -> float: return _native.clock_patch_interval()
+
+# =============================================================================
+# Predict — passive smoothing of the server stream (predict layer, phase 2)
+# =============================================================================
+
+## Smoothed reads over decoded entities you DON'T control. One read idiom:
+## `predict.value(instance, "x")` — lerp / damped / extrapolate / raw per
+## attached field, raw fallback when untracked, NAN for unknown fields.
+##
+##   var predict = Colyseus.Predict.of(room)
+##   predict.attach_all("players", {
+##       "x": Colyseus.Predict.DAMPED,
+##       "y": { "mode": Colyseus.Predict.LERP, "delay": 100 },
+##   }, room.get_session_id())
+##   predict.tick(now_ms)                # once per frame; returns input steps due
+##   var x = predict.value(player, "x")
+class Predict extends RefCounted:
+	const LERP := 0
+	const EXTRAPOLATE := 1
+	const DAMPED := 2
+	const RECKON := 3
+	const RAW := 4
+
+	var _native
+
+	## A FRESH Predict over the room (Predictor.ts's Predict.For) — several can
+	## coexist, each with its own smoothing curves.
+	static func of(room) -> Predict:
+		var p = Predict.new()
+		p._native = room._native.predict()
+		return p
+
+	## Per-field config: a bare mode constant, or a Dictionary with any of
+	## mode / delay / damping / max_extrapolate / snap / angle (0 = default).
+	func attach(instance, config: Dictionary) -> void:
+		for field in config:
+			var o = _opts(config[field])
+			_native.attach_field(instance, field, o.mode, o.delay, o.damping,
+				o.max_extrapolate, o.snap, o.angle)
+
+	## Track EVERY entry of a state collection — present now or arriving later —
+	## and stop as entries are removed. `except_key` skips one map key (yours).
+	func attach_all(collection: String, config: Dictionary, except_key := "") -> void:
+		for field in config:
+			var o = _opts(config[field])
+			_native.attach_all_field(collection, field, o.mode, o.delay, o.damping,
+				o.max_extrapolate, o.snap, o.angle, except_key)
+
+	func detach(instance) -> void:
+		_native.detach(instance)
+
+	## Dead-reckon `fields` of one instance through a step SHARED with the
+	## server: `step.call(state, dt, elapsed_ms)` forwards a scratch copy from
+	## the latest snapshot to the present. Opts: smoothing / substep_ms / snap.
+	func attach_reckon(instance, fields: Array, step: Callable, opts: Dictionary = {}) -> void:
+		_native.attach_reckon(instance, fields, step,
+			float(opts.get("smoothing", 0.0)),
+			float(opts.get("substep_ms", 0.0)),
+			float(opts.get("snap", 0.0)))
+
+	## As attach_all, but dead-reckons every entry through the shared step.
+	func attach_all_reckon(collection: String, fields: Array, step: Callable, opts: Dictionary = {}) -> void:
+		_native.attach_all_reckon(collection, fields, step,
+			float(opts.get("smoothing", 0.0)),
+			float(opts.get("substep_ms", 0.0)),
+			float(opts.get("snap", 0.0)))
+
+	## Advance one render frame. RETURNS the fixed input steps due — send
+	## exactly one input per returned step to stay on the server's cadence.
+	func tick(now_ms: float) -> int:
+		return _native.tick(now_ms)
+
+	func value(instance, field: String) -> float:
+		return _native.value(instance, field)
+
+	## RAW reckoned value at a server-time instant — for lag-comp hit tests.
+	func value_at(instance, field: String, time_ms: float) -> float:
+		return _native.value_at(instance, field, time_ms)
+
+	## Server-reconciled rollback for the entity YOU control. The step is the
+	## same deterministic function the server runs, written in GDScript — it
+	## receives (ctx, state, cmd) where `state` is the predicted mirror
+	## (mutate it: `state.x += state.vx * ctx.dt`) and `cmd` the input being
+	## applied. Options: input (InputHandle), fields (Array[String]),
+	## smoothing (-1 = default), snap (0 = off), step (Callable).
+	func reconciler(instance, opts: Dictionary) -> Reconciler:
+		var input = opts.get("input")
+		var native = _native.reconciler(
+			instance,
+			input._native if input != null else null,
+			opts.get("fields", []),
+			float(opts.get("smoothing", -1.0)),
+			float(opts.get("snap", 0.0)),
+			opts.get("step"))
+		if native == null:
+			return null
+		var r = Reconciler.new()
+		r._native = native
+		return r
+
+	## The COMPOSITE face: one rollback over a world of named parts, all
+	## predicted through your inputs in the server's step order. `world` maps
+	## part names to DECODED instances; the step receives the mirrors as
+	## `w.<name>` (`w.paddle.x += ...`, `w.puck.vx = ...`). Bound poses read
+	## back via predict.value(instance, field); reconciler.value("part.field")
+	## is the low-level escape hatch.
+	func sim(opts: Dictionary) -> Reconciler:
+		var input = opts.get("input")
+		var native = _native.sim(
+			opts.get("world", {}),
+			input._native if input != null else null,
+			float(opts.get("smoothing", -1.0)),
+			float(opts.get("snap", 0.0)),
+			opts.get("step"))
+		if native == null:
+			return null
+		var r = Reconciler.new()
+		r._native = native
+		return r
+
+	## A typed optimistic-event channel: predict from inside a reconciler step
+	## (`ctx.predict(channel, "goal")` — live-only, replay-safe) or from UI
+	## (`channel.predict("goal")`); confirm on the authoritative signal;
+	## unconfirmed sim-born predictions auto-reject after `grace_ticks`.
+	## Callbacks receive the event key.
+	func define_event(opts: Dictionary = {}) -> EventChannel:
+		var native = _native.define_event(
+			opts.get("on_predict"),
+			opts.get("on_confirm"),
+			opts.get("on_reject"),
+			int(opts.get("grace_ticks", 0)),
+			float(opts.get("ttl_ms", 0.0)),
+			float(opts.get("cooldown_ms", 0.0)))
+		if native == null:
+			return null
+		var ch = EventChannel.new()
+		ch._native = native
+		return ch
+
+	## Predicted spawns for a state collection: optimistic LOCALS (plain
+	## Dictionaries) correlate with the server's entities on arrival — one
+	## logical entry, one stable id, no visual seam.
+	##   opts: owned (Callable(server)->bool), spawn_time (Callable(server)->
+	##   born_ms — enables the measured input lead), step (Callable(local, dt)),
+	##   ttl_ms (0 = max(2·rtt, 600)),
+	##   fields (Array[String]) + reckon_step (Callable(state, dt, elapsed_ms))
+	##   — dead-reckon CONFIRMED entities by snapshot age + measured lead, so
+	##   the handoff doesn't snap back by lead x velocity.
+	func spawns(collection: String, opts: Dictionary = {}) -> Spawns:
+		var native = _native.spawns(
+			collection,
+			opts.get("owned"),
+			opts.get("spawn_time"),
+			opts.get("step"),
+			float(opts.get("ttl_ms", 0.0)),
+			opts.get("fields", []),
+			opts.get("reckon_step"))
+		if native == null:
+			return null
+		var s = Spawns.new()
+		s._native = native
+		return s
+
+	class _Opts:
+		var mode := 0
+		var delay := 0.0
+		var damping := 0.0
+		var max_extrapolate := 0.0
+		var snap := 0.0
+		var angle := false
+
+	static func _opts(entry) -> _Opts:
+		var o := _Opts.new()
+		if entry is int:
+			o.mode = entry
+		elif entry is Dictionary:
+			o.mode = int(entry.get("mode", LERP))
+			o.delay = float(entry.get("delay", 0.0))
+			o.damping = float(entry.get("damping", 0.0))
+			o.max_extrapolate = float(entry.get("max_extrapolate", 0.0))
+			o.snap = float(entry.get("snap", 0.0))
+			o.angle = bool(entry.get("angle", false))
+		return o
+
+## Predicted-spawn store — born from Colyseus.Predict.spawns().
+class Spawns extends RefCounted:
+	var _native
+
+	## Record an optimistic local (a Dictionary); returns its stable id.
+	func spawn(local: Dictionary) -> int:
+		return _native.spawn(local)
+
+	## Render value across the handoff: the local's field while pending, the
+	## authoritative instance's after correlation.
+	func value(id: int, field: String) -> float:
+		return _native.value(id, field)
+
+	## A string field off the CONFIRMED server instance ("" while pending).
+	func server_string(id: int, field: String) -> String:
+		return _native.server_string(id, field)
+
+	## Entries in insertion order: [{id, confirmed, lead_ms, has_local}].
+	func entries() -> Array:
+		return _native.entries()
+
+	var size: int:
+		get: return _native.size()
+
+	func clear() -> void:
+		_native.clear()
+
+## Optimistic events — born from Colyseus.Predict.define_event().
+class EventChannel extends RefCounted:
+	var _native
+
+	## UI-born prediction (wall-clock TTL settlement). False when dropped.
+	func predict(key: String) -> bool:
+		return _native.predict_ui(key)
+
+	## The server agreed: settle `key` ("" = every pending). Returns the count.
+	func confirm(key := "") -> int:
+		return _native.confirm(key)
+
+	## The server overruled ("" = every pending).
+	func reject(key := "") -> int:
+		return _native.reject(key)
+
+	var pending_count: int:
+		get: return _native.pending_count()
+
+	func clear() -> void:
+		_native.clear()
+
+## The rollback controller for the entity you control — born from
+## Colyseus.Predict.reconciler(). See that method for the step contract.
+class Reconciler extends RefCounted:
+	var _native
+
+	## Rendered value: predicted state + the decaying correction offset.
+	func value(field: String) -> float:
+		return _native.value(field)
+
+	## The TRUE predicted state (the mirror view) — read for game logic.
+	var state: Variant:
+		get: return _native.state()
+
+	## The composite face's part views (`world.paddle`); null on the flat face.
+	var world: Variant:
+		get: return _native.world()
+
+	var pending_count: int:
+		get: return _native.pending_count()
+
+	var reconcile_seq: int:
+		get: return _native.reconcile_seq()
+
+	var last_correction_mag: float:
+		get: return _native.last_correction_mag()
+
+	var drift_ema: float:
+		get: return _native.drift_ema()
+
+	## Re-seed from the authoritative instance; drops offsets and the
+	## in-flight window. Call from on_reconnect.
+	func reset() -> void:
+		_native.reset()
+
 # =============================================================================
 # HTTP — callback-based HTTP requests
 # =============================================================================

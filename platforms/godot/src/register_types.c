@@ -1,5 +1,9 @@
 #include "godot_colyseus.h"
 #include "colyseus_callbacks.h"
+#include "colyseus_input.h"
+#include "colyseus_predict.h"
+#include "colyseus_reconciler_gd.h"
+#include "colyseus_netdelay.h"
 #include "colyseus_schema_registry.h"
 #include "tls_certificates.h"
 #include <gdextension_interface.h>
@@ -125,6 +129,51 @@ static void register_extension_class(
     }
 }
 
+/* As register_extension_class, but with property set/get hooks — the sim-state
+ * and step-context views route ALL property access through them. */
+static void register_extension_class_with_props(
+    GDExtensionConstStringNamePtr class_name,
+    GDExtensionConstStringNamePtr parent_class_name,
+    GDExtensionClassCreateInstance create_instance,
+    GDExtensionClassCreateInstance2 create_instance2,
+    GDExtensionClassFreeInstance free_instance,
+    GDExtensionClassSet set_func,
+    GDExtensionClassGet get_func
+) {
+    if (api.classdb_register_extension_class5) {
+        GDExtensionClassCreationInfo5 class_info = {
+            .is_exposed = true,
+            .set_func = set_func,
+            .get_func = get_func,
+            .create_instance_func = create_instance2,
+            .free_instance_func = free_instance,
+        };
+        api.classdb_register_extension_class5(class_library, class_name, parent_class_name, &class_info);
+        return;
+    }
+    if (api.classdb_register_extension_class4) {
+        GDExtensionClassCreationInfo4 class_info = {
+            .is_exposed = true,
+            .set_func = set_func,
+            .get_func = get_func,
+            .create_instance_func = create_instance2,
+            .free_instance_func = free_instance,
+        };
+        api.classdb_register_extension_class4(class_library, class_name, parent_class_name, &class_info);
+        return;
+    }
+    {
+        GDExtensionClassCreationInfo2 class_info = {
+            .is_exposed = true,
+            .set_func = set_func,
+            .get_func = get_func,
+            .create_instance_func = create_instance,
+            .free_instance_func = free_instance,
+        };
+        api.classdb_register_extension_class2(class_library, class_name, parent_class_name, &class_info);
+    }
+}
+
 GDExtensionPropertyInfo make_property_full(
     GDExtensionVariantType type,
     const char *name,
@@ -201,7 +250,10 @@ typedef struct {
     GDExtensionVariantType return_type;
 } method_with_ret_info_t;
 
-#define MAX_METHOD_INFOS 32
+/* Sized for the FULL surface (client+room+callbacks+input+predict+recon and
+ * room to grow) — alloc_method_info returning NULL binds a method with NULL
+ * userdata, which crashes on FIRST CALL, not at registration. */
+#define MAX_METHOD_INFOS 128
 static method_with_ret_info_t g_method_infos[MAX_METHOD_INFOS];
 static int g_method_info_count = 0;
 
@@ -306,6 +358,46 @@ static GDExtensionObjectPtr gdext_colyseus_room_constructor2(void *p_class_userd
 static GDExtensionObjectPtr gdext_colyseus_callbacks_constructor2(void *p_class_userdata, GDExtensionBool p_notify_postinitialize) {
     (void)p_notify_postinitialize;
     return gdext_colyseus_callbacks_constructor(p_class_userdata);
+}
+
+static GDExtensionObjectPtr gdext_colyseus_input_handle_constructor2(void *p_class_userdata, GDExtensionBool p_notify_postinitialize) {
+    (void)p_notify_postinitialize;
+    return gdext_colyseus_input_handle_constructor(p_class_userdata);
+}
+
+static GDExtensionObjectPtr gdext_colyseus_predict_constructor2(void *p_class_userdata, GDExtensionBool p_notify_postinitialize) {
+    (void)p_notify_postinitialize;
+    return gdext_colyseus_predict_constructor(p_class_userdata);
+}
+
+static GDExtensionObjectPtr gdext_colyseus_sim_state_constructor2(void *p_class_userdata, GDExtensionBool p_notify_postinitialize) {
+    (void)p_notify_postinitialize;
+    return gdext_colyseus_sim_state_constructor(p_class_userdata);
+}
+
+static GDExtensionObjectPtr gdext_colyseus_step_ctx_constructor2(void *p_class_userdata, GDExtensionBool p_notify_postinitialize) {
+    (void)p_notify_postinitialize;
+    return gdext_colyseus_step_ctx_constructor(p_class_userdata);
+}
+
+static GDExtensionObjectPtr gdext_colyseus_reconciler_constructor2(void *p_class_userdata, GDExtensionBool p_notify_postinitialize) {
+    (void)p_notify_postinitialize;
+    return gdext_colyseus_reconciler_constructor(p_class_userdata);
+}
+
+static GDExtensionObjectPtr gdext_colyseus_sim_world_constructor2(void *p_class_userdata, GDExtensionBool p_notify_postinitialize) {
+    (void)p_notify_postinitialize;
+    return gdext_colyseus_sim_world_constructor(p_class_userdata);
+}
+
+static GDExtensionObjectPtr gdext_colyseus_event_channel_constructor2(void *p_class_userdata, GDExtensionBool p_notify_postinitialize) {
+    (void)p_notify_postinitialize;
+    return gdext_colyseus_event_channel_constructor(p_class_userdata);
+}
+
+static GDExtensionObjectPtr gdext_colyseus_spawns_constructor2(void *p_class_userdata, GDExtensionBool p_notify_postinitialize) {
+    (void)p_notify_postinitialize;
+    return gdext_colyseus_spawns_constructor(p_class_userdata);
 }
 
 // 0 arguments, with return
@@ -741,6 +833,7 @@ static void call_vararg(void *method_userdata, GDExtensionClassInstancePtr p_ins
 
 extern void colyseus_http_poll(void);
 extern void colyseus_ws_poll(void);
+extern void colyseus_reconnect_poll(void);
 
 // Process queued events and emit signals on main thread
 extern void gdext_http_process_events(void);
@@ -754,6 +847,7 @@ static void gdext_colyseus_client_poll_call(void* p_method_userdata, GDExtension
     (void)p_argument_count; (void)r_return; (void)r_error;
     colyseus_http_poll();
     colyseus_ws_poll();
+    colyseus_reconnect_poll();
     gdext_http_process_events();
     gdext_room_process_events();
     gdext_latency_process_events();
@@ -764,6 +858,7 @@ static void gdext_colyseus_client_poll_ptrcall(void* p_method_userdata, GDExtens
     (void)p_method_userdata; (void)p_instance; (void)p_args; (void)r_ret;
     colyseus_http_poll();
     colyseus_ws_poll();
+    colyseus_reconnect_poll();
     gdext_http_process_events();
     gdext_room_process_events();
     gdext_latency_process_events();
@@ -1535,18 +1630,318 @@ static void register_colyseus_callbacks(void) {
     destructors.string_name_destructor(&parent_class_name);
 }
 
+static void register_colyseus_input_handle(void) {
+    StringName class_name;
+    StringName parent_class_name;
+
+    constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusInputHandle", false);
+    constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
+
+    register_extension_class(&class_name, &parent_class_name,
+        gdext_colyseus_input_handle_constructor,
+        gdext_colyseus_input_handle_constructor2,
+        gdext_colyseus_input_handle_destructor);
+
+    destructors.string_name_destructor(&class_name);
+    destructors.string_name_destructor(&parent_class_name);
+
+    /* handle methods */
+    bind_method_0_with_ret("_ColyseusInputHandle", "send",
+        gdext_colyseus_input_send, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_no_ret("_ColyseusInputHandle", "reset",
+        gdext_colyseus_input_reset);
+    bind_method_2_no_ret("_ColyseusInputHandle", "set_field",
+        gdext_colyseus_input_set_field,
+        "field", GDEXTENSION_VARIANT_TYPE_STRING,
+        "value", GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_1_with_ret("_ColyseusInputHandle", "get_field",
+        gdext_colyseus_input_get_field,
+        "field", GDEXTENSION_VARIANT_TYPE_STRING,
+        GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusInputHandle", "pending_count",
+        gdext_colyseus_input_pending_count, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_with_ret("_ColyseusInputHandle", "last_processed",
+        gdext_colyseus_input_last_processed, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_with_ret("_ColyseusInputHandle", "sent_count",
+        gdext_colyseus_input_sent_count, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_with_ret("_ColyseusInputHandle", "epoch",
+        gdext_colyseus_input_epoch, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_with_ret("_ColyseusInputHandle", "tick_rate",
+        gdext_colyseus_input_tick_rate, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_with_ret("_ColyseusInputHandle", "patch_rate",
+        gdext_colyseus_input_patch_rate, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_with_ret("_ColyseusInputHandle", "render_delay",
+        gdext_colyseus_input_render_delay, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_1_no_ret("_ColyseusInputHandle", "set_render_delay",
+        gdext_colyseus_input_set_render_delay,
+        "milliseconds", GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_1_no_ret("_ColyseusInputHandle", "set_rewind_field",
+        gdext_colyseus_input_set_rewind_field,
+        "field", GDEXTENSION_VARIANT_TYPE_STRING);
+
+    /* room-side: the handle factory + the clock readouts */
+    bind_method_0_with_ret("_ColyseusRoom", "input",
+        gdext_colyseus_room_input_method, GDEXTENSION_VARIANT_TYPE_OBJECT);
+    bind_method_0_with_ret("_ColyseusRoom", "clock_now",
+        gdext_colyseus_room_clock_now, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusRoom", "clock_server_now",
+        gdext_colyseus_room_clock_server_now, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusRoom", "clock_render_now",
+        gdext_colyseus_room_clock_render_now, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusRoom", "clock_rtt",
+        gdext_colyseus_room_clock_rtt, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusRoom", "clock_smoothed_rtt",
+        gdext_colyseus_room_clock_smoothed_rtt, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusRoom", "clock_jitter",
+        gdext_colyseus_room_clock_jitter, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusRoom", "clock_last_server_time",
+        gdext_colyseus_room_clock_last_server_time, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusRoom", "clock_patch_interval",
+        gdext_colyseus_room_clock_patch_interval, GDEXTENSION_VARIANT_TYPE_FLOAT);
+}
+
+/* Register a vararg (call-convention only) method — the class of methods
+ * whose arguments a fixed-arity binder can't express. Godot never ptrcalls
+ * a VARARG method. */
+static void bind_method_vararg(
+    const char *class_name,
+    const char *method_name,
+    GDExtensionClassMethodCall call_fn,
+    bool has_return)
+{
+    StringName method_name_string;
+    constructors.string_name_new_with_latin1_chars(&method_name_string, method_name, false);
+
+    GDExtensionPropertyInfo return_info = make_property_full(
+        GDEXTENSION_VARIANT_TYPE_NIL, "", PROPERTY_HINT_NONE, "", "",
+        PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_NIL_IS_VARIANT);
+
+    GDExtensionClassMethodInfo method_info = {
+        .name = &method_name_string,
+        .method_userdata = NULL,
+        .call_func = call_fn,
+        .ptrcall_func = NULL,
+        .method_flags = GDEXTENSION_METHOD_FLAG_NORMAL | GDEXTENSION_METHOD_FLAG_VARARG,
+        .has_return_value = has_return,
+        .return_value_info = has_return ? &return_info : NULL,
+        .return_value_metadata = GDEXTENSION_METHOD_ARGUMENT_METADATA_NONE,
+        .argument_count = 0,
+        .arguments_info = NULL,
+        .arguments_metadata = NULL,
+        .default_argument_count = 0,
+        .default_arguments = NULL
+    };
+
+    StringName class_name_string;
+    constructors.string_name_new_with_latin1_chars(&class_name_string, class_name, false);
+    api.classdb_register_extension_class_method(class_library, &class_name_string, &method_info);
+    destructors.string_name_destructor(&method_name_string);
+    destructors.string_name_destructor(&class_name_string);
+    destruct_property(&return_info);
+}
+
+static void register_colyseus_predict(void) {
+    StringName class_name;
+    StringName parent_class_name;
+
+    constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusPredict", false);
+    constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
+
+    register_extension_class(&class_name, &parent_class_name,
+        gdext_colyseus_predict_constructor,
+        gdext_colyseus_predict_constructor2,
+        gdext_colyseus_predict_destructor);
+
+    destructors.string_name_destructor(&class_name);
+    destructors.string_name_destructor(&parent_class_name);
+
+    bind_method_0_with_ret("_ColyseusRoom", "predict",
+        gdext_colyseus_room_predict_method, GDEXTENSION_VARIANT_TYPE_OBJECT);
+
+    bind_method_1_with_ret("_ColyseusPredict", "tick",
+        gdext_colyseus_predict_tick,
+        "now_ms", GDEXTENSION_VARIANT_TYPE_FLOAT,
+        GDEXTENSION_VARIANT_TYPE_INT);
+
+    bind_method_vararg("_ColyseusPredict", "attach_field",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_attach_field, false);
+    bind_method_vararg("_ColyseusPredict", "attach_all_field",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_attach_all_field, false);
+    bind_method_vararg("_ColyseusPredict", "detach",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_detach, false);
+    bind_method_vararg("_ColyseusPredict", "value",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_value, true);
+    bind_method_vararg("_ColyseusPredict", "value_at",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_value_at, true);
+}
+
+static void register_colyseus_reconciler(void) {
+    StringName parent_class_name;
+    constructors.string_name_new_with_latin1_chars(&parent_class_name, "RefCounted", false);
+
+    {   /* the mirror/command view: ALL property access goes through hooks */
+        StringName class_name;
+        constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusSimState", false);
+        register_extension_class_with_props(&class_name, &parent_class_name,
+            gdext_colyseus_sim_state_constructor,
+            gdext_colyseus_sim_state_constructor2,
+            gdext_colyseus_sim_state_destructor,
+            gdext_colyseus_sim_state_set,
+            gdext_colyseus_sim_state_get);
+        destructors.string_name_destructor(&class_name);
+    }
+    {   /* the step context: read-only properties */
+        StringName class_name;
+        constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusStepContext", false);
+        register_extension_class_with_props(&class_name, &parent_class_name,
+            gdext_colyseus_step_ctx_constructor,
+            gdext_colyseus_step_ctx_constructor2,
+            gdext_colyseus_step_ctx_destructor,
+            NULL,
+            gdext_colyseus_step_ctx_get);
+        destructors.string_name_destructor(&class_name);
+    }
+    {
+        StringName class_name;
+        constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusReconciler", false);
+        register_extension_class(&class_name, &parent_class_name,
+            gdext_colyseus_reconciler_constructor,
+            gdext_colyseus_reconciler_constructor2,
+            gdext_colyseus_reconciler_destructor);
+        destructors.string_name_destructor(&class_name);
+    }
+    {   /* named part views for the composite face */
+        StringName class_name;
+        constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusSimWorld", false);
+        register_extension_class_with_props(&class_name, &parent_class_name,
+            gdext_colyseus_sim_world_constructor,
+            gdext_colyseus_sim_world_constructor2,
+            gdext_colyseus_sim_world_destructor,
+            NULL,
+            gdext_colyseus_sim_world_get);
+        destructors.string_name_destructor(&class_name);
+    }
+    destructors.string_name_destructor(&parent_class_name);
+
+    bind_method_vararg("_ColyseusPredict", "reconciler",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_reconciler_method, true);
+    bind_method_vararg("_ColyseusPredict", "sim",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_sim_method, true);
+    bind_method_vararg("_ColyseusPredict", "attach_reckon",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_attach_reckon_method, false);
+    bind_method_vararg("_ColyseusPredict", "attach_all_reckon",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_attach_all_reckon_method, false);
+
+    {   /* optimistic event channels */
+        StringName class_name;
+        StringName parent2;
+        constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusEventChannel", false);
+        constructors.string_name_new_with_latin1_chars(&parent2, "RefCounted", false);
+        register_extension_class(&class_name, &parent2,
+            gdext_colyseus_event_channel_constructor,
+            gdext_colyseus_event_channel_constructor2,
+            gdext_colyseus_event_channel_destructor);
+        destructors.string_name_destructor(&class_name);
+        destructors.string_name_destructor(&parent2);
+    }
+    bind_method_vararg("_ColyseusPredict", "define_event",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_define_event_method, true);
+    bind_method_1_with_ret("_ColyseusEventChannel", "confirm",
+        gdext_colyseus_event_confirm,
+        "key", GDEXTENSION_VARIANT_TYPE_STRING, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_1_with_ret("_ColyseusEventChannel", "reject",
+        gdext_colyseus_event_reject,
+        "key", GDEXTENSION_VARIANT_TYPE_STRING, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_1_with_ret("_ColyseusEventChannel", "predict_ui",
+        gdext_colyseus_event_predict_ui,
+        "key", GDEXTENSION_VARIANT_TYPE_STRING, GDEXTENSION_VARIANT_TYPE_BOOL);
+    bind_method_0_with_ret("_ColyseusEventChannel", "pending_count",
+        gdext_colyseus_event_pending_count, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_no_ret("_ColyseusEventChannel", "clear",
+        gdext_colyseus_event_clear);
+
+    {   /* predicted-spawn stores */
+        StringName class_name;
+        StringName parent2;
+        constructors.string_name_new_with_latin1_chars(&class_name, "_ColyseusSpawns", false);
+        constructors.string_name_new_with_latin1_chars(&parent2, "RefCounted", false);
+        register_extension_class(&class_name, &parent2,
+            gdext_colyseus_spawns_constructor,
+            gdext_colyseus_spawns_constructor2,
+            gdext_colyseus_spawns_destructor);
+        destructors.string_name_destructor(&class_name);
+        destructors.string_name_destructor(&parent2);
+    }
+    bind_method_vararg("_ColyseusPredict", "spawns",
+        (GDExtensionClassMethodCall)gdext_colyseus_predict_spawns_method, true);
+    bind_method_vararg("_ColyseusSpawns", "spawn",
+        (GDExtensionClassMethodCall)gdext_colyseus_spawns_spawn_method, true);
+    bind_method_vararg("_ColyseusSpawns", "value",
+        (GDExtensionClassMethodCall)gdext_colyseus_spawns_value_method, true);
+    bind_method_vararg("_ColyseusSpawns", "server_string",
+        (GDExtensionClassMethodCall)gdext_colyseus_spawns_server_string_method, true);
+    bind_method_vararg("_ColyseusSpawns", "entries",
+        (GDExtensionClassMethodCall)gdext_colyseus_spawns_entries_method, true);
+    bind_method_0_with_ret("_ColyseusSpawns", "size",
+        gdext_colyseus_spawns_size, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_no_ret("_ColyseusSpawns", "clear",
+        gdext_colyseus_spawns_clear);
+
+    /* latency injector (APPS_PLAN §3) */
+    bind_method_2_no_ret("_ColyseusRoom", "set_latency",
+        gdext_colyseus_room_set_latency,
+        "delay_ms", GDEXTENSION_VARIANT_TYPE_FLOAT,
+        "jitter_ms", GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_no_ret("_ColyseusRoom", "net_pump",
+        gdext_colyseus_room_net_pump);
+    bind_method_0_with_ret("_ColyseusRoom", "net_in_flight",
+        gdext_colyseus_room_net_in_flight, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_no_ret("_ColyseusRoom", "drop_transport",
+        gdext_colyseus_room_drop_transport);
+
+    /* step-context extras */
+    bind_method_vararg("_ColyseusStepContext", "memo",
+        (GDExtensionClassMethodCall)gdext_colyseus_step_ctx_memo, true);
+    bind_method_vararg("_ColyseusStepContext", "memo_vec",
+        (GDExtensionClassMethodCall)gdext_colyseus_step_ctx_memo_vec, true);
+    bind_method_vararg("_ColyseusStepContext", "predict",
+        (GDExtensionClassMethodCall)gdext_colyseus_step_ctx_predict_event, false);
+    bind_method_0_with_ret("_ColyseusReconciler", "world",
+        gdext_colyseus_recon_world, GDEXTENSION_VARIANT_TYPE_OBJECT);
+
+    bind_method_1_with_ret("_ColyseusReconciler", "value",
+        gdext_colyseus_recon_value,
+        "field", GDEXTENSION_VARIANT_TYPE_STRING,
+        GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusReconciler", "state",
+        gdext_colyseus_recon_state, GDEXTENSION_VARIANT_TYPE_OBJECT);
+    bind_method_0_with_ret("_ColyseusReconciler", "pending_count",
+        gdext_colyseus_recon_pending_count, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_with_ret("_ColyseusReconciler", "reconcile_seq",
+        gdext_colyseus_recon_reconcile_seq, GDEXTENSION_VARIANT_TYPE_INT);
+    bind_method_0_with_ret("_ColyseusReconciler", "last_correction_mag",
+        gdext_colyseus_recon_last_correction_mag, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_with_ret("_ColyseusReconciler", "drift_ema",
+        gdext_colyseus_recon_drift_ema, GDEXTENSION_VARIANT_TYPE_FLOAT);
+    bind_method_0_no_ret("_ColyseusReconciler", "reset",
+        gdext_colyseus_recon_reset);
+}
+
 static void colyseus_initialize(void *userdata, GDExtensionInitializationLevel p_level) {
     (void)userdata;
     if (p_level != GDEXTENSION_INITIALIZATION_SCENE) {
         return;
     }
-    
+
     /* Initialize TLS certificates (auto-loads bundled or override certs) */
     gdext_tls_certificates_init();
-    
+
     register_colyseus_client();
     register_colyseus_room();
     register_colyseus_callbacks();
+    register_colyseus_input_handle();
+    register_colyseus_predict();
+    register_colyseus_reconciler();
 }
 
 static void colyseus_deinitialize(void *userdata, GDExtensionInitializationLevel p_level) {

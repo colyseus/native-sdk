@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const godot_double_precision = b.option(bool, "godot-double-precision", "Build against a double-precision Godot engine") orelse false;
+    const reconnect_polled = b.option(bool, "reconnect-polled", "Force the polled reconnection scheduler (the web code path) on native — for testing") orelse false;
 
     const os_tag = target.result.os.tag;
 
@@ -36,6 +37,7 @@ pub fn build(b: *std.Build) void {
 
     const build_type = if (optimize == .Debug) "debug" else "release";
     const godot_precision_flag: ?[]const u8 = if (godot_double_precision) "-DREAL_T_IS_DOUBLE" else null;
+    const reconnect_polled_flag: ?[]const u8 = if (reconnect_polled) "-DCOLYSEUS_RECONNECT_POLLED" else null;
 
     // Build library name based on platform
     // macOS uses universal binaries, others include architecture
@@ -169,6 +171,10 @@ pub fn build(b: *std.Build) void {
                 "src/colyseus_client.c",
                 "src/colyseus_room.c",
                 "src/colyseus_callbacks.c",
+                "src/colyseus_input.c",
+                "src/colyseus_predict.c",
+                "src/colyseus_reconciler_gd.c",
+                "src/colyseus_netdelay.c",
                 "src/colyseus_state.c",
                 "src/colyseus_schema_registry.c",
                 "src/colyseus_gdscript_schema.c",
@@ -179,18 +185,29 @@ pub fn build(b: *std.Build) void {
                 "../../src/common/settings.c",
                 "../../src/client.c",
                 "../../src/room.c",
+                "../../src/room_clock.c",
+                "../../src/input_handle.c",
                 "../../src/network/latency.c",
+                "../../src/network/net_delay.c",
                 // Network (web-specific - browser handles WebSocket/HTTP)
                 "../../src/network/websocket_transport_web.c",
                 "../../src/network/http_web.c",
                 // Schema
                 "../../src/schema/decode.c",
+                "../../src/schema/encode.c",
+                "../../src/schema/input_encoder.c",
+                "../../src/schema/quantize.c",
                 "../../src/schema/ref_tracker.c",
                 "../../src/schema/collections.c",
                 "../../src/schema/decoder.c",
                 "../../src/schema/serializer.c",
                 "../../src/schema/callbacks.c",
                 "../../src/schema/dynamic_schema.c",
+                // Predict layer
+                "../../src/predict/predict.c",
+                "../../src/predict/reconciler.c",
+                "../../src/predict/events.c",
+                "../../src/predict/spawns.c",
                 // Utils
                 "../../src/utils/strUtil.c",
                 "../../src/utils/sha1_c.c",
@@ -373,6 +390,10 @@ pub fn build(b: *std.Build) void {
                 "src/colyseus_client.c",
                 "src/colyseus_room.c",
                 "src/colyseus_callbacks.c",
+                "src/colyseus_input.c",
+                "src/colyseus_predict.c",
+                "src/colyseus_reconciler_gd.c",
+                "src/colyseus_netdelay.c",
                 "src/colyseus_state.c",
                 "src/colyseus_schema_registry.c",
                 "src/colyseus_gdscript_schema.c",
@@ -385,6 +406,7 @@ pub fn build(b: *std.Build) void {
                 "-Wextra",
                 "-Wno-unused-parameter",
                 if (godot_precision_flag) |flag| flag else "",
+                if (reconnect_polled_flag) |flag| flag else "",
             },
         });
 
@@ -395,17 +417,28 @@ pub fn build(b: *std.Build) void {
                 "../../src/common/settings.c",
                 "../../src/client.c",
                 "../../src/room.c",
+                "../../src/room_clock.c",
+                "../../src/input_handle.c",
                 "../../src/network/latency.c",
+                "../../src/network/net_delay.c",
                 // Network (native websocket with wslay)
                 "../../src/network/websocket_transport.c",
                 // Schema
                 "../../src/schema/decode.c",
+                "../../src/schema/encode.c",
+                "../../src/schema/input_encoder.c",
+                "../../src/schema/quantize.c",
                 "../../src/schema/ref_tracker.c",
                 "../../src/schema/collections.c",
                 "../../src/schema/decoder.c",
                 "../../src/schema/serializer.c",
                 "../../src/schema/callbacks.c",
                 "../../src/schema/dynamic_schema.c",
+                // Predict layer
+                "../../src/predict/predict.c",
+                "../../src/predict/reconciler.c",
+                "../../src/predict/events.c",
+                "../../src/predict/spawns.c",
                 // Utils
                 "../../src/utils/strUtil.c",
                 "../../src/utils/sha1_c.c",
@@ -430,6 +463,7 @@ pub fn build(b: *std.Build) void {
                 "-Wno-unused-parameter",
                 "-DHAVE_CONFIG_H",
                 if (godot_precision_flag) |flag| flag else "",
+                if (reconnect_polled_flag) |flag| flag else "",
             },
         });
 
