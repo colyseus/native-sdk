@@ -7,7 +7,9 @@ import 'bindings/native_functions.dart';
 import 'colyseus.dart';
 import 'drift.dart';
 import 'input_handle.dart';
+import 'events.dart';
 import 'interned_names.dart';
+import 'payload_registry.dart';
 import 'predict.dart';
 import 'schema.dart';
 import 'schema_view.dart';
@@ -130,6 +132,25 @@ class StepContext {
       callable.close();
       calloc.free(out);
     }
+  }
+
+  /// Predicts an optimistic event from inside the simulation.
+  ///
+  /// Fires only on the live step — a rollback replay of the same input is
+  /// silently skipped, so the event happens once no matter how many times its
+  /// input is re-simulated. That is the difference from
+  /// [EventChannel.predict], and the reason to prefer this form for anything
+  /// the simulation itself decides.
+  ///
+  /// Settles by server progress rather than wall clock: if the server
+  /// processes past this input without confirming, the prediction is rejected.
+  void predict(EventChannel channel, String key, [Object? payload]) {
+    core.colyseus_step_predict(
+      _handle,
+      channel.handle,
+      internedName(key),
+      retainPayload(payload),
+    );
   }
 
   void _rebind(Pointer<colyseus_step_ctx_t> handle) => _handle = handle;

@@ -4,12 +4,14 @@ import 'package:ffi/ffi.dart';
 
 import 'bindings/colyseus_core.dart';
 import 'colyseus.dart';
+import 'events.dart';
 import 'input_handle.dart';
 import 'interned_names.dart';
 import 'reconciler.dart';
 import 'room.dart';
 import 'schema.dart';
 import 'schema_view.dart';
+import 'spawns.dart';
 
 /// How a tracked field follows the server stream.
 ///
@@ -152,6 +154,8 @@ class Predict {
   final ColyseusRoom _room;
   final List<NativeCallable> _callables = [];
   final List<Reconciler> _children = [];
+  final List<EventChannel> _channels = [];
+  final List<Spawns> _spawns = [];
   bool _disposed = false;
 
   Predict._(this._handle, this._room);
@@ -371,6 +375,80 @@ class Predict {
     return child;
   }
 
+  /// Creates an optimistic-event channel driven by [tick].
+  ///
+  /// See [EventChannel] for what it does. [graceTicks] is how far the server
+  /// may progress past a sim-born prediction before it auto-rejects.
+  EventChannel defineEvent({
+    void Function(Object? payload)? onPredict,
+    void Function(Object? payload)? onConfirm,
+    void Function(Object? payload)? onReject,
+    void Function(String key)? onUnpredicted,
+    int graceTicks = 0,
+    double ttlMs = 0,
+    double cooldownMs = 0,
+  }) {
+    final channel = EventChannel.create(
+      clock: _room.clock.handle,
+      onPredict: onPredict,
+      onConfirm: onConfirm,
+      onReject: onReject,
+      onUnpredicted: onUnpredicted,
+      graceTicks: graceTicks,
+      ttlMs: ttlMs,
+      cooldownMs: cooldownMs,
+    );
+    core.colyseus_predict_drive_events(_handle, channel.handle);
+    _channels.add(channel);
+    return channel;
+  }
+
+  /// Creates a predicted-spawn store bound to [collection].
+  ///
+  /// The collection's additions and removals are routed into the store, and
+  /// the store is advanced by [tick] — this is the whole wiring a predicted
+  /// collection needs. See [Spawns].
+  Spawns spawns(String collection, SpawnsOptions options) {
+    final store = Spawns.create(clock: _room.clock.handle, options: options);
+    final state = _rootState();
+
+    using((arena) {
+      final collectionPtr = collection.toNativeUtf8(allocator: arena);
+
+      Pointer<colyseus_spawns_reckon_t> reckon = nullptr;
+      if (options.fields != null && options.reckonStep != null) {
+        final fields = options.fields!;
+        final names = arena<Pointer<Char>>(fields.length);
+        for (var i = 0; i < fields.length; i++) {
+          names[i] = fields[i].toNativeUtf8(allocator: arena).cast();
+        }
+
+        final callable = _reckonCallable(
+          (state, dt, elapsedMs) => options.reckonStep!(state, dt, elapsedMs),
+        );
+
+        reckon = arena<colyseus_spawns_reckon_t>();
+        reckon.ref.fields = names;
+        reckon.ref.field_count = fields.length;
+        reckon.ref.step = callable.nativeFunction;
+        // Raw projection: a deterministic constant-step projectile rebases
+        // exactly, so smoothing would only add lag.
+        reckon.ref.smoothing = 0;
+      }
+
+      core.colyseus_predict_bind_spawns(
+        _handle,
+        store.handle,
+        state,
+        collectionPtr.cast(),
+        reckon,
+      );
+    });
+
+    _spawns.add(store);
+    return store;
+  }
+
   /// Releases the prediction layer and everything it drives.
   ///
   /// Safe to call twice, and called for you by [ColyseusRoom.dispose].
@@ -382,6 +460,17 @@ class Predict {
       child.dispose();
     }
     _children.clear();
+
+    // Children deregister themselves from the driver as they go, so they all
+    // have to be gone before the Predict itself is freed.
+    for (final channel in _channels) {
+      channel.dispose();
+    }
+    _channels.clear();
+    for (final store in _spawns) {
+      store.dispose();
+    }
+    _spawns.clear();
 
     core.colyseus_predict_free(_handle);
     _room.unregisterPredict(this);
