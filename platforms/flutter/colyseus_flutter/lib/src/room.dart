@@ -7,9 +7,11 @@ import 'bindings/colyseus_core.dart';
 import 'bindings/native_functions.dart';
 import 'colyseus.dart';
 import 'event_poller.dart';
+import 'input_handle.dart';
 import 'message.dart';
 import 'room_clock.dart';
 import 'schema.dart';
+import 'schema_view.dart';
 import 'types.dart';
 
 final _n = NativeFunctions.instance;
@@ -54,6 +56,8 @@ class ColyseusRoom {
   final Map<int, StreamController<dynamic>> _itemRemoveControllers = {};
   int _callbacksHandle = 0;
   RoomClock? _clock;
+  InputHandle? _input;
+  NativeCallable<Bool Function(Pointer<Void>, Pointer<Void>)>? _allowRewind;
 
   ColyseusRoom._(this._roomRef);
 
@@ -107,6 +111,70 @@ class ColyseusRoom {
       throw StateError('Room is not connected yet — await the join first');
     }
     return _clock ??= RoomClock(core.colyseus_room_get_clock(room));
+  }
+
+  /// The typed input channel for this room, created on first call.
+  ///
+  /// Returns null when the server's room does not declare inputs (no
+  /// `defineInput()`), in which case prediction isn't available either.
+  ///
+  /// [options] apply only to the call that creates the handle; later calls
+  /// return the same handle and ignore them.
+  InputHandle? input([InputOptions options = const InputOptions()]) {
+    if (_input != null) return _input;
+
+    final room = nativeRoom;
+    if (room == nullptr) {
+      throw StateError('Room is not connected yet — await the join first');
+    }
+
+    final native = using((arena) {
+      final opts = arena<colyseus_input_options_t>();
+      opts.ref.unreliable = options.mode == InputMode.unreliable;
+      opts.ref.history_size = options.historySize;
+      opts.ref.render_delay = options.renderDelay;
+      // A NULL vtable tells the core to synthesize the schema from the
+      // handshake's input reflection, which is what every dynamic binding does.
+      return core.colyseus_room_input(room, nullptr, opts.cast<Void>());
+    });
+
+    if (native == nullptr) return null;
+    final handle = InputHandle(native);
+
+    if (options.allowRewind != null) {
+      _bindAllowRewind(handle, options.allowRewind!);
+    }
+
+    return _input = handle;
+  }
+
+  /// Installs the lag-compensation gate.
+  ///
+  /// The core calls this synchronously from inside `send()`, which Dart
+  /// itself initiated, so the callback runs on this isolate's own thread and
+  /// an isolate-local native callable is safe. A listener callable would be
+  /// asynchronous and could not return the verdict the gate needs.
+  void _bindAllowRewind(InputHandle handle, bool Function(SchemaView) gate) {
+    final view = handle.data;
+    _allowRewind = NativeCallable<Bool Function(Pointer<Void>, Pointer<Void>)>
+        .isolateLocal(
+      (Pointer<Void> data, Pointer<Void> _) {
+        try {
+          return gate(view);
+        } catch (_) {
+          // Throwing across the FFI boundary would abort the process; a
+          // failed gate just means "don't stamp this input".
+          return false;
+        }
+      },
+      exceptionalReturn: false,
+    );
+
+    core.colyseus_input_handle_set_allow_rewind(
+      handle.handle,
+      _allowRewind!.nativeFunction,
+      nullptr,
+    );
   }
 
   // ===== Network simulation =====
@@ -366,6 +434,9 @@ class ColyseusRoom {
       _n.callbacksFree(_callbacksHandle);
       _callbacksHandle = 0;
     }
+
+    _allowRewind?.close();
+    _allowRewind = null;
 
     ColyseusEventPoller.instance.unregisterRoom(_roomRef);
     _n.roomFree(_roomRef);
