@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   ffi: ^2.1.0
+  meta: ^1.15.0
 
 dev_dependencies:
   ffigen: ^14.0.0

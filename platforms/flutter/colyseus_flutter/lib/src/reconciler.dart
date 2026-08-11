@@ -1,6 +1,7 @@
 import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
+import 'package:meta/meta.dart';
 
 import 'bindings/colyseus_core.dart';
 import 'bindings/native_functions.dart';
@@ -25,6 +26,7 @@ class StepContext {
 
   StepContext._(this._handle);
 
+  @internal
   /// An unbound context, rebound per step by whoever drives the callback.
   ///
   /// The composite reconciler builds its own step trampoline, so it needs the
@@ -159,6 +161,7 @@ class StepContext {
     );
   }
 
+  @internal
   /// Points this flyweight at the context for the step about to run.
   void rebind(Pointer<colyseus_step_ctx_t> handle) => _handle = handle;
 }
@@ -203,6 +206,7 @@ class Reconciler {
 
   Reconciler._(this._handle, this._owner, this._callables);
 
+  @internal
   /// Wraps an already-created native reconciler.
   ///
   /// The composite (`sim`) path builds its handle through a different entry

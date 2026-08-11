@@ -1,6 +1,7 @@
 import 'dart:ffi';
 
 import 'package:ffi/ffi.dart';
+import 'package:meta/meta.dart';
 
 import 'bindings/colyseus_core.dart';
 import 'colyseus.dart';
@@ -481,9 +482,11 @@ class Predict {
     _callables.clear();
   }
 
+  @internal
   /// Called by a child that was disposed on its own.
   void forget(Reconciler child) => _children.remove(child);
 
+  @internal
   /// Registers a reconciler built outside [reconciler] for ordered teardown.
   void adoptChild(Reconciler child) {
     if (!_children.contains(child)) _children.add(child);
