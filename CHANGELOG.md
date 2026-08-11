@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
-Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md) and [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md).
+Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md) and [platforms/flutter/CHANGELOG.md](platforms/flutter/CHANGELOG.md).
 
 ## 0.18.0
 
