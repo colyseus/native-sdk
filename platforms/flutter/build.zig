@@ -63,6 +63,9 @@ pub fn build(b: *std.Build) void {
         b.dependency("native_sdk", .{
             .target = target,
             .optimize = optimize,
+            // Dart resolves core symbols out of the built DLL, which needs the
+            // MinGW export-all default that cJSON's dllexport would suppress.
+            .@"hide-cjson-exports" = true,
         });
 
     if (build_all) {
@@ -234,18 +237,32 @@ fn buildFlutterLibrary(
     flutter_lib.addIncludePath(b.path("src"));
 
     // Flutter export layer
+    var c_flags: std.ArrayList([]const u8) = .empty;
+    c_flags.appendSlice(b.allocator, &.{ "-Wall", "-Wextra", "-pedantic", c_std }) catch @panic("OOM");
+
+    // MinGW exports every global symbol until one is marked dllexport, and
+    // Dart resolves the core SDK's symbols out of this same library — so the
+    // glue must stay unmarked or everything else disappears from the DLL.
+    // KNOWN GAP (Windows): the predict/reconciler/spawns objects live in
+    // colyseus.lib and nothing in the glue references them, so the linker
+    // never pulls those archive members and they miss the export table. The
+    // rest of the core (room, clock, input, netdelay) is exported and works.
+    // Fixing it needs an anchor table referencing the entry points, the same
+    // way iOS needs -force_load.
+    if (target.result.os.tag == .windows) {
+        c_flags.append(b.allocator, "-DFLUTTER_NO_DLLEXPORT") catch @panic("OOM");
+        // Export every symbol instead, so the linked-in core lands in the
+        // export table too.
+        flutter_lib.rdynamic = true;
+    }
+
     flutter_lib.addCSourceFiles(.{
         .root = b.path("."),
         .files = &.{
             "src/flutter_export.c",
             "src/flutter_extras.c",
         },
-        .flags = &.{
-            "-Wall",
-            "-Wextra",
-            "-pedantic",
-            c_std,
-        },
+        .flags = c_flags.items,
     });
 
     // Link the pre-built colyseus library from native_sdk

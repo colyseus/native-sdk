@@ -3,9 +3,12 @@ import 'dart:ffi';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
+import 'bindings/colyseus_core.dart';
 import 'bindings/native_functions.dart';
+import 'colyseus.dart';
 import 'event_poller.dart';
 import 'message.dart';
+import 'room_clock.dart';
 import 'schema.dart';
 import 'types.dart';
 
@@ -50,6 +53,7 @@ class ColyseusRoom {
   final Map<int, StreamController<dynamic>> _itemAddControllers = {};
   final Map<int, StreamController<dynamic>> _itemRemoveControllers = {};
   int _callbacksHandle = 0;
+  RoomClock? _clock;
 
   ColyseusRoom._(this._roomRef);
 
@@ -86,6 +90,50 @@ class ColyseusRoom {
   SchemaInstance? get state {
     final handle = _n.roomGetState(_roomRef);
     return handle != 0 ? SchemaInstance(handle) : null;
+  }
+
+  /// The core room pointer the 0.18 APIs take, or `nullptr` before the join
+  /// resolves.
+  Pointer<colyseus_room> get nativeRoom =>
+      Pointer<colyseus_room>.fromAddress(_n.roomPtr(_roomRef));
+
+  /// Clock sync and RTT estimation for this room.
+  ///
+  /// Only carries real values once the server declares inputs — see
+  /// [RoomClock].
+  RoomClock get clock {
+    final room = nativeRoom;
+    if (room == nullptr) {
+      throw StateError('Room is not connected yet — await the join first');
+    }
+    return _clock ??= RoomClock(core.colyseus_room_get_clock(room));
+  }
+
+  // ===== Network simulation =====
+
+  /// Injects one-way latency on this room's transport.
+  ///
+  /// Both directions are delayed by [delayMs] plus up to [jitterMs] of noise,
+  /// clamped so jitter can never reorder packets. Values are global across
+  /// rooms. Zero for both restores immediate delivery.
+  ///
+  /// This is a debug facility: use it to see how prediction behaves under a
+  /// realistic connection while developing against localhost.
+  void setLatency({double delayMs = 0, double jitterMs = 0}) {
+    final room = nativeRoom;
+    if (room == nullptr) return;
+    core.colyseus_netdelay_set(room, delayMs, jitterMs);
+  }
+
+  /// Kills the transport as if the network dropped.
+  ///
+  /// Closes with code 4010, so the SDK treats it as a recoverable drop and
+  /// starts reconnecting — [onDrop] fires, then [onReconnect] on success.
+  /// Use it to exercise reconnection handling on demand.
+  void dropConnection() {
+    final room = nativeRoom;
+    if (room == nullptr) return;
+    core.colyseus_netdelay_drop(room);
   }
 
   // ===== Event Streams =====

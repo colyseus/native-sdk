@@ -8,10 +8,20 @@
 extern "C" {
 #endif
 
-// Export macro for Flutter FFI
+/*
+ * Export macro for Flutter FFI.
+ *
+ * On MinGW the linker exports every global symbol *until* something is marked
+ * __declspec(dllexport), at which point only the marked ones ship. Dart looks
+ * up the core SDK's symbols (colyseus_predict_*, colyseus_room_input, …)
+ * directly, so marking the glue would hide everything else. The Windows build
+ * defines FLUTTER_NO_DLLEXPORT to keep the export-all default.
+ */
 #ifndef FLUTTER_EXPORT
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(FLUTTER_NO_DLLEXPORT)
 #define FLUTTER_EXPORT __declspec(dllexport)
+#elif defined(_WIN32)
+#define FLUTTER_EXPORT
 #else
 #define FLUTTER_EXPORT __attribute__((visibility("default")))
 #endif
@@ -93,6 +103,18 @@ FLUTTER_EXPORT int colyseus_flutter_client_join_by_id(intptr_t client_handle, co
  * @return Room reference handle (0 on failure)
  */
 FLUTTER_EXPORT int colyseus_flutter_client_reconnect(intptr_t client_handle, const char* reconnection_token);
+
+/**
+ * Toggle inbound-traffic serialization (default on).
+ *
+ * When on, every room's transport is wrapped at join so inbound frames decode
+ * inside colyseus_netdelay_pump() on the calling (Dart) thread rather than on
+ * the WebSocket thread. Turn it off only for a client that never touches the
+ * predict layer and drives no per-frame pump.
+ *
+ * Takes effect for rooms joined after the call.
+ */
+FLUTTER_EXPORT void colyseus_flutter_set_serialized_inbound(int enabled);
 
 // =============================================================================
 // Room Functions

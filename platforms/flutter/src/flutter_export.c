@@ -6,6 +6,7 @@
 #include "../../../include/colyseus/schema/dynamic_schema.h"
 #include "../../../include/colyseus/schema/collections.h"
 #include "../../../include/colyseus/messages.h"
+#include "../../../include/colyseus/net_delay.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -16,36 +17,13 @@
 #include <pthread.h>
 #endif
 
-// Export macro for Flutter FFI
-#ifndef FLUTTER_EXPORT
-#ifdef _WIN32
-#define FLUTTER_EXPORT __declspec(dllexport)
-#else
-#define FLUTTER_EXPORT __attribute__((visibility("default")))
-#endif
-#endif
+#include "flutter_colyseus.h"
 
 // Maximum number of events in the queue
 #define MAX_EVENT_QUEUE_SIZE 1024
 
 // Maximum number of callback entries
 #define MAX_FLUTTER_CALLBACK_ENTRIES 256
-
-// Event types for Flutter polling
-typedef enum {
-    FLUTTER_EVENT_NONE = 0,
-    FLUTTER_EVENT_ROOM_JOIN = 1,
-    FLUTTER_EVENT_ROOM_STATE_CHANGE = 2,
-    FLUTTER_EVENT_ROOM_MESSAGE = 3,
-    FLUTTER_EVENT_ROOM_ERROR = 4,
-    FLUTTER_EVENT_ROOM_LEAVE = 5,
-    FLUTTER_EVENT_CLIENT_ERROR = 6,
-    FLUTTER_EVENT_PROPERTY_CHANGE = 7,
-    FLUTTER_EVENT_ITEM_ADD = 8,
-    FLUTTER_EVENT_ITEM_REMOVE = 9,
-    FLUTTER_EVENT_ROOM_DROP = 14,
-    FLUTTER_EVENT_ROOM_RECONNECT = 15,
-} flutter_event_type_t;
 
 // Event structure for the queue
 typedef struct {
@@ -605,8 +583,33 @@ static void on_room_drop(int code, const char* reason, void* userdata) {
     event_queue_push(&event);
 }
 
+/*
+ * Serialize inbound traffic onto the Dart thread.
+ *
+ * Wrapping with always_queue_inbound means frames are only decoded inside
+ * colyseus_netdelay_pump(), which Dart drives — so schema decode, input acks
+ * and predict writes never race the WS thread, and the event ring is filled
+ * and drained within one frame. It is also the seam the latency injector
+ * uses, so arming it here costs nothing extra.
+ */
+static bool g_serialized_inbound = true;
+
+static void flutter_arm_transport(colyseus_room_t* room) {
+    if (room && g_serialized_inbound) {
+        colyseus_netdelay_wrap(room, true);
+    }
+}
+
+FLUTTER_EXPORT void colyseus_flutter_set_serialized_inbound(int enabled) {
+    g_serialized_inbound = enabled != 0;
+}
+
 static void on_room_reconnect(void* userdata) {
     int ref = (int)(intptr_t)userdata;
+
+    // Reconnecting swaps in a fresh transport, so the wrap has to be re-armed.
+    flutter_arm_transport(flutter_room_ref_get(ref));
+
     flutter_event_t event = {0};
     event.type = FLUTTER_EVENT_ROOM_RECONNECT;
     event.room_handle = ref;
@@ -616,6 +619,7 @@ static void on_room_reconnect(void* userdata) {
 static void on_client_room_success(colyseus_room_t* room, void* userdata) {
     int ref = (int)(intptr_t)userdata;
     flutter_room_ref_set(ref, room);
+    flutter_arm_transport(room);
 
     void* ref_as_ptr = (void*)(intptr_t)ref;
     colyseus_room_on_join(room, on_room_join, ref_as_ptr);
@@ -800,6 +804,8 @@ FLUTTER_EXPORT void colyseus_flutter_room_leave(int room_handle) {
 FLUTTER_EXPORT void colyseus_flutter_room_free(int room_handle) {
     colyseus_room_t* room = flutter_room_ref_get(room_handle);
     if (room) {
+        // Restore the transport's own pointers before it is freed.
+        if (room->transport) colyseus_netdelay_unwrap(room->transport);
         colyseus_room_free(room);
     }
     flutter_room_ref_release(room_handle);

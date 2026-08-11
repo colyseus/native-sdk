@@ -109,17 +109,25 @@ Future<SchemaInstance?> waitForOwnEntry(
   );
 }
 
-/// Joins [roomName] on [endpoint] and tears both down when [body] returns.
+/// Runs [body] against a room of type [roomName], tearing both down after.
+///
+/// Creates a fresh room per call rather than joining a shared one. Test files
+/// run concurrently and a shared room would let them see each other's bots,
+/// items and moves — every ordering assertion here would be flaky. Pass
+/// [shared] when a test genuinely needs two clients in one room.
 Future<void> withRoom(
   String endpoint,
   String roomName,
   Future<void> Function(ColyseusClient client, ColyseusRoom room) body, {
   Map<String, dynamic>? options,
+  bool shared = false,
 }) async {
   final client = ColyseusClient(endpoint);
   ColyseusRoom? room;
   try {
-    room = await client.joinOrCreate(roomName, options);
+    room = shared
+        ? await client.joinOrCreate(roomName, options)
+        : await client.create(roomName, options);
     await body(client, room);
   } finally {
     if (room != null) {

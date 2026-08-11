@@ -2,27 +2,46 @@ import 'dart:async';
 import 'package:ffi/ffi.dart';
 
 import 'bindings/native_functions.dart';
+import 'colyseus.dart';
+import 'message.dart';
 import 'room.dart';
 import 'types.dart';
-import 'message.dart';
 
 final _n = NativeFunctions.instance;
 
-/// Singleton event poller that drives the native event queue.
-/// Runs a Timer.periodic at ~60fps to poll events from the C layer
-/// and dispatch them to the appropriate ColyseusRoom instances.
+/// Drives the native event queue and dispatches to [ColyseusRoom] instances.
+///
+/// Two ways to run: the built-in ~60 Hz timer (the default), or the app's own
+/// frame callback via `Colyseus.pump()`. Both funnel into [drain]; apps that
+/// pump themselves should set `Colyseus.autoPoll = false` so events aren't
+/// also delivered mid-frame by the timer.
 class ColyseusEventPoller {
   ColyseusEventPoller._();
   static final ColyseusEventPoller instance = ColyseusEventPoller._();
 
   Timer? _timer;
+  bool _autoPoll = true;
   final Map<int, ColyseusRoom> _rooms = {};
   final Map<int, Completer<ColyseusRoom>> _pendingJoins = {};
 
+  bool get autoPoll => _autoPoll;
+
+  set autoPoll(bool value) {
+    if (_autoPoll == value) return;
+    _autoPoll = value;
+    if (value) {
+      if (_rooms.isNotEmpty) _ensureRunning();
+    } else {
+      _timer?.cancel();
+      _timer = null;
+    }
+  }
+
   void _ensureRunning() {
+    if (!_autoPoll) return;
     _timer ??= Timer.periodic(
       const Duration(milliseconds: 16),
-      (_) => _poll(),
+      (_) => _tick(),
     );
   }
 
@@ -46,7 +65,19 @@ class ColyseusEventPoller {
     }
   }
 
-  void _poll() {
+  /// Timer path: release inbound traffic, then deliver what it produced.
+  ///
+  /// Inbound frames are queued at the transport seam and only decode inside
+  /// the netdelay pump, so draining without pumping first would deliver
+  /// nothing.
+  void _tick() {
+    core.colyseus_netdelay_pump();
+    core.colyseus_reconnect_poll();
+    drain();
+  }
+
+  /// Delivers every queued native event to its room.
+  void drain() {
     // Drain all available events per tick
     for (;;) {
       final eventType = _n.pollEvent();

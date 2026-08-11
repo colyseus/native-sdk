@@ -21,17 +21,10 @@
 #include "colyseus/net_delay.h"
 
 #include "../../../src/predict/field_access.h"
+#include "flutter_colyseus.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-#ifndef FLUTTER_EXPORT
-#ifdef _WIN32
-#define FLUTTER_EXPORT __declspec(dllexport)
-#else
-#define FLUTTER_EXPORT __attribute__((visibility("default")))
-#endif
-#endif
 
 /* Provided by flutter_export.c — the glue owns the room-ref table. */
 colyseus_room_t* flutter_room_from_ref(int ref);

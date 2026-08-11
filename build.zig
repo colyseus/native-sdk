@@ -1,5 +1,12 @@
 const std = @import("std");
 
+// Windows-only: cJSON marks its API __declspec(dllexport) by default, and one
+// dllexport anywhere makes MinGW's linker export ONLY marked symbols. A
+// consumer that links this library into a DLL and resolves colyseus_* symbols
+// at runtime (the Flutter binding does) therefore finds an export table with
+// nothing but cJSON in it. Opt in to hide them and get export-all back.
+const cjson_hide_symbols_flag = "-DCJSON_HIDE_SYMBOLS";
+
 pub fn build(b: *std.Build) void {
     // Standard target options
     const target = b.standardTargetOptions(.{});
@@ -21,6 +28,11 @@ pub fn build(b: *std.Build) void {
     const build_examples = b.option(bool, "examples", "Build example programs") orelse (if (is_emscripten) false else true);
     const skip_integration = b.option(bool, "skip-integration", "Skip integration tests (which require a running server)") orelse false;
     const debug_tests = b.option(bool, "debug-tests", "Install test executables for debugging") orelse false;
+    const hide_cjson_exports = b.option(
+        bool,
+        "hide-cjson-exports",
+        "Windows: compile cJSON without dllexport so the consuming DLL can export all symbols",
+    ) orelse false;
 
     // Apple SDK path option (auto-detected on macOS if not specified)
     // Handles macOS, iOS, and tvOS targets
@@ -539,12 +551,19 @@ pub fn build(b: *std.Build) void {
 
     // C flags
     const base_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", c_std };
+    const base_flags_hidden_cjson =
+        base_flags ++ [_][]const u8{cjson_hide_symbols_flag};
     const web_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", "-Wno-newline-eof", c_std, "-DPLATFORM_WEB" };
 
     // Add common sources
     colyseus.addCSourceFiles(.{
         .files = &common_sources,
-        .flags = if (is_emscripten) &web_flags else &base_flags,
+        .flags = if (is_emscripten)
+            &web_flags
+        else if (hide_cjson_exports)
+            &base_flags_hidden_cjson
+        else
+            &base_flags,
     });
 
     // Link mbedTLS (native only - browser handles TLS)

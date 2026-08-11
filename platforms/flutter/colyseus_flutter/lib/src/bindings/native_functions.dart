@@ -365,6 +365,10 @@ class NativeFunctions {
       IntPtr Function(Int32),
       int Function(int)>('colyseus_flutter_room_ptr');
 
+  late final setSerializedInbound = _lib.lookupFunction<
+      Void Function(Int32),
+      void Function(int)>('colyseus_flutter_set_serialized_inbound');
+
   // ===== Extras: field access =====
   //
   // Resolve a name once, then read/write through (type, offset, index).
