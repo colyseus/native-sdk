@@ -1,0 +1,15 @@
+name: colyseus_flutter_example
+description: Example app using the Colyseus Flutter plugin.
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  colyseus_flutter:
+    path: ../
+
+flutter:
+  uses-material-design: true

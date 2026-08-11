@@ -1,0 +1,6 @@
+name: ColyseusBindings
+description: Auto-generated FFI bindings for the Colyseus Flutter native library.
+output: 'lib/src/bindings/colyseus_bindings.dart'
+headers:
+  entry-points:
+    - '../src/flutter_colyseus.h'
