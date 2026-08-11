@@ -116,6 +116,12 @@ COLYSEUS_LIBRARY_PATH="$PWD/../zig-out/lib/macos/arm64/libcolyseus_flutter.dylib
 `--concurrency=1` is required: parallel test files put enough load on the
 shared server to hit a pre-existing teardown race in the core.
 
+That race is also why `netdelay_test.dart` occasionally dies mid-file with a
+process-level crash rather than a failed assertion (roughly one run in three).
+It is the same open core issue the Zig suite hits — `zig build test` reports
+157/157 assertions passing while two test processes still abort on exit. Re-run
+the file; if assertions fail, that is a real failure.
+
 ## Regenerating bindings
 
 The 0.18 surface is generated from the core headers. After changing them:
