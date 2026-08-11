@@ -285,12 +285,20 @@ void main() {
         var liveSteps = 0;
         var replaySteps = 0;
         var sawFixedDt = true;
+        var peakCorrection = 0.0;
         final replayedTicks = <int>{};
 
-        final recon = predict.reconciler(
+        late final Reconciler recon;
+        recon = predict.reconciler(
           me!,
           input: input,
           fields: const ['x', 'y', 'vx', 'vy'],
+          // Sampled per reconcile: by the end of the run the prediction has
+          // re-converged, so the LAST correction is legitimately zero.
+          onReconcile: (_) {
+            final mag = recon.lastCorrectionMag;
+            if (mag > peakCorrection) peakCorrection = mag;
+          },
           step: (ctx, state, cmd) {
             if (ctx.isReplay) {
               replaySteps++;
@@ -323,8 +331,8 @@ void main() {
         expect(replayedTicks, isNotEmpty);
         expect(sawFixedDt, isTrue, reason: 'dt was not the fixed 50 ms step');
         expect(recon.reconcileSeq, greaterThan(0));
-        expect(recon.lastCorrectionMag, greaterThan(0),
-            reason: 'an impulse should register as a correction');
+        expect(peakCorrection, greaterThan(0),
+            reason: 'an impulse should register as a correction at some point');
       });
     });
 

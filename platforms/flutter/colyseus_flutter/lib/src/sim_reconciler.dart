@@ -56,12 +56,6 @@ class SimWorld {
     _parts[name] = view;
     return view;
   }
-
-  void _rebind(Pointer<colyseus_sim_world> handle) {
-    if (_handle.address == handle.address) return;
-    // A different world means different mirrors; drop the stale views.
-    _parts.clear();
-  }
 }
 
 /// Advances a whole world of parts by one input.
@@ -147,12 +141,13 @@ Reconciler createSimReconciler({
   SimWorld? world;
   SchemaView? commandView;
 
+  // A different world pointer means different mirrors, so the cached part
+  // views go with it.
   SimWorld resolveWorld(Pointer<colyseus_sim_world> handle) {
     final existing = world;
     if (existing != null && existing._handle.address == handle.address) {
       return existing;
     }
-    existing?._rebind(handle);
     return world = SimWorld._(handle);
   }
 

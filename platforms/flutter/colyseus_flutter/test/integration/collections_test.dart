@@ -120,30 +120,31 @@ void main() {
       await withRoom(exampleServer, 'my_room', (client, room) async {
         await waitForOwnEntry(room);
 
-        room.send('reset_items');
-        await waitFor(() {
+        // Wait on content, not on an exact length: two server ticks can land
+        // in one patch and skip straight past an intermediate count.
+        List<String> names() {
           final me = room.state?.getMap('players')?[room.sessionId];
-          return me is SchemaInstance &&
-              (me.getArray('items')?.length ?? 0) == 2;
-        });
+          if (me is! SchemaInstance) return const [];
+          return (me.getArray('items')?.values ?? const [])
+              .map((v) => (v as SchemaInstance)['name'] as String)
+              .toList();
+        }
+
+        room.send('reset_items');
+        final reset = await waitFor(
+          () => _sameNames(names(), const ['reset_a', 'reset_b']),
+          timeout: const Duration(seconds: 8),
+        );
+        expect(reset, isTrue, reason: 'reset_items never settled: ${names()}');
 
         room.send('add_item', {'name': 'sword'});
+        final appended = await waitFor(
+          () => _sameNames(names(), const ['reset_a', 'reset_b', 'sword']),
+          timeout: const Duration(seconds: 8),
+        );
+        expect(appended, isTrue, reason: 'items ended as ${names()}');
 
-        final appended = await waitFor(() {
-          final me = room.state?.getMap('players')?[room.sessionId];
-          return me is SchemaInstance &&
-              (me.getArray('items')?.length ?? 0) == 3;
-        });
-        expect(appended, isTrue);
-
-        final me =
-            room.state!.getMap('players')![room.sessionId] as SchemaInstance;
-        final names = me
-            .getArray('items')!
-            .values
-            .map((v) => (v as SchemaInstance)['name'] as String)
-            .toList();
-        expect(names, ['reset_a', 'reset_b', 'sword']);
+        expect(names(), ['reset_a', 'reset_b', 'sword']);
       });
     });
   });
@@ -173,4 +174,12 @@ void main() {
       });
     });
   });
+}
+
+bool _sameNames(List<String> actual, List<String> expected) {
+  if (actual.length != expected.length) return false;
+  for (var i = 0; i < actual.length; i++) {
+    if (actual[i] != expected[i]) return false;
+  }
+  return true;
 }
