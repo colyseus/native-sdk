@@ -64,7 +64,8 @@ enum SchemaFieldType {
   float64(12),
   ref(13),
   array(14),
-  map(15);
+  map(15),
+  quantized(16);
 
   final int value;
   const SchemaFieldType(this.value);

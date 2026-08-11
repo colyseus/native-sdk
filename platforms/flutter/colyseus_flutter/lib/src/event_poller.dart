@@ -132,6 +132,8 @@ class ColyseusEventPoller {
             _n.eventGetKeyString().toDartString(),
             _n.eventGetInstance(),
             _n.eventGetValueType(),
+            _n.eventGetValueNumber(),
+            _n.eventGetValueString().toDartString(),
           );
           break;
 
@@ -141,6 +143,8 @@ class ColyseusEventPoller {
             _n.eventGetKeyString().toDartString(),
             _n.eventGetInstance(),
             _n.eventGetValueType(),
+            _n.eventGetValueNumber(),
+            _n.eventGetValueString().toDartString(),
           );
           break;
 

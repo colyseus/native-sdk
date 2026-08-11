@@ -49,6 +49,7 @@ class ColyseusRoom {
   final Map<int, StreamController<dynamic>> _propertyChangeControllers = {};
   final Map<int, StreamController<dynamic>> _itemAddControllers = {};
   final Map<int, StreamController<dynamic>> _itemRemoveControllers = {};
+  int _callbacksHandle = 0;
 
   ColyseusRoom._(this._roomRef);
 
@@ -174,36 +175,76 @@ class ColyseusRoom {
 
   // ===== Schema Callbacks =====
 
+  /// One native callbacks manager per room, created on first subscription.
+  ///
+  /// The manager wraps the room's decoder, so it can only be built once the
+  /// serializer exists — i.e. after the join handshake.
+  int get _callbacks {
+    if (_callbacksHandle == 0) {
+      _callbacksHandle = _n.callbacksCreate(_roomRef);
+      if (_callbacksHandle == 0) {
+        throw StateError(
+          'Failed to create callbacks manager — is the room joined yet?',
+        );
+      }
+    }
+    return _callbacksHandle;
+  }
+
+  /// Registers a native schema callback and bridges it to a Dart stream.
+  ///
+  /// Cancelling the returned subscription unregisters the native callback,
+  /// so listeners don't outlive their subscribers.
+  StreamSubscription<dynamic> _subscribe(
+    int Function(int callbacks, int instance, Pointer<Utf8> property) register,
+    Map<int, StreamController<dynamic>> controllers,
+    String property,
+    int instanceHandle,
+    void Function(dynamic event) deliver,
+  ) {
+    final callbacks = _callbacks;
+
+    final propPtr = property.toNativeUtf8();
+    final int handle;
+    try {
+      handle = register(callbacks, instanceHandle, propPtr);
+    } finally {
+      malloc.free(propPtr);
+    }
+
+    if (handle < 0) {
+      throw StateError('Failed to register "$property" callback');
+    }
+
+    final controller = StreamController<dynamic>.broadcast(
+      onCancel: () {
+        _n.callbacksRemoveHandle(callbacks, handle);
+        controllers.remove(handle)?.close();
+      },
+    );
+    controllers[handle] = controller;
+
+    return controller.stream.listen(deliver);
+  }
+
   /// Listen to property changes on a schema instance.
-  /// Pass [instance] handle or 0/null for root state.
-  /// Returns a subscription that can be cancelled.
+  ///
+  /// [instanceHandle] defaults to the root state. Cancel the returned
+  /// subscription to stop listening and release the native callback.
   StreamSubscription<dynamic> listen(
     String property,
     void Function(dynamic value, dynamic previousValue) callback, {
     int instanceHandle = 0,
   }) {
-    final callbacksHandle = _n.callbacksCreate(_roomRef);
-    if (callbacksHandle == 0) {
-      throw StateError('Failed to create callbacks manager');
-    }
-
-    final propPtr = property.toNativeUtf8();
-    final handle =
-        _n.callbacksListen(callbacksHandle, instanceHandle, propPtr);
-    malloc.free(propPtr);
-
-    if (handle < 0) {
-      throw StateError('Failed to register listen callback');
-    }
-
-    final controller = StreamController<dynamic>.broadcast();
-    _propertyChangeControllers[handle] = controller;
-
-    return controller.stream.listen((event) {
-      if (event is Map) {
-        callback(event['value'], event['previousValue']);
-      }
-    });
+    return _subscribe(
+      _n.callbacksListen,
+      _propertyChangeControllers,
+      property,
+      instanceHandle,
+      (event) {
+        if (event is Map) callback(event['value'], event['previousValue']);
+      },
+    );
   }
 
   /// Listen to items added to a collection.
@@ -212,28 +253,15 @@ class ColyseusRoom {
     void Function(dynamic value, String key) callback, {
     int instanceHandle = 0,
   }) {
-    final callbacksHandle = _n.callbacksCreate(_roomRef);
-    if (callbacksHandle == 0) {
-      throw StateError('Failed to create callbacks manager');
-    }
-
-    final propPtr = property.toNativeUtf8();
-    final handle =
-        _n.callbacksOnAdd(callbacksHandle, instanceHandle, propPtr);
-    malloc.free(propPtr);
-
-    if (handle < 0) {
-      throw StateError('Failed to register onAdd callback');
-    }
-
-    final controller = StreamController<dynamic>.broadcast();
-    _itemAddControllers[handle] = controller;
-
-    return controller.stream.listen((event) {
-      if (event is Map) {
-        callback(event['value'], event['key'] as String);
-      }
-    });
+    return _subscribe(
+      _n.callbacksOnAdd,
+      _itemAddControllers,
+      property,
+      instanceHandle,
+      (event) {
+        if (event is Map) callback(event['value'], event['key'] as String);
+      },
+    );
   }
 
   /// Listen to items removed from a collection.
@@ -242,28 +270,15 @@ class ColyseusRoom {
     void Function(dynamic value, String key) callback, {
     int instanceHandle = 0,
   }) {
-    final callbacksHandle = _n.callbacksCreate(_roomRef);
-    if (callbacksHandle == 0) {
-      throw StateError('Failed to create callbacks manager');
-    }
-
-    final propPtr = property.toNativeUtf8();
-    final handle =
-        _n.callbacksOnRemove(callbacksHandle, instanceHandle, propPtr);
-    malloc.free(propPtr);
-
-    if (handle < 0) {
-      throw StateError('Failed to register onRemove callback');
-    }
-
-    final controller = StreamController<dynamic>.broadcast();
-    _itemRemoveControllers[handle] = controller;
-
-    return controller.stream.listen((event) {
-      if (event is Map) {
-        callback(event['value'], event['key'] as String);
-      }
-    });
+    return _subscribe(
+      _n.callbacksOnRemove,
+      _itemRemoveControllers,
+      property,
+      instanceHandle,
+      (event) {
+        if (event is Map) callback(event['value'], event['key'] as String);
+      },
+    );
   }
 
   // ===== Lifecycle =====
@@ -298,6 +313,11 @@ class ColyseusRoom {
       c.close();
     }
     _itemRemoveControllers.clear();
+
+    if (_callbacksHandle != 0) {
+      _n.callbacksFree(_callbacksHandle);
+      _callbacksHandle = 0;
+    }
 
     ColyseusEventPoller.instance.unregisterRoom(_roomRef);
     _n.roomFree(_roomRef);
@@ -367,26 +387,43 @@ class ColyseusRoom {
     controller.add({'value': value, 'previousValue': previousValue});
   }
 
+  /// Collection items arrive either as instance handles (schema children) or
+  /// as values already unboxed by the native trampoline (primitive children,
+  /// flagged by the event carrying the child's own field type).
+  dynamic _itemValue(
+    int valueType,
+    int instanceHandle,
+    double valueNumber,
+    String valueString,
+  ) {
+    switch (SchemaFieldType.fromValue(valueType)) {
+      case SchemaFieldType.ref:
+      case SchemaFieldType.array:
+      case SchemaFieldType.map:
+        return instanceHandle != 0 ? SchemaInstance(instanceHandle) : null;
+      case SchemaFieldType.string:
+        return valueString;
+      case SchemaFieldType.boolean:
+        return valueNumber > 0.5;
+      case null:
+        return null;
+      default:
+        return valueNumber;
+    }
+  }
+
   void handleItemAdd(
     int callbackHandle,
     String key,
     int instanceHandle,
     int valueType,
+    double valueNumber,
+    String valueString,
   ) {
-    final controller = _itemAddControllers[callbackHandle];
-    if (controller == null) return;
-
-    dynamic value;
-    final type = SchemaFieldType.fromValue(valueType);
-    if (type == SchemaFieldType.ref ||
-        type == SchemaFieldType.array ||
-        type == SchemaFieldType.map) {
-      value = instanceHandle != 0 ? SchemaInstance(instanceHandle) : null;
-    } else {
-      value = instanceHandle;
-    }
-
-    controller.add({'value': value, 'key': key});
+    _itemAddControllers[callbackHandle]?.add({
+      'value': _itemValue(valueType, instanceHandle, valueNumber, valueString),
+      'key': key,
+    });
   }
 
   void handleItemRemove(
@@ -394,21 +431,13 @@ class ColyseusRoom {
     String key,
     int instanceHandle,
     int valueType,
+    double valueNumber,
+    String valueString,
   ) {
-    final controller = _itemRemoveControllers[callbackHandle];
-    if (controller == null) return;
-
-    dynamic value;
-    final type = SchemaFieldType.fromValue(valueType);
-    if (type == SchemaFieldType.ref ||
-        type == SchemaFieldType.array ||
-        type == SchemaFieldType.map) {
-      value = instanceHandle != 0 ? SchemaInstance(instanceHandle) : null;
-    } else {
-      value = instanceHandle;
-    }
-
-    controller.add({'value': value, 'key': key});
+    _itemRemoveControllers[callbackHandle]?.add({
+      'value': _itemValue(valueType, instanceHandle, valueNumber, valueString),
+      'key': key,
+    });
   }
 
   @override

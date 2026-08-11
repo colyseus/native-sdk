@@ -55,9 +55,10 @@ typedef struct {
     char message[1024];
 
     union {
-        // Message events (type 3)
+        // Message events (type 3). Heap-owned so payloads aren't truncated;
+        // freed when the event is dropped from the queue or replaced on poll.
         struct {
-            uint8_t data[8192];
+            uint8_t* data;
             size_t data_length;
         } msg;
 
@@ -92,7 +93,16 @@ typedef struct {
     int value_type;      // colyseus_field_type_t
     int callback_type;   // 0=listen, 1=on_add, 2=on_remove
     colyseus_callback_handle_t native_handle;
+
+    // Collection callbacks: where to find the child's type. Resolved lazily —
+    // the collection often doesn't exist yet when the listener is registered.
+    void* parent_instance;
+    char property[128];
+    int child_type;      // colyseus_field_type_t, -1 = unresolved, -2 = schema child
 } flutter_callback_entry_t;
+
+#define FLUTTER_CHILD_UNRESOLVED (-1)
+#define FLUTTER_CHILD_SCHEMA     (-2)
 
 // Callbacks wrapper
 typedef struct {
@@ -103,13 +113,13 @@ typedef struct {
 
 // Room reference table
 #define MAX_ROOM_REFS 16
-#define MAX_CALLBACKS_PER_ROOM 4
 
 typedef struct {
     colyseus_room_t* room;
     bool in_use;
-    flutter_callbacks_wrapper_t* callbacks[MAX_CALLBACKS_PER_ROOM];
+    flutter_callbacks_wrapper_t** callbacks;  // grown on demand
     int callbacks_count;
+    int callbacks_capacity;
 } flutter_room_ref_t;
 
 static flutter_room_ref_t g_room_refs[MAX_ROOM_REFS] = {0};
@@ -151,7 +161,6 @@ static int flutter_room_ref_alloc(void) {
             g_room_refs[i].in_use = true;
             g_room_refs[i].room = NULL;
             g_room_refs[i].callbacks_count = 0;
-            memset(g_room_refs[i].callbacks, 0, sizeof(g_room_refs[i].callbacks));
             return i + 1;  // 1-based, 0 = invalid
         }
     }
@@ -161,6 +170,11 @@ static int flutter_room_ref_alloc(void) {
 static colyseus_room_t* flutter_room_ref_get(int ref) {
     if (ref < 1 || ref > MAX_ROOM_REFS) return NULL;
     return g_room_refs[ref - 1].room;
+}
+
+/* Room-ref lookup for the sibling translation units (flutter_extras.c). */
+colyseus_room_t* flutter_room_from_ref(int ref) {
+    return flutter_room_ref_get(ref);
 }
 
 static void flutter_room_ref_set(int ref, colyseus_room_t* room) {
@@ -189,9 +203,17 @@ static void flutter_callbacks_wrapper_free(flutter_callbacks_wrapper_t* wrapper)
 static void flutter_room_ref_add_callbacks(int ref, flutter_callbacks_wrapper_t* wrapper) {
     if (ref < 1 || ref > MAX_ROOM_REFS) return;
     flutter_room_ref_t* entry = &g_room_refs[ref - 1];
-    if (entry->callbacks_count < MAX_CALLBACKS_PER_ROOM) {
-        entry->callbacks[entry->callbacks_count++] = wrapper;
+
+    if (entry->callbacks_count >= entry->callbacks_capacity) {
+        int cap = entry->callbacks_capacity ? entry->callbacks_capacity * 2 : 8;
+        flutter_callbacks_wrapper_t** grown = (flutter_callbacks_wrapper_t**)realloc(
+            entry->callbacks, (size_t)cap * sizeof(*grown));
+        if (!grown) return;
+        entry->callbacks = grown;
+        entry->callbacks_capacity = cap;
     }
+
+    entry->callbacks[entry->callbacks_count++] = wrapper;
 }
 
 static void flutter_room_ref_remove_callbacks(int ref, flutter_callbacks_wrapper_t* wrapper) {
@@ -216,7 +238,10 @@ static void flutter_room_ref_release(int ref) {
             flutter_callbacks_wrapper_free(entry->callbacks[i]);
             entry->callbacks[i] = NULL;
         }
+        free(entry->callbacks);
+        entry->callbacks = NULL;
         entry->callbacks_count = 0;
+        entry->callbacks_capacity = 0;
         entry->room = NULL;
         entry->in_use = false;
     }
@@ -242,10 +267,20 @@ static void event_queue_unlock(void) {
 #endif
 }
 
+// Release a queued event's heap payload. Only MESSAGE events carry one.
+static void event_release_payload(flutter_event_t* event) {
+    if (event->type == FLUTTER_EVENT_ROOM_MESSAGE && event->msg.data) {
+        free(event->msg.data);
+        event->msg.data = NULL;
+        event->msg.data_length = 0;
+    }
+}
+
 static void event_queue_push(const flutter_event_t* event) {
     event_queue_lock();
 
     if (g_event_queue.count >= MAX_EVENT_QUEUE_SIZE) {
+        event_release_payload(&g_event_queue.events[g_event_queue.head]);
         g_event_queue.head = (g_event_queue.head + 1) % MAX_EVENT_QUEUE_SIZE;
         g_event_queue.count--;
     }
@@ -368,6 +403,70 @@ static void flutter_snapshot_value(int value_type, void* value,
     }
 }
 
+/*
+ * Child type of the collection this entry listens on. Resolved on first use:
+ * at subscribe time the collection usually hasn't been decoded yet.
+ * Returns a colyseus_field_type_t, or FLUTTER_CHILD_SCHEMA for ref children.
+ */
+static int flutter_resolve_child_type(flutter_callback_entry_t* entry) {
+    if (entry->child_type != FLUTTER_CHILD_UNRESOLVED) return entry->child_type;
+
+    colyseus_schema_t* parent = (colyseus_schema_t*)entry->parent_instance;
+    if (!parent || !parent->__vtable) return FLUTTER_CHILD_UNRESOLVED;
+
+    void* collection = NULL;
+    if (colyseus_vtable_is_dynamic(parent->__vtable)) {
+        colyseus_dynamic_value_t* val = colyseus_dynamic_schema_get_by_name(
+            (colyseus_dynamic_schema_t*)parent, entry->property);
+        if (val) collection = val->data.ptr;
+    } else {
+        for (int i = 0; i < parent->__vtable->field_count; i++) {
+            if (parent->__vtable->fields[i].name &&
+                strcmp(parent->__vtable->fields[i].name, entry->property) == 0) {
+                collection = *(void**)((char*)parent + parent->__vtable->fields[i].offset);
+                break;
+            }
+        }
+    }
+    if (!collection) return FLUTTER_CHILD_UNRESOLVED;
+
+    bool has_schema_child;
+    const char* primitive;
+    if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
+        colyseus_array_schema_t* arr = (colyseus_array_schema_t*)collection;
+        has_schema_child = arr->has_schema_child;
+        primitive = arr->child_primitive_type;
+    } else {
+        colyseus_map_schema_t* map = (colyseus_map_schema_t*)collection;
+        has_schema_child = map->has_schema_child;
+        primitive = map->child_primitive_type;
+    }
+
+    entry->child_type = has_schema_child
+        ? FLUTTER_CHILD_SCHEMA
+        : (primitive ? (int)colyseus_field_type_from_string(primitive) : FLUTTER_CHILD_SCHEMA);
+    return entry->child_type;
+}
+
+// Fill an item event's value slots: instance handle for schema children,
+// unboxed number/string for primitives.
+static void flutter_snapshot_item(flutter_callback_entry_t* entry, void* value,
+    flutter_event_t* event)
+{
+    if (!value) return;
+
+    int child = flutter_resolve_child_type(entry);
+    if (child == FLUTTER_CHILD_SCHEMA || child == FLUTTER_CHILD_UNRESOLVED) {
+        event->schema.instance_handle = (intptr_t)value;
+        return;
+    }
+
+    event->schema.value_type = child;
+    flutter_snapshot_value(child, value,
+        &event->schema.value_number, event->schema.value_string,
+        sizeof(event->schema.value_string), &event->schema.instance_handle);
+}
+
 static void flutter_property_change_trampoline(void* value, void* previous_value, void* userdata) {
     flutter_callback_entry_t* entry = (flutter_callback_entry_t*)userdata;
     if (!entry || !entry->active) return;
@@ -399,9 +498,7 @@ static void flutter_item_add_trampoline(void* value, void* key, void* userdata) 
     event.schema.callback_handle = entry->index;
     event.schema.value_type = entry->value_type;
 
-    if (value) {
-        event.schema.instance_handle = (intptr_t)value;
-    }
+    flutter_snapshot_item(entry, value, &event);
 
     if (key) {
         if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
@@ -426,9 +523,7 @@ static void flutter_item_remove_trampoline(void* value, void* key, void* userdat
     event.schema.callback_handle = entry->index;
     event.schema.value_type = entry->value_type;
 
-    if (value) {
-        event.schema.instance_handle = (intptr_t)value;
-    }
+    flutter_snapshot_item(entry, value, &event);
 
     if (key) {
         if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
@@ -469,8 +564,14 @@ static void on_room_message_with_type_encoded(const char* type, const uint8_t* d
     event.type = FLUTTER_EVENT_ROOM_MESSAGE;
     event.room_handle = ref;
     strncpy(event.message, type ? type : "", sizeof(event.message) - 1);
-    event.msg.data_length = length < sizeof(event.msg.data) ? length : sizeof(event.msg.data);
-    memcpy(event.msg.data, data, event.msg.data_length);
+
+    if (data && length > 0) {
+        event.msg.data = (uint8_t*)malloc(length);
+        if (!event.msg.data) return;  // drop rather than truncate
+        memcpy(event.msg.data, data, length);
+        event.msg.data_length = length;
+    }
+
     event_queue_push(&event);
 }
 
@@ -963,6 +1064,9 @@ FLUTTER_EXPORT int colyseus_flutter_poll_event(void) {
         colyseus_message_reader_free(g_current_message_reader);
         g_current_message_reader = NULL;
     }
+
+    // The previous event owned its payload; the reader above is now gone.
+    event_release_payload(&g_current_event);
 
     if (event_queue_pop(&g_current_event)) {
         return (int)g_current_event.type;
@@ -1517,6 +1621,9 @@ FLUTTER_EXPORT int colyseus_flutter_callbacks_on_add(intptr_t callbacks_handle, 
     entry->room_handle = wrapper->room_ref;
     entry->callback_type = 1;  // ON_ADD
     entry->value_type = COLYSEUS_FIELD_MAP;  // default for collections
+    entry->parent_instance = instance;
+    entry->child_type = FLUTTER_CHILD_UNRESOLVED;
+    strncpy(entry->property, property, sizeof(entry->property) - 1);
 
     flutter_resolve_field_type(instance, property, entry);
 
@@ -1551,6 +1658,9 @@ FLUTTER_EXPORT int colyseus_flutter_callbacks_on_remove(intptr_t callbacks_handl
     entry->room_handle = wrapper->room_ref;
     entry->callback_type = 2;  // ON_REMOVE
     entry->value_type = COLYSEUS_FIELD_MAP;  // default for collections
+    entry->parent_instance = instance;
+    entry->child_type = FLUTTER_CHILD_UNRESOLVED;
+    strncpy(entry->property, property, sizeof(entry->property) - 1);
 
     flutter_resolve_field_type(instance, property, entry);
 

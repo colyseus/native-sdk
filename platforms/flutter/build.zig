@@ -1,10 +1,32 @@
 const std = @import("std");
 
+// Deployment minimums must match the podspecs, or the linker warns that the
+// vendored library was built for a newer OS than the app targets.
+const macos_min: std.SemanticVersion = .{ .major = 10, .minor = 15, .patch = 0 };
+const ios_min: std.SemanticVersion = .{ .major = 13, .minor = 0, .patch = 0 };
+
 pub fn build(b: *std.Build) void {
     // Build for all Flutter supported platforms
     const build_all = b.option(bool, "all", "Build for all Flutter platforms") orelse false;
 
-    const target = b.standardTargetOptions(.{});
+    // Apple targets get an explicit deployment minimum: without one the dylib
+    // is stamped with the build machine's OS version and every consumer app
+    // warns that it links something newer than it targets.
+    const target = blk: {
+        const host = b.standardTargetOptions(.{});
+        if (host.query.os_version_min != null) break :blk host;
+        const min: std.SemanticVersion = switch (host.result.os.tag) {
+            .macos => macos_min,
+            .ios => ios_min,
+            else => break :blk host,
+        };
+        break :blk b.resolveTargetQuery(.{
+            .cpu_arch = host.result.cpu.arch,
+            .os_tag = host.result.os.tag,
+            .abi = host.query.abi,
+            .os_version_min = .{ .semver = min },
+        });
+    };
     const optimize = b.standardOptimizeOption(.{});
 
     // Apple SDK path (auto-detected on macOS if not specified)
@@ -65,15 +87,18 @@ pub fn build(b: *std.Build) void {
             b.resolveTargetQuery(.{
                 .cpu_arch = .aarch64,
                 .os_tag = .ios,
+                .os_version_min = .{ .semver = ios_min },
             }),
             // macOS
             b.resolveTargetQuery(.{
                 .cpu_arch = .aarch64,
                 .os_tag = .macos,
+                .os_version_min = .{ .semver = macos_min },
             }),
             b.resolveTargetQuery(.{
                 .cpu_arch = .x86_64,
                 .os_tag = .macos,
+                .os_version_min = .{ .semver = macos_min },
             }),
             // Linux
             b.resolveTargetQuery(.{
@@ -213,6 +238,7 @@ fn buildFlutterLibrary(
         .root = b.path("."),
         .files = &.{
             "src/flutter_export.c",
+            "src/flutter_extras.c",
         },
         .flags = &.{
             "-Wall",

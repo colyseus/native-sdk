@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'bindings/native_functions.dart';
-import 'types.dart';
+import 'msgpack.dart';
 
 final _n = NativeFunctions.instance;
 
@@ -95,90 +95,14 @@ int _buildArray(List data) {
 }
 
 /// Reads the current polled message event into a Dart object.
-/// Must be called while the event is still active (before next poll).
+///
+/// Decoding happens in Dart over the event's raw payload, so nested maps and
+/// arrays come through intact. Must be called while the event is still active
+/// (before the next poll frees the payload).
 Object? readCurrentMessage() {
-  final type = MessageValueType.fromValue(_n.messageGetType());
+  final length = _n.eventGetDataLength();
+  if (length <= 0) return null;
 
-  switch (type) {
-    case MessageValueType.nil:
-      return null;
-    case MessageValueType.string:
-      return _n.messageReadStringValue().toDartString();
-    case MessageValueType.integer:
-    case MessageValueType.unsignedInteger:
-    case MessageValueType.float:
-      return _n.messageReadNumberValue();
-    case MessageValueType.boolean:
-      return _n.messageReadNumberValue() > 0.5;
-    case MessageValueType.map:
-      return _readMap();
-    case MessageValueType.array:
-      return _readArray();
-    case MessageValueType.binary:
-      final dataPtr = _n.eventGetData();
-      final dataLen = _n.eventGetDataLength();
-      if (dataLen > 0) {
-        return Uint8List.fromList(dataPtr.asTypedList(dataLen));
-      }
-      return Uint8List(0);
-  }
-}
-
-Map<String, dynamic> _readMap() {
-  final result = <String, dynamic>{};
-  _n.messageIterBegin();
-  while (_n.messageIterNext() != 0) {
-    final key = _n.messageIterKey().toDartString();
-    final valueType = MessageValueType.fromValue(_n.messageIterValueType());
-    switch (valueType) {
-      case MessageValueType.string:
-        result[key] = _n.messageIterValueString().toDartString();
-        break;
-      case MessageValueType.integer:
-      case MessageValueType.unsignedInteger:
-      case MessageValueType.float:
-        result[key] = _n.messageIterValueNumber();
-        break;
-      case MessageValueType.boolean:
-        result[key] = _n.messageIterValueNumber() > 0.5;
-        break;
-      case MessageValueType.nil:
-        result[key] = null;
-        break;
-      default:
-        // Nested maps/arrays not yet iterable through this simple API;
-        // store null for now (can be extended with sub-reader support).
-        result[key] = null;
-        break;
-    }
-  }
-  return result;
-}
-
-List<dynamic> _readArray() {
-  final size = _n.messageArraySize();
-  final result = <dynamic>[];
-  for (int i = 0; i < size; i++) {
-    final elemType = MessageValueType.fromValue(_n.messageArrayElementType(i));
-    switch (elemType) {
-      case MessageValueType.string:
-        result.add(_n.messageArrayElementString(i).toDartString());
-        break;
-      case MessageValueType.integer:
-      case MessageValueType.unsignedInteger:
-      case MessageValueType.float:
-        result.add(_n.messageArrayElementNumber(i));
-        break;
-      case MessageValueType.boolean:
-        result.add(_n.messageArrayElementNumber(i) > 0.5);
-        break;
-      case MessageValueType.nil:
-        result.add(null);
-        break;
-      default:
-        result.add(null);
-        break;
-    }
-  }
-  return result;
+  final payload = _n.eventGetData().asTypedList(length);
+  return msgpackDecode(Uint8List.fromList(payload));
 }

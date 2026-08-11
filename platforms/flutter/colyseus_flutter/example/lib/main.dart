@@ -34,7 +34,18 @@ class _RoomPageState extends State<RoomPage> {
   final List<String> _log = [];
   bool _connecting = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // Auto-connect so a plain `flutter run` exercises the whole path —
+    // including the macOS sandbox's network.client entitlement, which unit
+    // tests can't check because they run outside the sandbox.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _connect());
+  }
+
   void _addLog(String msg) {
+    // ignore: avoid_print
+    print('[colyseus-example] $msg');
     setState(() {
       _log.add(msg);
       if (_log.length > 50) _log.removeAt(0);

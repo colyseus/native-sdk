@@ -1,6 +1,107 @@
-name: ColyseusBindings
-description: Auto-generated FFI bindings for the Colyseus Flutter native library.
-output: 'lib/src/bindings/colyseus_bindings.dart'
+# Generates Dart bindings for the native SDK's public C API.
+#
+# The glue layer (src/flutter_colyseus.h, src/flutter_extras.c) keeps its
+# hand-written lookups in lib/src/bindings/native_functions.dart — it predates
+# this and its signatures are all scalars. Everything added for 0.18 (clock,
+# input, predict, reconciler, sim, events, spawns, netdelay) binds straight to
+# the core symbols, which the built library already exports. Those APIs pass
+# option structs by pointer, and generated struct layouts beat hand-written
+# ones that have to track the headers by eye.
+#
+# Regenerate after any core header change:
+#   cd platforms/flutter/colyseus_flutter && dart run ffigen
+name: ColyseusCore
+description: FFI bindings for the Colyseus native SDK's 0.18 C API.
+output: 'lib/src/bindings/colyseus_core.dart'
+
 headers:
   entry-points:
-    - '../src/flutter_colyseus.h'
+    - '../../../include/colyseus/room.h'
+    - '../../../include/colyseus/room_clock.h'
+    - '../../../include/colyseus/input_handle.h'
+    - '../../../include/colyseus/net_delay.h'
+    - '../../../include/colyseus/latency.h'
+    - '../../../include/colyseus/predict/predict.h'
+    - '../../../include/colyseus/predict/reconciler.h'
+    - '../../../include/colyseus/predict/sim_reconciler.h'
+    - '../../../include/colyseus/predict/events.h'
+    - '../../../include/colyseus/predict/spawns.h'
+    - '../../../include/colyseus/predict/drift.h'
+  # Only declarations from the SDK's own headers — not uthash, not libc.
+  include-directives:
+    - '**/include/colyseus/**'
+
+compiler-opts:
+  - '-I../../../include'
+  - '-I../../../third_party/uthash/src'
+
+# uthash's UT_hash_handle drags in macro-heavy declarations that add nothing
+# on the Dart side; the collection internals are reached through the glue's
+# snapshot helpers instead.
+structs:
+  exclude:
+    - 'UT_hash_.*'
+    - 'colyseus_map_item'
+    - 'colyseus_map_index'
+    - 'colyseus_dynamic_field_entry'
+
+functions:
+  include:
+    # Room: 0.18 additions plus the handles the predict layer needs.
+    - 'colyseus_room_get_clock'
+    - 'colyseus_room_input'
+    - 'colyseus_room_ping'
+    - 'colyseus_room_request.*'
+    - 'colyseus_room_cancel_request'
+    - 'colyseus_reconnect_poll'
+    - 'colyseus_room_get_state'
+
+    - 'colyseus_room_clock_.*'
+    - 'colyseus_input_handle_.*'
+    - 'colyseus_netdelay_.*'
+    - 'colyseus_get_latency'
+    - 'colyseus_select_by_latency'
+
+    - 'colyseus_predict_.*'
+    - 'colyseus_reconciler_.*'
+    - 'colyseus_sim_.*'
+    - 'colyseus_step_.*'
+    - 'colyseus_event_channel_.*'
+    - 'colyseus_spawns_.*'
+    - 'colyseus_drift_.*'
+
+  # Leaf calls skip the Dart-to-native transition bookkeeping. Only safe for
+  # functions that can never run a Dart callback underneath them — so the
+  # per-field reads and telemetry getters qualify, but tick/send/pump (which
+  # drive user step functions) must not.
+  leaf:
+    include:
+      - 'colyseus_room_clock_(now|server_now|render_now|rtt|smoothed_rtt|jitter|last_server_time|patch_interval|offset)'
+      - 'colyseus_input_handle_(sent_count|last_processed|pending_count|replay_buffer_size|epoch|tick_rate|patch_rate|sub_steps|render_delay)'
+      - 'colyseus_reconciler_(pending_count|step_ms|reconcile_seq|last_correction_mag|last_correction|value|state|drift)'
+      - 'colyseus_predict_(value|value_at)'
+      - 'colyseus_spawns_(size|alive)'
+      - 'colyseus_event_channel_(has|pending_count)'
+      - 'colyseus_netdelay_in_flight'
+
+typedefs:
+  include:
+    - 'colyseus_.*'
+
+enums:
+  include:
+    - 'colyseus_.*'
+
+# Every enum here is a small dense C enum, so the int-width guess is safe.
+silence-enum-warning: true
+
+macros:
+  include:
+    - 'COLYSEUS_PREDICT_.*'
+    - 'COLYSEUS_CLOSE_.*'
+    - 'COLYSEUS_RESPONSE_.*'
+
+preamble: |
+  // GENERATED — do not edit. Run `dart run ffigen` after changing the headers.
+  // ignore_for_file: type=lint, unused_field, unused_element, camel_case_types
+  // ignore_for_file: non_constant_identifier_names, constant_identifier_names

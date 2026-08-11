@@ -357,4 +357,104 @@ class NativeFunctions {
   late final callbacksOnRemove = _lib.lookupFunction<
       Int32 Function(IntPtr, IntPtr, Pointer<Utf8>),
       int Function(int, int, Pointer<Utf8>)>('colyseus_flutter_callbacks_on_remove');
+
+  // ===== Extras: room bridge =====
+
+  /// The core `colyseus_room_t*` behind a glue room ref (0 when unresolved).
+  late final roomPtr = _lib.lookupFunction<
+      IntPtr Function(Int32),
+      int Function(int)>('colyseus_flutter_room_ptr');
+
+  // ===== Extras: field access =====
+  //
+  // Resolve a name once, then read/write through (type, offset, index).
+  // The accessors are leaf calls — no Dart callback can run underneath them.
+
+  late final fieldResolve = _lib.lookupFunction<
+      Int32 Function(IntPtr, Pointer<Utf8>, Pointer<Int32>, Pointer<Int32>),
+      int Function(int, Pointer<Utf8>, Pointer<Int32>, Pointer<Int32>)>(
+      'colyseus_flutter_field_resolve');
+
+  late final fieldCount = _lib.lookupFunction<
+      Int32 Function(IntPtr),
+      int Function(int)>('colyseus_flutter_field_count', isLeaf: true);
+
+  late final fieldNameAt = _lib.lookupFunction<
+      Pointer<Utf8> Function(IntPtr, Int32),
+      Pointer<Utf8> Function(int, int)>('colyseus_flutter_field_name_at');
+
+  late final fieldGetNumber = _lib.lookupFunction<
+      Double Function(IntPtr, Int32, Int32, Int32),
+      double Function(int, int, int, int)>(
+      'colyseus_flutter_field_get_number', isLeaf: true);
+
+  late final fieldSetNumber = _lib.lookupFunction<
+      Void Function(IntPtr, Int32, Int32, Int32, Double),
+      void Function(int, int, int, int, double)>(
+      'colyseus_flutter_field_set_number', isLeaf: true);
+
+  late final fieldGetString = _lib.lookupFunction<
+      Pointer<Utf8> Function(IntPtr, Int32, Int32),
+      Pointer<Utf8> Function(int, int, int)>('colyseus_flutter_field_get_string');
+
+  late final fieldGetRef = _lib.lookupFunction<
+      IntPtr Function(IntPtr, Int32, Int32),
+      int Function(int, int, int)>(
+      'colyseus_flutter_field_get_ref', isLeaf: true);
+
+  // ===== Extras: collections =====
+  //
+  // Maps are uthash-backed with no ordinal accessor, so iteration snapshots
+  // the collection into a native scratch buffer that is then read by ordinal.
+  // A snapshot is only valid until the next decode.
+
+  late final collectionSnapshot = _lib.lookupFunction<
+      Int32 Function(IntPtr, Int32),
+      int Function(int, int)>('colyseus_flutter_collection_snapshot');
+
+  late final collectionHasSchemaChild = _lib.lookupFunction<
+      Int32 Function(),
+      int Function()>(
+      'colyseus_flutter_collection_has_schema_child', isLeaf: true);
+
+  late final collectionPrimitiveType = _lib.lookupFunction<
+      Int32 Function(),
+      int Function()>(
+      'colyseus_flutter_collection_primitive_type', isLeaf: true);
+
+  late final collectionEntryKey = _lib.lookupFunction<
+      Pointer<Utf8> Function(Int32),
+      Pointer<Utf8> Function(int)>('colyseus_flutter_collection_entry_key');
+
+  late final collectionEntryIndex = _lib.lookupFunction<
+      Int32 Function(Int32),
+      int Function(int)>(
+      'colyseus_flutter_collection_entry_index', isLeaf: true);
+
+  late final collectionEntryRef = _lib.lookupFunction<
+      IntPtr Function(Int32),
+      int Function(int)>(
+      'colyseus_flutter_collection_entry_ref', isLeaf: true);
+
+  late final collectionEntryNumber = _lib.lookupFunction<
+      Double Function(Int32),
+      double Function(int)>(
+      'colyseus_flutter_collection_entry_number', isLeaf: true);
+
+  late final collectionEntryString = _lib.lookupFunction<
+      Pointer<Utf8> Function(Int32),
+      Pointer<Utf8> Function(int)>('colyseus_flutter_collection_entry_string');
+
+  late final collectionGet = _lib.lookupFunction<
+      IntPtr Function(IntPtr, Int32, Pointer<Utf8>, Int32),
+      int Function(int, int, Pointer<Utf8>, int)>('colyseus_flutter_collection_get');
+
+  late final collectionCount = _lib.lookupFunction<
+      Int32 Function(IntPtr, Int32),
+      int Function(int, int)>(
+      'colyseus_flutter_collection_count', isLeaf: true);
+
+  late final collectionContains = _lib.lookupFunction<
+      Int32 Function(IntPtr, Pointer<Utf8>),
+      int Function(int, Pointer<Utf8>)>('colyseus_flutter_collection_contains');
 }

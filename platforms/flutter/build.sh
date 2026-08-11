@@ -31,15 +31,25 @@ if [ -d "$ZIG_OUT/lib/ios/arm64" ]; then
     echo "  -> ios/arm64"
 fi
 
-# macOS
+# macOS — both slices share one destination filename, so fuse them into a
+# universal binary rather than letting the second copy win.
+macos_slices=()
 for arch in arm64 x64; do
-    src="$ZIG_OUT/lib/macos/$arch"
-    if [ -d "$src" ]; then
-        mkdir -p "$PLUGIN_DIR/macos/Libraries"
-        cp "$src"/libcolyseus_flutter.dylib "$PLUGIN_DIR/macos/Libraries/"
-        echo "  -> macos/$arch"
-    fi
+    slice="$ZIG_OUT/lib/macos/$arch/libcolyseus_flutter.dylib"
+    [ -f "$slice" ] && macos_slices+=("$slice")
 done
+
+if [ ${#macos_slices[@]} -gt 0 ]; then
+    mkdir -p "$PLUGIN_DIR/macos/Libraries"
+    dst="$PLUGIN_DIR/macos/Libraries/libcolyseus_flutter.dylib"
+    if [ ${#macos_slices[@]} -gt 1 ]; then
+        lipo -create "${macos_slices[@]}" -output "$dst"
+        echo "  -> macos/universal (${#macos_slices[@]} slices)"
+    else
+        cp "${macos_slices[0]}" "$dst"
+        echo "  -> macos ($(basename "$(dirname "${macos_slices[0]}")"))"
+    fi
+fi
 
 # Linux
 if [ -d "$ZIG_OUT/lib/linux/x64" ]; then
