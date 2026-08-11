@@ -19,6 +19,12 @@
 #include "colyseus/schema/collections.h"
 #include "colyseus/schema/dynamic_schema.h"
 #include "colyseus/net_delay.h"
+#include "colyseus/input_handle.h"
+#include "colyseus/room_clock.h"
+#include "colyseus/predict/predict.h"
+#include "colyseus/predict/reconciler.h"
+#include "colyseus/predict/events.h"
+#include "colyseus/predict/spawns.h"
 
 #include "../../../src/predict/field_access.h"
 #include "flutter_colyseus.h"
@@ -28,6 +34,36 @@
 
 /* Provided by flutter_export.c — the glue owns the room-ref table. */
 colyseus_room_t* flutter_room_from_ref(int ref);
+
+/* =============================================================================
+ * Link anchors
+ * ========================================================================== */
+
+/*
+ * Dart resolves the core's symbols by name at runtime, so nothing in this
+ * library references the predict layer at link time — and a linker drops
+ * archive members that nothing references. Without these the predict, input
+ * and clock objects never make it into the shared library and every
+ * colyseus_predict_* lookup fails with "symbol not found".
+ *
+ * A reference to any symbol pulls in that symbol's whole object file, so one
+ * entry per translation unit is enough.
+ */
+FLUTTER_EXPORT const void* const colyseus_flutter_link_anchors[] = {
+    (const void*)&colyseus_predict_for_room,        /* src/predict/predict.c */
+    (const void*)&colyseus_reconciler_create,       /* src/predict/reconciler.c */
+    (const void*)&colyseus_event_channel_create,    /* src/predict/events.c */
+    (const void*)&colyseus_spawns_create,           /* src/predict/spawns.c */
+    (const void*)&colyseus_room_input,              /* src/input_handle.c */
+    (const void*)&colyseus_room_clock_create,       /* src/room_clock.c */
+    (const void*)&colyseus_netdelay_pump,           /* src/network/net_delay.c */
+};
+
+/* Count, so a caller can assert the table linked rather than being folded. */
+FLUTTER_EXPORT int colyseus_flutter_link_anchor_count(void) {
+    return (int)(sizeof(colyseus_flutter_link_anchors) /
+                 sizeof(colyseus_flutter_link_anchors[0]));
+}
 
 /* =============================================================================
  * Room bridge
@@ -65,6 +101,16 @@ FLUTTER_EXPORT int colyseus_flutter_field_resolve(intptr_t instance, const char*
     if (out_type) *out_type = (int)f.type;
     if (out_offset) *out_offset = (int)f.offset;
     return f.index;
+}
+
+/*
+ * The instance's vtable, which the reconciler and reckon APIs require to build
+ * their mirrors. Reflection-derived schemas have no statically known vtable —
+ * each instance carries its own — so it has to be read off the instance.
+ */
+FLUTTER_EXPORT intptr_t colyseus_flutter_instance_vtable(intptr_t instance) {
+    colyseus_schema_t* inst = (colyseus_schema_t*)instance;
+    return inst ? (intptr_t)inst->__vtable : 0;
 }
 
 /* Field count on the instance's vtable, either storage model. */

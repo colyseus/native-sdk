@@ -2541,7 +2541,7 @@ class ColyseusCore {
               ffi.Pointer<ffi.Char>)>>('colyseus_predict_value');
   late final _colyseus_predict_value = _colyseus_predict_valuePtr.asFunction<
       double Function(ffi.Pointer<colyseus_predict_t>,
-          ffi.Pointer<colyseus_schema_t>, ffi.Pointer<ffi.Char>)>(isLeaf: true);
+          ffi.Pointer<colyseus_schema_t>, ffi.Pointer<ffi.Char>)>();
 
   double colyseus_predict_value_at(
     ffi.Pointer<colyseus_predict_t> p,

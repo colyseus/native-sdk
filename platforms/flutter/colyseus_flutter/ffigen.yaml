@@ -70,16 +70,19 @@ functions:
     - 'colyseus_spawns_.*'
     - 'colyseus_drift_.*'
 
-  # Leaf calls skip the Dart-to-native transition bookkeeping. Only safe for
-  # functions that can never run a Dart callback underneath them — so the
-  # per-field reads and telemetry getters qualify, but tick/send/pump (which
-  # drive user step functions) must not.
+  # Leaf calls skip the Dart-to-native transition bookkeeping, and in exchange
+  # the VM forbids running any Dart callback underneath them ("Cannot invoke
+  # native callback from a leaf call"). So this list is strictly the pure
+  # readers.
+  #
+  # Deliberately NOT leaf: colyseus_predict_value / _value_at, which look like
+  # plain getters but drive the dead-reckoning step — a Dart closure — for
+  # reckon-mode fields. Likewise tick, send and pump.
   leaf:
     include:
       - 'colyseus_room_clock_(now|server_now|render_now|rtt|smoothed_rtt|jitter|last_server_time|patch_interval|offset)'
       - 'colyseus_input_handle_(sent_count|last_processed|pending_count|replay_buffer_size|epoch|tick_rate|patch_rate|sub_steps|render_delay)'
       - 'colyseus_reconciler_(pending_count|step_ms|reconcile_seq|last_correction_mag|last_correction|value|state|drift)'
-      - 'colyseus_predict_(value|value_at)'
       - 'colyseus_spawns_(size|alive)'
       - 'colyseus_event_channel_(has|pending_count)'
       - 'colyseus_netdelay_in_flight'

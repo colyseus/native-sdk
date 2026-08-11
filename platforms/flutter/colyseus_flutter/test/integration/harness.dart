@@ -131,10 +131,27 @@ Future<void> withRoom(
     await body(client, room);
   } finally {
     if (room != null) {
-      await room.leave();
-      await settle(const Duration(milliseconds: 150));
-      room.dispose();
+      await closeRoom(room);
     }
     client.dispose();
   }
+}
+
+/// Leaves [room], waits for the socket to actually close, then frees it.
+///
+/// Freeing while the transport thread is still ticking races its teardown and
+/// takes the whole process down, so the wait is load-bearing rather than
+/// cosmetic. Latency injection is cleared first: it is global, and queued
+/// packets would otherwise outlive the room they belong to.
+Future<void> closeRoom(ColyseusRoom room) async {
+  room.setLatency();
+  await waitFor(() => Colyseus.packetsInFlight == 0,
+      timeout: const Duration(seconds: 2));
+
+  await room.leave();
+  await waitFor(() => !room.isConnected, timeout: const Duration(seconds: 3));
+  await settle(const Duration(milliseconds: 250));
+
+  room.dispose();
+  await settle(const Duration(milliseconds: 100));
 }

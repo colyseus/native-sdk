@@ -8,6 +8,7 @@ import 'bindings/native_functions.dart';
 import 'colyseus.dart';
 import 'event_poller.dart';
 import 'input_handle.dart';
+import 'predict.dart';
 import 'message.dart';
 import 'room_clock.dart';
 import 'schema.dart';
@@ -58,6 +59,13 @@ class ColyseusRoom {
   RoomClock? _clock;
   InputHandle? _input;
   NativeCallable<Bool Function(Pointer<Void>, Pointer<Void>)>? _allowRewind;
+
+  /// Prediction layers built over this room.
+  ///
+  /// Tearing a Predict down touches the room's callbacks layer and decoder, so
+  /// they have to go before the room does. Tracking them here means
+  /// [dispose] can enforce that instead of leaving it to call order.
+  final List<Predict> _predicts = [];
 
   ColyseusRoom._(this._roomRef);
 
@@ -404,8 +412,21 @@ class ColyseusRoom {
     _n.roomLeave(_roomRef);
   }
 
+  /// Registers a prediction layer for ordered teardown. Called by [Predict.of].
+  void registerPredict(Predict predict) => _predicts.add(predict);
+
+  /// Forgets a prediction layer that disposed itself.
+  void unregisterPredict(Predict predict) => _predicts.remove(predict);
+
   /// Dispose all resources. Call after leaving.
   void dispose() {
+    // Before anything else: a Predict deregisters its schema callbacks on the
+    // way out, and those live on the room's decoder.
+    for (final predict in _predicts.toList()) {
+      predict.dispose();
+    }
+    _predicts.clear();
+
     _onJoinController.close();
     _onStateChangeController.close();
     _onErrorController.close();

@@ -379,6 +379,11 @@ class NativeFunctions {
       int Function(int, Pointer<Utf8>, Pointer<Int32>, Pointer<Int32>)>(
       'colyseus_flutter_field_resolve');
 
+  /// The instance's own vtable — reflection schemas have no static one.
+  late final instanceVtable = _lib.lookupFunction<
+      IntPtr Function(IntPtr),
+      int Function(int)>('colyseus_flutter_instance_vtable', isLeaf: true);
+
   late final fieldCount = _lib.lookupFunction<
       Int32 Function(IntPtr),
       int Function(int)>('colyseus_flutter_field_count', isLeaf: true);

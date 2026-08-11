@@ -4,7 +4,6 @@ library;
 import 'dart:ffi';
 
 import 'package:colyseus_flutter/colyseus_flutter.dart';
-import 'package:colyseus_flutter/src/bindings/colyseus_core.dart';
 import 'package:colyseus_flutter/src/colyseus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
