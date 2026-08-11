@@ -25,6 +25,12 @@ class StepContext {
 
   StepContext._(this._handle);
 
+  /// An unbound context, rebound per step by whoever drives the callback.
+  ///
+  /// The composite reconciler builds its own step trampoline, so it needs the
+  /// same flyweight the flat path uses.
+  StepContext.detached() : _handle = nullptr;
+
   /// Fixed step in seconds. Always the same value; the simulation is not
   /// frame-rate dependent.
   double get dt => _handle.ref.dt;
@@ -153,7 +159,8 @@ class StepContext {
     );
   }
 
-  void _rebind(Pointer<colyseus_step_ctx_t> handle) => _handle = handle;
+  /// Points this flyweight at the context for the step about to run.
+  void rebind(Pointer<colyseus_step_ctx_t> handle) => _handle = handle;
 }
 
 /// Applies one input to the predicted state.
@@ -196,6 +203,20 @@ class Reconciler {
 
   Reconciler._(this._handle, this._owner, this._callables);
 
+  /// Wraps an already-created native reconciler.
+  ///
+  /// The composite (`sim`) path builds its handle through a different entry
+  /// point but shares this whole surface, so it hands the result here.
+  factory Reconciler.adopt(
+    Pointer<colyseus_reconciler> handle,
+    Predict owner,
+    List<NativeCallable> callables,
+  ) {
+    final reconciler = Reconciler._(handle, owner, callables);
+    owner.adoptChild(reconciler);
+    return reconciler;
+  }
+
   /// Builds a reconciler driven by [predict].
   ///
   /// Prefer [Predict.reconciler], which calls this.
@@ -231,7 +252,7 @@ class Reconciler {
       Pointer<colyseus_schema_t> commandPtr,
       Pointer<Void> _,
     ) {
-      ctx._rebind(ctxPtr);
+      ctx.rebind(ctxPtr);
       if (stateView?.handle != statePtr.address) {
         stateView = SchemaView(statePtr.address);
       }
@@ -306,7 +327,7 @@ class Reconciler {
       );
     }
 
-    return Reconciler._(handle, predict, callables);
+    return Reconciler.adopt(handle, predict, callables);
   }
 
   /// The native handle.

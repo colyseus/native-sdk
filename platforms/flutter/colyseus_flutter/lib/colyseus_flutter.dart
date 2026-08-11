@@ -13,5 +13,6 @@ export 'src/room.dart';
 export 'src/room_clock.dart';
 export 'src/schema.dart';
 export 'src/schema_view.dart';
+export 'src/sim_reconciler.dart';
 export 'src/spawns.dart';
 export 'src/types.dart';

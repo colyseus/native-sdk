@@ -185,6 +185,33 @@ class ColyseusRoom {
     );
   }
 
+  /// Measures the round trip to this room over the live connection.
+  ///
+  /// Distinct from [RoomClock.rtt], which is a passive estimate riding the
+  /// input stream: this actively sends a ping. Rooms without inputs have no
+  /// clock samples at all, so this is the only round-trip figure they get.
+  ///
+  /// Completes with the round-trip time in milliseconds. Never completes if
+  /// the connection closes first, so give it a timeout.
+  Future<int> ping() {
+    final room = nativeRoom;
+    if (room == nullptr) {
+      throw StateError('Room is not connected yet — await the join first');
+    }
+
+    final completer = Completer<int>();
+    late final NativeCallable<Void Function(Int, Pointer<Void>)> callable;
+    callable = NativeCallable<Void Function(Int, Pointer<Void>)>.isolateLocal(
+      (int rttMs, Pointer<Void> _) {
+        if (!completer.isCompleted) completer.complete(rttMs);
+        callable.close();
+      },
+    );
+
+    core.colyseus_room_ping(room, callable.nativeFunction, nullptr);
+    return completer.future;
+  }
+
   // ===== Network simulation =====
 
   /// Injects one-way latency on this room's transport.

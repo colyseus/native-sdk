@@ -369,6 +369,20 @@ class NativeFunctions {
       Void Function(Int32),
       void Function(int)>('colyseus_flutter_set_serialized_inbound');
 
+  /// Wraps colyseus_select_by_latency so the winning endpoint reaches Dart as
+  /// an owned copy — the core's own string is gone by the time an async
+  /// listener callback runs.
+  late final selectByLatency = _lib.lookupFunction<
+      Void Function(Pointer<Pointer<Char>>, Int32, Int32, Int32, Int32,
+          Pointer<NativeFunction<Void Function(Pointer<Char>, Double)>>),
+      void Function(Pointer<Pointer<Char>>, int, int, int, int,
+          Pointer<NativeFunction<Void Function(Pointer<Char>, Double)>>)>(
+      'colyseus_flutter_select_by_latency');
+
+  late final freeString = _lib.lookupFunction<
+      Void Function(Pointer<Char>),
+      void Function(Pointer<Char>)>('colyseus_flutter_free_string');
+
   // ===== Extras: field access =====
   //
   // Resolve a name once, then read/write through (type, offset, index).

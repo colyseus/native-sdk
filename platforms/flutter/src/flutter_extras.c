@@ -19,6 +19,7 @@
 #include "colyseus/schema/collections.h"
 #include "colyseus/schema/dynamic_schema.h"
 #include "colyseus/net_delay.h"
+#include "colyseus/latency.h"
 #include "colyseus/input_handle.h"
 #include "colyseus/room_clock.h"
 #include "colyseus/predict/predict.h"
@@ -75,6 +76,51 @@ FLUTTER_EXPORT int colyseus_flutter_link_anchor_count(void) {
  */
 FLUTTER_EXPORT intptr_t colyseus_flutter_room_ptr(int room_handle) {
     return (intptr_t)flutter_room_from_ref(room_handle);
+}
+
+/* =============================================================================
+ * Latency selection
+ * ========================================================================== */
+
+/*
+ * The core hands the winning endpoint to its callback as a borrowed string
+ * valid only for that call. Dart can only receive this on a listener callable
+ * — the measurement finishes on a worker thread — and a listener runs later,
+ * on the event loop, by which time the string is gone. So copy it here and
+ * let Dart free the copy after reading.
+ */
+typedef void (*flutter_latency_cb)(char* endpoint, double latency_ms);
+
+static void latency_trampoline(const char* best, double latency_ms, void* userdata) {
+    flutter_latency_cb cb = (flutter_latency_cb)userdata;
+    if (!cb) return;
+
+    char* copy = NULL;
+    if (best) {
+        size_t len = strlen(best);
+        copy = (char*)malloc(len + 1);
+        if (copy) memcpy(copy, best, len + 1);
+    }
+    cb(copy, latency_ms);
+}
+
+FLUTTER_EXPORT void colyseus_flutter_select_by_latency(
+    const char* const* endpoints, int count,
+    int ping_count, int timeout_ms, int use_secure,
+    flutter_latency_cb callback)
+{
+    colyseus_latency_options_t options = {0};
+    options.ping_count = ping_count;
+    options.timeout_ms = timeout_ms;
+    options.use_secure = use_secure != 0;
+
+    colyseus_select_by_latency(endpoints, count, &options,
+        latency_trampoline, (void*)callback);
+}
+
+/* Release a string handed out by this layer. */
+FLUTTER_EXPORT void colyseus_flutter_free_string(char* value) {
+    free(value);
 }
 
 /* =============================================================================

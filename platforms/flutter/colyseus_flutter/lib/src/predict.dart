@@ -11,6 +11,7 @@ import 'reconciler.dart';
 import 'room.dart';
 import 'schema.dart';
 import 'schema_view.dart';
+import 'sim_reconciler.dart';
 import 'spawns.dart';
 
 /// How a tracked field follows the server stream.
@@ -371,7 +372,6 @@ class Predict {
       subSteps: subSteps,
       onReconcile: onReconcile,
     );
-    _children.add(child);
     return child;
   }
 
@@ -483,6 +483,27 @@ class Predict {
 
   /// Called by a child that was disposed on its own.
   void forget(Reconciler child) => _children.remove(child);
+
+  /// Registers a reconciler built outside [reconciler] for ordered teardown.
+  void adoptChild(Reconciler child) {
+    if (!_children.contains(child)) _children.add(child);
+  }
+
+  /// Creates a composite reconciler over several interacting entities.
+  ///
+  /// See [createSimReconciler] for when this beats a flat [reconciler].
+  Reconciler sim({
+    required InputHandle input,
+    required SimStep step,
+    required SimOptions options,
+  }) {
+    return createSimReconciler(
+      predict: this,
+      input: input,
+      step: step,
+      options: options,
+    );
+  }
 
   /// The root state, re-read every time.
   ///

@@ -1,3 +1,8 @@
+import 'dart:async';
+import 'dart:ffi';
+
+import 'package:ffi/ffi.dart';
+
 import 'bindings/colyseus_core.dart';
 import 'bindings/native_functions.dart';
 import 'event_poller.dart';
@@ -60,6 +65,67 @@ class Colyseus {
   /// Non-zero only while an injected delay is in effect; useful as a "network
   /// is busy" readout in debug HUDs.
   static int get packetsInFlight => core.colyseus_netdelay_in_flight();
+
+  /// Picks the lowest-latency endpoint out of [endpoints].
+  ///
+  /// Measures each one and returns the fastest with its round-trip time, or
+  /// null when every endpoint failed. Use it to choose a region before
+  /// connecting.
+  ///
+  /// Measurement runs on worker threads, so the callback arrives
+  /// asynchronously — unlike the predict layer's callbacks, which are
+  /// synchronous by construction.
+  static Future<({String endpoint, double latencyMs})?> selectByLatency(
+    List<String> endpoints, {
+    int pingCount = 1,
+    int timeoutMs = 1500,
+  }) {
+    if (endpoints.isEmpty) return Future.value(null);
+
+    final completer = Completer<({String endpoint, double latencyMs})?>();
+    late final NativeCallable<Void Function(Pointer<Char>, Double)> callable;
+
+    // A listener callable, not isolateLocal: measurement finishes on a worker
+    // thread, which isolateLocal forbids. The endpoint arrives as a copy the
+    // native side allocated for exactly this reason, and Dart frees it.
+    callable = NativeCallable<Void Function(Pointer<Char>, Double)>.listener(
+      (Pointer<Char> best, double latencyMs) {
+        String? endpoint;
+        if (best != nullptr) {
+          endpoint = best.cast<Utf8>().toDartString();
+          _n.freeString(best);
+        }
+        if (!completer.isCompleted) {
+          completer.complete(endpoint == null
+              ? null
+              : (endpoint: endpoint, latencyMs: latencyMs));
+        }
+        callable.close();
+      },
+    );
+
+    final arena = Arena();
+    try {
+      final list = arena<Pointer<Char>>(endpoints.length);
+      for (var i = 0; i < endpoints.length; i++) {
+        list[i] = endpoints[i].toNativeUtf8(allocator: arena).cast();
+      }
+
+      _n.selectByLatency(
+        list,
+        endpoints.length,
+        pingCount,
+        timeoutMs,
+        endpoints.first.startsWith('wss://') ? 1 : 0,
+        callable.nativeFunction,
+      );
+    } finally {
+      // The core copies the endpoint strings before returning.
+      arena.releaseAll();
+    }
+
+    return completer.future;
+  }
 
   /// Turns off the transport wrap that serializes inbound decoding onto the
   /// pumping thread.
