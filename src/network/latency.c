@@ -11,7 +11,7 @@
  * transport lifecycle and enforces the timeout with a condvar timed-wait. The
  * transport's tick thread fires the event callbacks; teardown happens on the
  * coordinator thread (never inside a callback — see websocket_transport.c's
- * in_tick_thread reentrancy contract).
+ * ws_on_tick_thread reentrancy contract).
  *
  * Emscripten (single-threaded): no threads; the timeout is armed with
  * emscripten_set_timeout and teardown is deferred to the event loop with

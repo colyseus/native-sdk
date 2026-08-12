@@ -62,3 +62,19 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   verbatim took `auth_emit_change`'s no-token branch, wiping both the header and
   the stored copy. It now carries the current token through, matching the JS
   SDK's `{...userData, token: this.token}`.
+- The WebSocket transport freed itself out from under its own tick thread.
+  `ws_close_impl` deferred the close whenever `in_tick_thread` was set — but
+  that flag meant "a tick thread is running", not "the caller IS the tick
+  thread". Any other caller (a room teardown, a latency probe finishing on its
+  coordinator thread) therefore took the defer branch, returned WITHOUT
+  joining, and `ws_destroy_impl` freed the struct while the loop was still
+  reading it. The thread then ran on with a dangling transport, which surfaced
+  as `panic: member access within null pointer of type
+  'colyseus_ws_transport_data_t'` inside `ws_recv_callback`. The transport now
+  records its tick thread's identity and compares against the caller, so only
+  the tick thread defers and everyone else joins.
+
+  This is the teardown race the Godot suite hit in `test_latency` and the
+  Flutter `netdelay_test` hit roughly one run in three. After the fix: 8
+  consecutive clean Godot runs with zero panics, and 8 consecutive clean
+  netdelay runs.
