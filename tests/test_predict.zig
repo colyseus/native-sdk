@@ -340,6 +340,62 @@ test "drift_math" {
     try testing.expectEqual(@as(c_uint, c.COLYSEUS_DRIFT_MATCHED), c.colyseus_drift_classify(&d, 0));
 }
 
+// ─── extrapolate on a client clock that is not the server clock ─────────────
+
+// The ring is stamped on the SERVER axis; render_time is whatever clock the
+// caller ticks with. "passive_smoothing" above pins the two together
+// (sample(sNow, -1) at NOW == sNow → offset 0), which is exactly the case that
+// hides a mix-up between them. Here the client clock runs 4 seconds ahead of
+// the room's, the way a real one does — uptime ms against ms-since-room-start.
+// Differencing those puts `ahead` in the thousands, so it saturates at
+// max_extrapolate and the projection is a constant cap-sized lead instead of
+// the snapshot's age.
+test "extrapolate_projects_snapshot_age_not_the_cap" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+
+    const decoder = c.colyseus_decoder_create(&c.passive_ent_vtable).?;
+    defer c.colyseus_decoder_free(decoder);
+    const callbacks = c.colyseus_callbacks_create(decoder).?;
+    defer c.colyseus_callbacks_free(callbacks);
+    const clock = c.colyseus_room_clock_create().?;
+    defer c.colyseus_room_clock_free(clock);
+    c.colyseus_room_clock_set_patch_interval(clock, 50);
+
+    const p = c.colyseus_predict_create(callbacks, clock).?;
+    defer c.colyseus_predict_free(p);
+    const ent: *c.colyseus_schema_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
+
+    var ext_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    ext_opts.mode = c.COLYSEUS_PREDICT_EXTRAPOLATE;
+    ext_opts.damping = -1; // raw projection, so the assertion is the geometry
+    ext_opts.max_extrapolate = 250;
+    const cfg = [_]c.colyseus_attach_field_t{.{ .field = "c", .opts = &ext_opts }};
+    _ = c.colyseus_predict_attach(p, ent, &cfg, cfg.len);
+
+    // client clock at 5000+, room clock at 1000+ → a 4 s offset
+    NOW = 5000;
+    c.colyseus_room_clock_sample(clock, 1000, -1);
+    decodeBytes(decoder, &[_]u8{ 130, 10 });
+    NOW = 5050;
+    c.colyseus_room_clock_sample(clock, 1050, -1);
+    decodeBytes(decoder, &[_]u8{ 130, 20 });
+    NOW = 5100;
+    c.colyseus_room_clock_sample(clock, 1100, -1);
+    decodeBytes(decoder, &[_]u8{ 130, 30 });
+
+    // slope is 10 per 50 ms; the newest sample is 50 ms old at serverNow 1150,
+    // so the projection is 30 + 0.2*50 = 40 — the same answer the aligned-axis
+    // fixture gets. Saturating at the 250 ms cap would read 80.
+    NOW = 5150;
+    _ = c.colyseus_predict_tick(p, NOW);
+    try testing.expectEqual(@as(f64, 40), c.colyseus_predict_value(p, ent, "c"));
+
+    // ...and it keeps tracking the age rather than sitting at the cap.
+    NOW = 5175;
+    _ = c.colyseus_predict_tick(p, NOW);
+    try testing.expectEqual(@as(f64, 45), c.colyseus_predict_value(p, ent, "c"));
+}
+
 // ─── passive smoothing (fixture scenario D) ─────────────────────────────────
 
 fn decodeBytes(decoder: *c.colyseus_decoder_t, bytes: []const u8) void {

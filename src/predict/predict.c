@@ -353,7 +353,14 @@ static double compute_extrapolate(colyseus_predict_t* p, predict_slot_t* slot) {
             raw = newest_v;
         } else {
             double slope = (newest_v - slot->ring_v[lb]) / dt;
-            double ahead = now - newest_t;
+            /* Project by the snapshot's AGE, which is on the ring's own axis:
+             * server time once the clock syncs, arrival time before that.
+             * render_time is the caller's frame clock — differencing it
+             * against a server-stamped sample pins `ahead` at the cap. */
+            double present = (p->clock && colyseus_room_clock_last_server_time(p->clock) > 0)
+                ? colyseus_room_clock_server_now(p->clock)
+                : now;
+            double ahead = present - newest_t;
             if (ahead < 0) ahead = 0;
             else if (ahead > slot->opts.max_extrapolate) ahead = slot->opts.max_extrapolate;
             raw = newest_v + slope * ahead;

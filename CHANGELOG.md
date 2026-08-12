@@ -27,3 +27,12 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   (Godot `room.set_latency`, GameMaker `colyseus_netdelay_set`, Flutter
   `room.setLatency`) inherits the new meaning; halve any value calibrated
   against the old one.
+- `extrapolate` mode projected by a fixed `max_extrapolate` instead of the
+  snapshot's age. The sample ring is stamped on the server axis once the clock
+  syncs, but `compute_extrapolate` measured `ahead` against `render_time` (the
+  frame clock the caller ticks with — machine uptime, natively). Differencing
+  those puts `ahead` in the thousands, so it saturated at the cap every frame
+  and the entity rendered a constant cap-sized lead along its current heading,
+  most visible as a wrong position on a curving path. It now measures the age
+  on the ring's own axis, matching `lerp` and the reckon path. The same
+  expression exists in the JS SDK's `Predictor.computeExtrapolate`.
