@@ -653,10 +653,12 @@ class Room extends RefCounted:
 				_clock = Clock.new(_native)
 			return _clock
 
-	## Latency injector: delay + jitter on BOTH directions at the transport
-	## seam (never reorders; the handshake is never delayed — call after
-	## join). Call net_pump() once per frame, right after Colyseus.poll(),
-	## or delayed packets never deliver.
+	## Latency injector at the transport seam. Both numbers are ROUND TRIPS,
+	## split evenly across the two directions, so `delay_ms` is what
+	## clock.smoothed_rtt() converges to — the same meaning the JS SDK's
+	## __net() has. Never reorders; the handshake is never delayed (call
+	## after join). Call net_pump() once per frame, right after
+	## Colyseus.poll(), or delayed packets never deliver.
 	func set_latency(delay_ms: float, jitter_ms := 0.0) -> void:
 		_native.set_latency(delay_ms, jitter_ms)
 

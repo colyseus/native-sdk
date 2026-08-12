@@ -34,10 +34,11 @@ void main() {
 
       final baseline = await measureEcho(room, 11.0);
 
-      room.setLatency(delayMs: 200);
+      room.setLatency(delayMs: 400);
       try {
         final delayed = await measureEcho(room, 12.0);
-        // 200 ms each way; allow generous headroom for patch cadence.
+        // A round trip, split across both directions; allow generous headroom
+        // for patch cadence.
         expect(delayed - baseline, greaterThan(250),
             reason: 'baseline ${baseline}ms vs delayed ${delayed}ms');
       } finally {

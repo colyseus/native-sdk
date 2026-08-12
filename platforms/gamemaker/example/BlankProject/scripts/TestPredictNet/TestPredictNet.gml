@@ -33,8 +33,8 @@ suite(function() {
             // pump-serialized inbound adds a frame of baseline latency
             expect(_base).toBeLessThan(150);
 
-            // 150ms each way → rtt tracks past 250
-            colyseus_netdelay_set(_t.room, 150, 0);
+            // 300ms round trip, split both ways → rtt tracks past 200
+            colyseus_netdelay_set(_t.room, 300, 0);
             var _env = { saw_in_flight: 0 };
             var _start = current_time;
             while (current_time - _start < 5000) {

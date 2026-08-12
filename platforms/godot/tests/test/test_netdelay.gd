@@ -68,8 +68,8 @@ func test_injected_latency_shows_up_in_the_rtt():
 	var base_rtt = room.clock.smoothed_rtt()
 	assert_between(base_rtt, 0.1, 100.0, "baseline rtt should be a localhost round trip")
 
-	# inject 150 ms each way -> the ack round trip must grow by ~300 ms
-	room.set_latency(150.0)
+	# the argument is a round trip, split across both directions
+	room.set_latency(300.0)
 	var saw_queue := false
 	var last_send = 0
 	var start = Time.get_ticks_msec()

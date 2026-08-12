@@ -15,3 +15,15 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   - Native (pthreads/Win32) and Emscripten/WASM implementations.
 - `COLYSEUS_PROTOCOL_PING` (18) and `COLYSEUS_PROTOCOL_PONG` (19) in `protocol.h`.
 - `examples/latency_example.c` smoke test exercising the healthy, timeout, and selection paths.
+
+### Changed
+- `colyseus_netdelay_set(room, delay_ms, jitter_ms)` now takes a ROUND TRIP and
+  splits it evenly across the two directions, matching the JS SDK's `__net()`;
+  jitter is symmetric (`±jitter/2` per direction) rather than one-sided. Both
+  numbers previously applied to each direction, so the same figure produced
+  roughly twice the RTT here as on the web — enough at a "200 ms" preset to push
+  a lag-comp rewind past a server's `maxRewindMs`, which clamps the rewind and
+  lands it ahead of the pose the client drew. Every binding that exposes this
+  (Godot `room.set_latency`, GameMaker `colyseus_netdelay_set`, Flutter
+  `room.setLatency`) inherits the new meaning; halve any value calibrated
+  against the old one.

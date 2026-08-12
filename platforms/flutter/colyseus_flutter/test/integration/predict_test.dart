@@ -256,7 +256,7 @@ void main() {
         await driveFrames(room, predict, input, 40, moveX: 1);
         final settled = recon.pendingCount;
 
-        room.setLatency(delayMs: 200);
+        room.setLatency(delayMs: 400);
         try {
           await driveFrames(room, predict, input, 60, moveX: 1);
           expect(recon.pendingCount, greaterThan(settled),
@@ -313,7 +313,7 @@ void main() {
           },
         );
 
-        room.setLatency(delayMs: 150);
+        room.setLatency(delayMs: 300);
         try {
           await driveFrames(room, predict, input, 30, moveX: 1);
           // Several kicks: each one is a divergence the client must absorb.
@@ -355,7 +355,7 @@ void main() {
           },
         );
 
-        room.setLatency(delayMs: 150);
+        room.setLatency(delayMs: 300);
         try {
           await driveFrames(room, predict, input, 90, moveX: 1);
         } finally {
@@ -456,7 +456,7 @@ void main() {
           },
         );
 
-        room.setLatency(delayMs: 150);
+        room.setLatency(delayMs: 300);
         try {
           await driveFrames(room, predict, input, 90, moveX: 1);
         } finally {
@@ -494,7 +494,7 @@ void main() {
           },
         );
 
-        room.setLatency(delayMs: 150);
+        room.setLatency(delayMs: 300);
         try {
           await driveFrames(room, predict, input, 90, moveX: 1);
         } finally {

@@ -66,10 +66,14 @@ static double g_delay_ms = 0;
 static double g_jitter_ms = 0;
 static unsigned g_rng = 0x5EED;
 
+/* Half the configured round trip, plus symmetric U[-jitter/2, +jitter/2] —
+ * the same split the JS SDK's __net() applies, so a given number means the
+ * same RTT on every SDK. Jitter perturbs spacing; nd_enqueue's monotonic
+ * clamp keeps the wire from reordering. */
 static double nd_one_way(void) {
     g_rng = g_rng * 1664525u + 1013904223u;                    /* LCG */
     double r = (double)(g_rng >> 8) / (double)(1u << 24);
-    return g_delay_ms + r * g_jitter_ms;
+    return (g_delay_ms + (r * 2.0 - 1.0) * g_jitter_ms) / 2.0;
 }
 
 static nd_wrap_t* nd_wrap_for(colyseus_transport_t* t) {

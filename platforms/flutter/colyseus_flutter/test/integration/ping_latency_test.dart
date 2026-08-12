@@ -25,10 +25,10 @@ void main() {
 
       final baseline = await room.ping().timeout(const Duration(seconds: 5));
 
-      room.setLatency(delayMs: 150);
+      room.setLatency(delayMs: 300);
       try {
         final delayed = await room.ping().timeout(const Duration(seconds: 10));
-        // 150 ms each way.
+        // A round trip, so ping() should see about all of it.
         expect(delayed, greaterThan(baseline + 200),
             reason: 'baseline ${baseline}ms vs delayed ${delayed}ms');
       } finally {

@@ -205,7 +205,7 @@
       "rid=" + rid + " seq=" + seq + " dx=" + (x1 - x0) + " drift_ema=" + drift);
 
     // T6: netdelay injector — rtt tracks the injected delay
-    window.colyseus_gm_netdelay_set(roomRef, 150, 0);
+    window.colyseus_gm_netdelay_set(roomRef, 300, 0);
     await waitFor(function () {
       return window.colyseus_gm_clock_stat(roomRef, 3) > 250;
     }, 5000);

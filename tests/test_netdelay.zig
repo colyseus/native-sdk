@@ -114,11 +114,13 @@ test "netdelay: zero delay passes straight through" {
     try testing.expectEqual(@as(i64, 0), c.colyseus_netdelay_in_flight());
 }
 
-test "netdelay: packets queue and deliver at now + delay" {
+// The configured number is a ROUND TRIP: each direction holds half of it, so
+// 200 here means +100 outbound and +100 inbound.
+test "netdelay: packets queue and deliver at now + half the round trip" {
     var rig: Rig = undefined;
     makeRig(&rig);
     NOW = 1000;
-    c.colyseus_netdelay_set(&rig.room, 100, 0);
+    c.colyseus_netdelay_set(&rig.room, 200, 0);
     defer {
         c.colyseus_netdelay_set(&rig.room, 0, 0); // restore globals for later tests
         c.colyseus_netdelay_unwrap(&rig.transport);

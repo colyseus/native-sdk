@@ -122,6 +122,8 @@ function ColyseusClock(_room_ref) constructor {
 // Netdelay injector (debug latency + the drop button)
 // =============================================================================
 
+/// Both numbers are ROUND TRIPS, split evenly across the two directions, so
+/// _delay_ms is what clock.rtt() converges to — matching the JS SDK's __net().
 function colyseus_netdelay_set(_room_ref, _delay_ms, _jitter_ms = 0) {
     __colyseus_gm_netdelay_set(_room_ref, _delay_ms, _jitter_ms);
 }

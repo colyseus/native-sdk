@@ -138,7 +138,7 @@ void main() {
           },
         );
 
-        room.setLatency(delayMs: 150);
+        room.setLatency(delayMs: 300);
         try {
           await driveFrames(room, predict, input, 30, moveX: 1);
           for (var i = 0; i < 4; i++) {

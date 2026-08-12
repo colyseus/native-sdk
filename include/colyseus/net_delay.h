@@ -37,8 +37,15 @@ struct colyseus_transport;
 void colyseus_netdelay_wrap(struct colyseus_room* room, bool always_queue_inbound);
 
 /*
- * Set the injected one-way delay/jitter (ms, GLOBAL across wraps) and arm
+ * Set the injected ROUND-TRIP delay/jitter (ms, GLOBAL across wraps) and arm
  * the room's wrap if it isn't already (passthrough inbound policy).
+ *
+ * Both numbers are round trips, split evenly across the two directions, so
+ * `set(200, 0)` yields an RTT near 200 ms — the same meaning the JS SDK's
+ * `__net(delay, jitter)` has. A client's `room.clock.smoothed_rtt` should
+ * land on `delay` (plus the real link), and the server's lag-comp rewind
+ * depth on `render_delay + delay`.
+ *
  * Zero delay + zero jitter + empty queues = passthrough (unless the wrap
  * was armed with always_queue_inbound).
  */

@@ -40,6 +40,8 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
   FFI call per read, against `SchemaInstance`'s lookup per access.
 - `room.setLatency()` and `room.dropConnection()` — inject latency and jitter
   at the transport seam, or drop the connection to exercise reconnection.
+  The delay is a round trip, split evenly across the two directions, so a
+  given number means the same `clock.smoothedRtt` here as in the JS SDK.
 - `room.ping()` — an active round-trip measurement, which is the only one
   available to rooms that declare no inputs.
 - `Colyseus.selectByLatency(endpoints)` — measure several endpoints and take
@@ -88,17 +90,6 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
 - On Windows the predict layer's objects are still dead-stripped out of the
   DLL. Every other platform links them through the anchor table in
   `src/flutter_extras.c`.
-- Lag compensation is out by roughly one world unit at 200 ms. The C core
-  derives the client's displayed instant as `serverNow - (render_delay +
-  rtt/2)` and stamps that, where the JS SDK stamps the instant its
-  interpolator is actually rendering. Measured against the same server, the
-  web client's rewind lands 0.01 u from the drawn pose and this one lands
-  0.6 to 2.4 u, so shots at a target's trailing edge read as a hit on the
-  client and a miss on the server. Godot and GameMaker share the core and
-  should show the same error.
-  `clients/flutter-app/test/lab06_lagcomp_diag_test.dart` in the demos repo
-  pins it (skipped, with the reason), having ruled out the rtt/2 term, clock
-  slew, inbound serialization and client-side logic by measurement.
 - Auto-reconnect works exactly once per room. This is a core defect, not a
   binding one: `room_reconnect_worker_spawn()` in `src/room.c` guards on a
   `thread_started` flag it never clears, and the worker thread returns once a

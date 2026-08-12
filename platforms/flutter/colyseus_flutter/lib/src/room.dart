@@ -215,11 +215,13 @@ class ColyseusRoom {
 
   // ===== Network simulation =====
 
-  /// Injects one-way latency on this room's transport.
+  /// Injects latency on this room's transport.
   ///
-  /// Both directions are delayed by [delayMs] plus up to [jitterMs] of noise,
-  /// clamped so jitter can never reorder packets. Values are global across
-  /// rooms. Zero for both restores immediate delivery.
+  /// [delayMs] and [jitterMs] are ROUND TRIPS, split evenly across the two
+  /// directions — the same meaning the JS SDK's `__net()` has, so a given
+  /// number produces the same `clock.smoothedRtt` on every SDK. Jitter is
+  /// symmetric and clamped so it can never reorder packets. Values are global
+  /// across rooms. Zero for both restores immediate delivery.
   ///
   /// This is a debug facility: use it to see how prediction behaves under a
   /// realistic connection while developing against localhost.
