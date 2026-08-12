@@ -88,3 +88,9 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
 - On Windows the predict layer's objects are still dead-stripped out of the
   DLL. Every other platform links them through the anchor table in
   `src/flutter_extras.c`.
+- Auto-reconnect works exactly once per room. This is a core defect, not a
+  binding one: `room_reconnect_worker_spawn()` in `src/room.c` guards on a
+  `thread_started` flag it never clears, and the worker thread returns once a
+  reconnect succeeds, so a second drop leaves the room reconnecting forever
+  with nothing running to service it. `test/integration/teardown_stress_test.dart`
+  pins it (skipped, with the reason). Every other binding shares the defect.
