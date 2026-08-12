@@ -7,6 +7,7 @@
 #include "../../../include/colyseus/schema/collections.h"
 #include "../../../include/colyseus/messages.h"
 #include "../../../include/colyseus/net_delay.h"
+#include "../../../include/colyseus/auth/auth.h"
 #include "cJSON.h"
 #include <stdlib.h>
 #include <string.h>
@@ -1700,7 +1701,8 @@ static void on_http_error(const colyseus_http_error_t* error, void* userdata) {
 }
 
 // Thread function — runs the blocking HTTP call
-static void gm_http_thread_func(gm_http_thread_args_t* args) {
+static void gm_http_thread_func(void* userdata) {
+    gm_http_thread_args_t* args = (gm_http_thread_args_t*)userdata;
     switch (args->method) {
         case 0: colyseus_http_get(args->http, args->path, on_http_success, on_http_error, args); break;
         case 1: colyseus_http_post(args->http, args->path, args->body, on_http_success, on_http_error, args); break;
@@ -1713,21 +1715,58 @@ static void gm_http_thread_func(gm_http_thread_args_t* args) {
     free(args);
 }
 
+/*
+ * One detached thread per request. The core's http and auth calls BLOCK, and
+ * their result reaches GML through the polled event queue.
+ */
+typedef void (*gm_request_fn)(void*);
+
+typedef struct {
+    gm_request_fn run;
+    void* request;
+} gm_thread_arg_t;
+
 #ifndef __EMSCRIPTEN__
 #ifdef _WIN32
-static DWORD WINAPI gm_http_thread_wrapper(LPVOID arg) {
-    gm_http_thread_func((gm_http_thread_args_t*)arg);
+static DWORD WINAPI gm_request_thread(LPVOID arg) {
+    gm_thread_arg_t* a = (gm_thread_arg_t*)arg;
+    a->run(a->request);
+    free(a);
     return 0;
 }
 #else
-static void* gm_http_thread_wrapper(void* arg) {
-    gm_http_thread_func((gm_http_thread_args_t*)arg);
+static void* gm_request_thread(void* arg) {
+    gm_thread_arg_t* a = (gm_thread_arg_t*)arg;
+    a->run(a->request);
+    free(a);
     return NULL;
 }
 #endif
 #endif
 
-// Dispatch an HTTP request on a background thread, returns request_id
+static void gm_spawn_request(gm_request_fn run, void* request) {
+#ifdef __EMSCRIPTEN__
+    /* On WASM the JS shim overrides the exports; if reached, run inline. */
+    run(request);
+#else
+    gm_thread_arg_t* arg = (gm_thread_arg_t*)calloc(1, sizeof(*arg));
+    if (!arg) { run(request); return; }
+    arg->run = run;
+    arg->request = request;
+#ifdef _WIN32
+    HANDLE thread = CreateThread(NULL, 0, gm_request_thread, arg, 0, NULL);
+    if (thread) CloseHandle(thread);
+#else
+    pthread_t thread;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_create(&thread, &attr, gm_request_thread, arg);
+    pthread_attr_destroy(&attr);
+#endif
+#endif
+}
+
 static double gm_http_dispatch(colyseus_http_t* http, int method, const char* path, const char* body) {
     gm_http_thread_args_t* args = (gm_http_thread_args_t*)calloc(1, sizeof(gm_http_thread_args_t));
     if (!args) return 0.0;
@@ -1739,22 +1778,160 @@ static double gm_http_dispatch(colyseus_http_t* http, int method, const char* pa
     args->method = method;
     args->request_id = g_http_request_counter;
 
-#ifdef __EMSCRIPTEN__
-    // On WASM the JS shim overrides these; if reached, run synchronously
-    gm_http_thread_func(args);
-#elif defined(_WIN32)
-    HANDLE thread = CreateThread(NULL, 0, gm_http_thread_wrapper, args, 0, NULL);
-    if (thread) CloseHandle(thread);
-#else
-    pthread_t thread;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_create(&thread, &attr, gm_http_thread_wrapper, args);
-    pthread_attr_destroy(&attr);
-#endif
-
+    gm_spawn_request(gm_http_thread_func, args);
     return g_http_request_counter;
+}
+
+// =============================================================================
+// Auth — the same road as HTTP
+//
+// Every auth call IS a request to /auth/*, and the core keeps the reply's
+// {user, token} shape, so recomposing that object lets the result travel the
+// HTTP event queue and reach GML through the same response handler. No second
+// event type, and the callback receives exactly what the server sent.
+// =============================================================================
+
+/* Addressed by ordinal through one auth_request entry point rather than a
+ * binding per call. Mirrored by COLYSEUS_AUTH_* in Colyseus.gml — the order
+ * is the ABI. */
+typedef enum {
+    GM_AUTH_GET_USER_DATA = 0,
+    GM_AUTH_REGISTER = 1,
+    GM_AUTH_SIGNIN = 2,
+    GM_AUTH_SIGNIN_ANONYMOUS = 3,
+    GM_AUTH_SEND_PASSWORD_RESET = 4,
+} gm_auth_op_t;
+
+typedef struct {
+    colyseus_auth_t* auth;
+    int op;              // gm_auth_op_t
+    char* email;
+    char* password;
+    char* options_json;
+    double request_id;
+} gm_auth_thread_args_t;
+
+static void gm_auth_push(gm_auth_thread_args_t* args, int type, int code,
+                         char* body, const char* message) {
+    gm_event_t event = {0};
+    event.type = type;
+    event.callback_handle = args->request_id;
+    event.code = code;
+    event.http.body = body;
+    if (message) {
+        strncpy(event.message, message, sizeof(event.message) - 1);
+    }
+    gm_event_queue_push(&event);
+}
+
+static void on_auth_success(const colyseus_auth_data_t* data, void* userdata) {
+    gm_auth_thread_args_t* args = (gm_auth_thread_args_t*)userdata;
+
+    cJSON* root = cJSON_CreateObject();
+    if (data && data->user_json) {
+        cJSON* user = cJSON_Parse(data->user_json);
+        if (user) cJSON_AddItemToObject(root, "user", user);
+    }
+    if (data && data->token) cJSON_AddStringToObject(root, "token", data->token);
+    char* body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+
+    gm_auth_push(args, GM_EVENT_HTTP_RESPONSE, 200, body ? body : strdup("{}"), NULL);
+}
+
+/* The core's auth error callback carries a message but no status, so the code
+ * is 0 and the server's body is the message. */
+static void on_auth_error(const char* message, void* userdata) {
+    gm_auth_thread_args_t* args = (gm_auth_thread_args_t*)userdata;
+    gm_auth_push(args, GM_EVENT_HTTP_ERROR, 0, NULL,
+                 message ? message : "auth request failed");
+}
+
+static void gm_auth_thread_func(void* userdata) {
+    gm_auth_thread_args_t* args = (gm_auth_thread_args_t*)userdata;
+    switch ((gm_auth_op_t)args->op) {
+        case GM_AUTH_GET_USER_DATA:
+            colyseus_auth_get_user_data(args->auth, on_auth_success, on_auth_error, args);
+            break;
+        case GM_AUTH_REGISTER:
+            colyseus_auth_register_email_password(args->auth, args->email, args->password,
+                args->options_json, on_auth_success, on_auth_error, args);
+            break;
+        case GM_AUTH_SIGNIN:
+            colyseus_auth_signin_email_password(args->auth, args->email, args->password,
+                on_auth_success, on_auth_error, args);
+            break;
+        case GM_AUTH_SIGNIN_ANONYMOUS:
+            colyseus_auth_signin_anonymous(args->auth, args->options_json,
+                on_auth_success, on_auth_error, args);
+            break;
+        case GM_AUTH_SEND_PASSWORD_RESET:
+            colyseus_auth_send_password_reset(args->auth, args->email,
+                on_auth_success, on_auth_error, args);
+            break;
+    }
+    free(args->email);
+    free(args->password);
+    free(args->options_json);
+    free(args);
+}
+
+/* Empty reaches the core as NULL: GML has no null string, and an absent email
+ * is not the same as "". */
+static char* gm_auth_arg(const char* value) {
+    return (value && value[0]) ? strdup(value) : NULL;
+}
+
+static double gm_auth_dispatch(colyseus_auth_t* auth, int op, const char* email,
+                               const char* password, const char* options_json) {
+    gm_auth_thread_args_t* args = (gm_auth_thread_args_t*)calloc(1, sizeof(gm_auth_thread_args_t));
+    if (!args) return 0.0;
+
+    g_http_request_counter += 1.0;
+    args->auth = auth;
+    args->op = op;
+    args->email = gm_auth_arg(email);
+    args->password = gm_auth_arg(password);
+    args->options_json = gm_auth_arg(options_json);
+    args->request_id = g_http_request_counter;
+
+    gm_spawn_request(gm_auth_thread_func, args);
+    return g_http_request_counter;
+}
+
+/*
+ * The arguments arrive as ONE json object — {email, password, options} — because
+ * GameMaker rejects an extension function with more than four arguments unless
+ * they all share a type, and these do not.
+ */
+GM_EXPORT double colyseus_gm_auth_request(double client_handle, double op,
+    const char* payload_json) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->auth) return 0.0;
+
+    cJSON* root = (payload_json && payload_json[0]) ? cJSON_Parse(payload_json) : NULL;
+    const char* email = NULL;
+    const char* password = NULL;
+    char* options = NULL;
+    if (root) {
+        cJSON* item = cJSON_GetObjectItem(root, "email");
+        if (cJSON_IsString(item)) email = item->valuestring;
+        item = cJSON_GetObjectItem(root, "password");
+        if (cJSON_IsString(item)) password = item->valuestring;
+        item = cJSON_GetObjectItem(root, "options");
+        if (item) options = cJSON_PrintUnformatted(item);
+    }
+
+    double request_id = gm_auth_dispatch(client->auth, (int)op, email, password, options);
+
+    free(options);
+    cJSON_Delete(root);
+    return request_id;
+}
+
+GM_EXPORT void colyseus_gm_auth_signout(double client_handle) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (client && client->auth) colyseus_auth_signout(client->auth);
 }
 
 // =============================================================================

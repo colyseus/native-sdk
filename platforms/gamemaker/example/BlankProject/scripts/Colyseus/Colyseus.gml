@@ -578,10 +578,101 @@ function colyseus_auth_get_token(_client) {
 }
 
 /// Clear the persisted auth token (e.g., on logout).
+/// @deprecated Use colyseus_auth_sign_out, which also clears the token from
+/// the platform's own secure storage.
 function colyseus_auth_clear_token(_client) {
-    __colyseus_gm_auth_set_token(_client, "");
+    colyseus_auth_sign_out(_client);
+}
+
+// Auth operation ordinals — mirror gm_auth_op_t in src/gamemaker_export.c.
+#macro COLYSEUS_AUTH_GET_USER_DATA 0
+#macro COLYSEUS_AUTH_REGISTER 1
+#macro COLYSEUS_AUTH_SIGN_IN 2
+#macro COLYSEUS_AUTH_SIGN_IN_ANONYMOUS 3
+#macro COLYSEUS_AUTH_SEND_PASSWORD_RESET 4
+
+/// Sign in without credentials. The token still identifies the player, so keep
+/// it if you want them back on the same account next launch.
+/// @param {Real} _client  Client handle
+/// @param {Function} _callback  callback(err, data) — data is { user, token }
+/// @param {Struct} [_options]  Merged into the request body
+/// @returns {Real} request handle
+function colyseus_auth_sign_in_anonymously(_client, _callback, _options = undefined) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_SIGN_IN_ANONYMOUS, "", "", _options, _callback);
+}
+
+/// Create an account.
+/// @param {Real} _client  Client handle
+/// @param {String} _email
+/// @param {String} _password
+/// @param {Function} _callback  callback(err, data) — data is { user, token }
+/// @param {Struct} [_options]  Merged into the request body
+/// @returns {Real} request handle
+function colyseus_auth_register_with_email_and_password(_client, _email, _password, _callback, _options = undefined) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_REGISTER, _email, _password, _options, _callback);
+}
+
+/// Sign in with an existing account.
+/// @param {Real} _client  Client handle
+/// @param {String} _email
+/// @param {String} _password
+/// @param {Function} _callback  callback(err, data) — data is { user, token }
+/// @returns {Real} request handle
+function colyseus_auth_sign_in_with_email_and_password(_client, _email, _password, _callback) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_SIGN_IN, _email, _password, undefined, _callback);
+}
+
+/// The user record behind the current token. Fails when there is none.
+/// @param {Real} _client  Client handle
+/// @param {Function} _callback  callback(err, data)
+/// @returns {Real} request handle
+function colyseus_auth_get_user_data(_client, _callback) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_GET_USER_DATA, "", "", undefined, _callback);
+}
+
+/// Ask the server to send a password-reset email.
+/// @param {Real} _client  Client handle
+/// @param {String} _email
+/// @param {Function} _callback  callback(err, data)
+/// @returns {Real} request handle
+function colyseus_auth_send_password_reset_email(_client, _email, _callback) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_SEND_PASSWORD_RESET, _email, "", undefined, _callback);
+}
+
+/// Drop the token, here and in the platform's secure storage. No request.
+/// @param {Real} _client  Client handle
+function colyseus_auth_sign_out(_client) {
+    __colyseus_gm_auth_signout(_client);
     if (file_exists(__COLYSEUS_AUTH_FILE)) {
         file_delete(__COLYSEUS_AUTH_FILE);
+    }
+}
+
+/// @ignore Internal: start an auth call and route its reply like an HTTP one.
+function __colyseus_auth_request(_client, _op, _email, _password, _options, _callback) {
+    // One payload rather than three arguments: GameMaker rejects an extension
+    // function with more than four arguments of differing types.
+    var _payload = {};
+    if (_email != "") _payload.email = _email;
+    if (_password != "") _payload.password = _password;
+    if (is_struct(_options)) _payload.options = _options;
+
+    var _handle = __colyseus_gm_auth_request(_client, _op, json_stringify(_payload));
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_http_handlers, _handle,
+            method({ __inner: _callback }, __colyseus_auth_settle));
+    }
+    return _handle;
+}
+
+/// @ignore Internal: the token the server just issued has to reach the on-disk
+/// copy too, or the next launch would restore a stale one.
+function __colyseus_auth_settle(_err, _data) {
+    if (_err == undefined && is_struct(_data) && variable_struct_exists(_data, "token")) {
+        __colyseus_auth_save(_data.token);
+    }
+    if (__inner != undefined) {
+        __inner(_err, _data);
     }
 }
 

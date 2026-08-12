@@ -446,6 +446,14 @@
         return _callN('colyseus_gm_message_iter_value_number', [], []);
     };
 
+    window.colyseus_gm_auth_request = function(client_handle, op, payload_json) {
+        return _callN('colyseus_gm_auth_request', ['number', 'number', 'string'], [client_handle, op, payload_json]);
+    };
+
+    window.colyseus_gm_auth_signout = function(client_handle) {
+        _callV('colyseus_gm_auth_signout', ['number'], [client_handle]);
+    };
+
     window.colyseus_gm_auth_set_token = function(client_handle, token) {
         _callV('colyseus_gm_auth_set_token', ['number', 'string'], [client_handle, token]);
     };

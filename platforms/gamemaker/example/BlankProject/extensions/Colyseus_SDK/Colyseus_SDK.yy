@@ -1294,6 +1294,42 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_auth_request",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_auth_request",
+          "help": "(internal) start an auth call",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_auth_request",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_auth_signout",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_auth_signout",
+          "help": "(internal) drop the auth token",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_auth_signout",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_http_get",
           "argCount": 2,
           "args": [
@@ -4231,6 +4267,42 @@
           "hidden": false,
           "kind": 1,
           "name": "colyseus_message_iter_value_number",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_auth_request",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_auth_request",
+          "help": "(internal) start an auth call",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_auth_request",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_auth_signout",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_auth_signout",
+          "help": "(internal) drop the auth token",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_auth_signout",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2

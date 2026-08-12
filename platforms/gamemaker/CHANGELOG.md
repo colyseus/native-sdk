@@ -5,6 +5,23 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 ## 0.18.0
 
 ### Added
+- Auth sign-in flows, alongside the token accessors that already existed:
+  - `colyseus_auth_sign_in_anonymously(client, callback, [options])`
+  - `colyseus_auth_register_with_email_and_password(client, email, password, callback, [options])`
+  - `colyseus_auth_sign_in_with_email_and_password(client, email, password, callback)`
+  - `colyseus_auth_get_user_data(client, callback)`
+  - `colyseus_auth_send_password_reset_email(client, email, callback)`
+  - `colyseus_auth_sign_out(client)` — drops the token here, in the on-disk
+    copy, and in the platform's secure storage. `colyseus_auth_clear_token` is
+    now an alias for it.
+  - Each takes the same `callback(err, data)` an HTTP call does, where a
+    successful `data` is the server's own `{ user, token }` reply. The token
+    lands on the client, so later `colyseus_http_*` calls are authenticated.
+  - The calls block in the core, so they run on the same worker thread HTTP
+    uses and answer through the polled event queue — `colyseus_process()` is
+    what delivers them. No new event types: an auth call is a request to
+    `/auth/*`, so its reply travels as a normal HTTP response.
+- `TestAuthApi` script covering the flows against the example server.
 - Latency-based endpoint selection:
   - `colyseus_get_latency(client, endpoint, callback, timeout_ms = 0)` — measures the round-trip time to a server; `callback(err, latency_ms)`.
   - `colyseus_select_by_latency(client, endpoints, callback, timeout_ms = 0)` — measures an array of endpoints in parallel; `callback(err, { endpoint, latency_ms })` returns the lowest-latency endpoint.

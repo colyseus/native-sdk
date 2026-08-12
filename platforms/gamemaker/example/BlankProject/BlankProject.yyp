@@ -29,6 +29,7 @@
     {"id":{"name":"TestPredictAdvanced","path":"scripts/TestPredictAdvanced/TestPredictAdvanced.yy",},},
     {"id":{"name":"TestPredictNet","path":"scripts/TestPredictNet/TestPredictNet.yy",},},
     {"id":{"name":"TestHttpHelpers","path":"scripts/TestHttpHelpers/TestHttpHelpers.yy",},},
+    {"id":{"name":"TestAuthApi","path":"scripts/TestAuthApi/TestAuthApi.yy",},},
     {"id":{"name":"TestHttpApi","path":"scripts/TestHttpApi/TestHttpApi.yy",},},
     {"id":{"name":"TestLatencyApi","path":"scripts/TestLatencyApi/TestLatencyApi.yy",},},
     {"id":{"name":"TestRoomApi","path":"scripts/TestRoomApi/TestRoomApi.yy",},},
