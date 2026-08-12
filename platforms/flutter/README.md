@@ -90,6 +90,35 @@ void onFrame() {
 `recon.drift.ema` stays at the floating-point noise floor; when it drifts, that
 number tells you.
 
+### HTTP and auth
+
+`colyseus_http_*` and `colyseus_auth_*` in the core BLOCK — each runs its
+request inline and calls back before returning. The binding queues them onto a
+worker thread (`src/flutter_http.c`) and answers through a
+`NativeCallable.listener`, so neither call stalls the frame loop.
+
+```dart
+final res = await client.http.get('/test');
+print(res.json['things']);
+await client.http.post('/save', body: {'name': 'endel'});
+
+final data = await client.auth.signInAnonymously();
+print(data.user?['anonymousId']);
+
+// The token is shared with client.http, so later requests are authenticated.
+client.auth.onChange.listen((d) {
+  if (d.token == null) showLoginScreen();
+});
+```
+
+A non-2xx reply throws `ColyseusHttpException`; a rejected auth call throws
+`ColyseusAuthException`.
+
+The token is persisted through the platform's secure storage under one
+process-wide key, so it survives a restart AND leaks between test runs — a
+suite that signs in should sign out again, or later clients will send a token
+the next server rejects.
+
 See [CHANGELOG.md](CHANGELOG.md) for the full 0.18 surface, and
 [`demos/prediction-tools/clients/flutter-app`](../../../demos/prediction-tools/clients/flutter-app)
 for a worked example.

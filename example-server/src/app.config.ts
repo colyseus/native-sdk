@@ -6,6 +6,11 @@ import {
     auth,
 } from "colyseus";
 
+// Installs onFindUserByEmail / onRegisterWithEmailAndPassword. Without it the
+// register and login routes answer "not implemented" and only the anonymous
+// flow works, which is half of what the SDK auth suites exercise.
+import "./config/auth.config";
+
 /**
  * Import your Room files
  */

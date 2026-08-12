@@ -1,10 +1,12 @@
 /// Colyseus client SDK for Flutter, over the native C SDK via dart:ffi.
 library;
 
+export 'src/auth.dart';
 export 'src/client.dart';
 export 'src/colyseus.dart' show Colyseus;
 export 'src/drift.dart';
 export 'src/events.dart';
+export 'src/http.dart';
 export 'src/msgpack.dart' show msgpackDecode, MsgpackFormatException;
 export 'src/input_handle.dart';
 export 'src/predict.dart';

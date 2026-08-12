@@ -44,3 +44,21 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   rather than a velocity. The slope window now extends to the newest patch,
   which the absent callback proves the value still held at, so it decays as the
   field stays quiet.
+
+### Fixed
+- Auth's `stored_token` is a process-wide pointer that every response rewrites,
+  with no lock. A host that runs HTTP on a worker thread (the Flutter binding
+  does, because `colyseus_http_*` blocks) races it against a client being
+  constructed on the main thread and frees the string mid-`strdup`. Now guarded,
+  compiled away on Emscripten like net_delay.c's.
+- The auth callbacks handed the result to the app BEFORE settling their own
+  state, so a binding that resolves a future from `on_success` gave the app the
+  thread back while the core still had to touch `auth` — disposing the client
+  there freed it under `auth_emit_change`. They now emit first and hand out
+  second, which is also the JS SDK's order (`emitChange(data)` precedes the
+  promise resolving).
+- A successful `colyseus_auth_get_user_data` cleared the token that authorised
+  it: `/auth/userdata` answers with the user and no token, and emitting that
+  verbatim took `auth_emit_change`'s no-token branch, wiping both the header and
+  the stored copy. It now carries the current token through, matching the JS
+  SDK's `{...userData, token: this.token}`.

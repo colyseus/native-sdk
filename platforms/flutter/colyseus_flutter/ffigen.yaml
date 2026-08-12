@@ -27,6 +27,9 @@ headers:
     - '../../../include/colyseus/predict/events.h'
     - '../../../include/colyseus/predict/spawns.h'
     - '../../../include/colyseus/predict/drift.h'
+    - '../../../include/colyseus/client.h'
+    - '../../../include/colyseus/http.h'
+    - '../../../include/colyseus/auth/auth.h'
   # Only declarations from the SDK's own headers — not uthash, not libc.
   include-directives:
     - '**/include/colyseus/**'
@@ -70,6 +73,17 @@ functions:
     - 'colyseus_spawns_.*'
     - 'colyseus_drift_.*'
 
+    # HTTP + auth. The blocking request calls are NOT here: they go through
+    # the glue's worker thread (colyseus_flutter_http_request). What is left
+    # is the handles and the synchronous token/settings surface.
+    - 'colyseus_client_get_http'
+    - 'colyseus_client_get_auth'
+    - 'colyseus_http_set_auth_token'
+    - 'colyseus_auth_set_token'
+    - 'colyseus_auth_set_path'
+    - 'colyseus_auth_set_storage_key'
+    - 'colyseus_auth_signout'
+
   # Leaf calls skip the Dart-to-native transition bookkeeping, and in exchange
   # the VM forbids running any Dart callback underneath them ("Cannot invoke
   # native callback from a leaf call"). So this list is strictly the pure
@@ -86,6 +100,8 @@ functions:
       - 'colyseus_spawns_(size|alive)'
       - 'colyseus_event_channel_(has|pending_count)'
       - 'colyseus_netdelay_in_flight'
+      - 'colyseus_client_get_(http|auth)'
+      # NOT leaf: colyseus_auth_signout and set_token emit the change callback.
 
 typedefs:
   include:

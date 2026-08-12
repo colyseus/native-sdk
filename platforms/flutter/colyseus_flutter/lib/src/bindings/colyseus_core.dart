@@ -2680,6 +2680,124 @@ class ColyseusCore {
       _colyseus_sim_reconciler_worldPtr.asFunction<
           ffi.Pointer<colyseus_sim_world_t> Function(
               ffi.Pointer<colyseus_reconciler_t>)>();
+
+  void colyseus_http_set_auth_token(
+    ffi.Pointer<colyseus_http_t> http,
+    ffi.Pointer<ffi.Char> token,
+  ) {
+    return _colyseus_http_set_auth_token(
+      http,
+      token,
+    );
+  }
+
+  late final _colyseus_http_set_auth_tokenPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Void Function(ffi.Pointer<colyseus_http_t>,
+              ffi.Pointer<ffi.Char>)>>('colyseus_http_set_auth_token');
+  late final _colyseus_http_set_auth_token =
+      _colyseus_http_set_auth_tokenPtr.asFunction<
+          void Function(ffi.Pointer<colyseus_http_t>, ffi.Pointer<ffi.Char>)>();
+
+  void colyseus_auth_set_path(
+    ffi.Pointer<colyseus_auth_t> auth,
+    ffi.Pointer<ffi.Char> path,
+  ) {
+    return _colyseus_auth_set_path(
+      auth,
+      path,
+    );
+  }
+
+  late final _colyseus_auth_set_pathPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Void Function(ffi.Pointer<colyseus_auth_t>,
+              ffi.Pointer<ffi.Char>)>>('colyseus_auth_set_path');
+  late final _colyseus_auth_set_path = _colyseus_auth_set_pathPtr.asFunction<
+      void Function(ffi.Pointer<colyseus_auth_t>, ffi.Pointer<ffi.Char>)>();
+
+  void colyseus_auth_set_storage_key(
+    ffi.Pointer<colyseus_auth_t> auth,
+    ffi.Pointer<ffi.Char> key,
+  ) {
+    return _colyseus_auth_set_storage_key(
+      auth,
+      key,
+    );
+  }
+
+  late final _colyseus_auth_set_storage_keyPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Void Function(ffi.Pointer<colyseus_auth_t>,
+              ffi.Pointer<ffi.Char>)>>('colyseus_auth_set_storage_key');
+  late final _colyseus_auth_set_storage_key =
+      _colyseus_auth_set_storage_keyPtr.asFunction<
+          void Function(ffi.Pointer<colyseus_auth_t>, ffi.Pointer<ffi.Char>)>();
+
+  void colyseus_auth_set_token(
+    ffi.Pointer<colyseus_auth_t> auth,
+    ffi.Pointer<ffi.Char> token,
+  ) {
+    return _colyseus_auth_set_token(
+      auth,
+      token,
+    );
+  }
+
+  late final _colyseus_auth_set_tokenPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Void Function(ffi.Pointer<colyseus_auth_t>,
+              ffi.Pointer<ffi.Char>)>>('colyseus_auth_set_token');
+  late final _colyseus_auth_set_token = _colyseus_auth_set_tokenPtr.asFunction<
+      void Function(ffi.Pointer<colyseus_auth_t>, ffi.Pointer<ffi.Char>)>();
+
+  void colyseus_auth_signout(
+    ffi.Pointer<colyseus_auth_t> auth,
+  ) {
+    return _colyseus_auth_signout(
+      auth,
+    );
+  }
+
+  late final _colyseus_auth_signoutPtr = _lookup<
+          ffi.NativeFunction<ffi.Void Function(ffi.Pointer<colyseus_auth_t>)>>(
+      'colyseus_auth_signout');
+  late final _colyseus_auth_signout = _colyseus_auth_signoutPtr
+      .asFunction<void Function(ffi.Pointer<colyseus_auth_t>)>();
+
+  ffi.Pointer<colyseus_http_t> colyseus_client_get_http(
+    ffi.Pointer<colyseus_client_t> client,
+  ) {
+    return _colyseus_client_get_http(
+      client,
+    );
+  }
+
+  late final _colyseus_client_get_httpPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Pointer<colyseus_http_t> Function(
+              ffi.Pointer<colyseus_client_t>)>>('colyseus_client_get_http');
+  late final _colyseus_client_get_http =
+      _colyseus_client_get_httpPtr.asFunction<
+          ffi.Pointer<colyseus_http_t> Function(
+              ffi.Pointer<colyseus_client_t>)>(isLeaf: true);
+
+  ffi.Pointer<colyseus_auth_t> colyseus_client_get_auth(
+    ffi.Pointer<colyseus_client_t> client,
+  ) {
+    return _colyseus_client_get_auth(
+      client,
+    );
+  }
+
+  late final _colyseus_client_get_authPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Pointer<colyseus_auth_t> Function(
+              ffi.Pointer<colyseus_client_t>)>>('colyseus_client_get_auth');
+  late final _colyseus_client_get_auth =
+      _colyseus_client_get_authPtr.asFunction<
+          ffi.Pointer<colyseus_auth_t> Function(
+              ffi.Pointer<colyseus_client_t>)>(isLeaf: true);
 }
 
 final class colyseus_transport extends ffi.Struct {
@@ -4343,3 +4461,52 @@ typedef Dartcolyseus_sim_step_fnFunction = void Function(
     ffi.Pointer<colyseus_sim_world_t> world,
     ffi.Pointer<colyseus_schema_t> command,
     ffi.Pointer<ffi.Void> userdata);
+
+final class colyseus_http_response_t extends ffi.Struct {
+  @ffi.Int()
+  external int status_code;
+
+  external ffi.Pointer<ffi.Char> body;
+
+  @ffi.Bool()
+  external bool success;
+}
+
+final class colyseus_http_error_t extends ffi.Struct {
+  @ffi.Int()
+  external int code;
+
+  external ffi.Pointer<ffi.Char> message;
+}
+
+final class colyseus_http_t extends ffi.Struct {
+  external ffi.Pointer<colyseus_settings_t> settings;
+
+  external ffi.Pointer<ffi.Char> auth_token;
+}
+
+final class colyseus_auth_t extends ffi.Opaque {}
+
+final class colyseus_auth_data_t extends ffi.Struct {
+  external ffi.Pointer<ffi.Char> user_json;
+
+  external ffi.Pointer<ffi.Char> token;
+}
+
+final class colyseus_auth_settings_t extends ffi.Struct {
+  external ffi.Pointer<ffi.Char> path;
+
+  external ffi.Pointer<ffi.Char> key;
+}
+
+final class colyseus_client_t extends ffi.Struct {
+  external ffi.Pointer<colyseus_settings_t> settings;
+
+  external colyseus_transport_factory_fn transport_factory;
+
+  external ffi.Pointer<colyseus_http_t> http;
+
+  external ffi.Pointer<colyseus_auth_t> auth;
+
+  external ffi.Pointer<ffi.Void> http_worker;
+}

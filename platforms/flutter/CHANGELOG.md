@@ -46,6 +46,19 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
   available to rooms that declare no inputs.
 - `Colyseus.selectByLatency(endpoints)` — measure several endpoints and take
   the fastest.
+- `client.http` — `get` / `post` / `put` / `delete` / `patch` against the
+  server's routes, each returning a `Future<ColyseusHttpResponse>` with the
+  body and a lazily-decoded `json`. A non-2xx reply throws
+  `ColyseusHttpException`. Map and List bodies are JSON-encoded for you; a
+  String goes out verbatim.
+- `client.auth` — `signInAnonymously`, `registerWithEmailAndPassword`,
+  `signInWithEmailAndPassword`, `getUserData`, `sendPasswordResetEmail`,
+  `signOut`, the `token` property, `path` / `storageKey` settings, and an
+  `onChange` stream that reports every sign-in and sign-out. The token is
+  shared with `client.http`, so signing in authenticates later requests.
+  Requests run on a worker thread — the core's http and auth calls block —
+  and results arrive through a listener callable, so neither stalls the frame
+  loop.
 - `Colyseus.pump()` and `Colyseus.autoPoll` — drive the SDK from the app's own
   frame callback instead of its internal timer, so decoding, prediction and
   rendering all happen on one thread inside one frame.
@@ -86,7 +99,6 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
 - `room.request()` / response is not bound. The reply arrives as a message
   reader with no accessor for the underlying bytes, so there is nothing for
   the Dart decoder to read; it needs a small addition to the core reader.
-- `client.http` and `client.auth` are not bound.
 - On Windows the predict layer's objects are still dead-stripped out of the
   DLL. Every other platform links them through the anchor table in
   `src/flutter_extras.c`.

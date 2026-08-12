@@ -117,6 +117,65 @@ FLUTTER_EXPORT int colyseus_flutter_client_reconnect(intptr_t client_handle, con
 FLUTTER_EXPORT void colyseus_flutter_set_serialized_inbound(int enabled);
 
 // =============================================================================
+// HTTP + Auth (src/flutter_http.c)
+// =============================================================================
+
+/** Which verb a queued HTTP task runs. */
+typedef enum {
+    FLUTTER_HTTP_GET = 0,
+    FLUTTER_HTTP_POST = 1,
+    FLUTTER_HTTP_PUT = 2,
+    FLUTTER_HTTP_DELETE = 3,
+    FLUTTER_HTTP_PATCH = 4,
+} flutter_http_method_t;
+
+/** Which auth call a queued auth task runs. */
+typedef enum {
+    FLUTTER_AUTH_GET_USER_DATA = 0,
+    FLUTTER_AUTH_REGISTER = 1,
+    FLUTTER_AUTH_SIGNIN = 2,
+    FLUTTER_AUTH_SIGNIN_ANONYMOUS = 3,
+    FLUTTER_AUTH_SEND_PASSWORD_RESET = 4,
+} flutter_auth_op_t;
+
+/**
+ * Queue an HTTP request on the shared worker thread.
+ *
+ * `callback` is a NativeCallable.listener of shape
+ * `(int64 request_id, int status, char* body, int error_code, char* error_message)`.
+ * On success `status`/`body` are set; on failure `status` is 0 and the error
+ * pair is. Both strings are heap copies the caller frees with
+ * colyseus_flutter_free_string.
+ */
+FLUTTER_EXPORT void colyseus_flutter_http_request(intptr_t http, int method,
+    const char* path, const char* json_body, int64_t request_id, void* callback);
+
+/**
+ * Queue an auth call on the same worker.
+ *
+ * `arg1`/`arg2` are email/password where the op takes them, `options_json` the
+ * optional payload for register and anonymous sign-in. `callback` is a
+ * listener of shape `(int64 request_id, char* user_json, char* token, char* error)`;
+ * a non-NULL `error` means the call failed. Strings are heap copies.
+ */
+FLUTTER_EXPORT void colyseus_flutter_auth_request(intptr_t auth, int op,
+    const char* arg1, const char* arg2, const char* options_json,
+    int64_t request_id, void* callback);
+
+/**
+ * The current auth token as a heap COPY (the core's own pointer dies on the
+ * next set_token/signout). NULL when unset; free with
+ * colyseus_flutter_free_string.
+ */
+FLUTTER_EXPORT char* colyseus_flutter_auth_get_token(intptr_t auth);
+
+/**
+ * Subscribe to auth-state changes. `callback` is a listener of shape
+ * `(char* user_json, char* token)`, both heap copies.
+ */
+FLUTTER_EXPORT void colyseus_flutter_auth_on_change(intptr_t auth, void* callback);
+
+// =============================================================================
 // Room Functions
 // =============================================================================
 

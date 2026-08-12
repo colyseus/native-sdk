@@ -2,8 +2,11 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'package:ffi/ffi.dart';
 
+import 'auth.dart';
+import 'bindings/colyseus_core.dart';
 import 'bindings/native_functions.dart';
 import 'event_poller.dart';
+import 'http.dart';
 import 'room.dart';
 
 final _n = NativeFunctions.instance;
@@ -27,6 +30,8 @@ final _n = NativeFunctions.instance;
 /// ```
 class ColyseusClient {
   int _handle;
+  ColyseusHttp? _http;
+  ColyseusAuth? _auth;
 
   /// Create a client connected to the given endpoint.
   /// [endpoint] should include protocol, e.g. "ws://localhost:2567" or "wss://example.com"
@@ -122,9 +127,26 @@ class ColyseusClient {
     return ColyseusEventPoller.instance.registerPendingJoin(roomRef, room);
   }
 
+  /// The HTTP surface: `client.http.get('/test')`.
+  ///
+  /// Paths resolve against this client's endpoint. Requests run on a worker
+  /// thread, so they never stall the frame loop.
+  ColyseusHttp get http => _http ??=
+      ColyseusHttp(Pointer<colyseus_client_t>.fromAddress(_handle));
+
+  /// The auth surface: `client.auth.signInAnonymously()`.
+  ///
+  /// A token obtained here is attached to every later request from this
+  /// client, [http] included.
+  ColyseusAuth get auth => _auth ??=
+      ColyseusAuth(Pointer<colyseus_client_t>.fromAddress(_handle));
+
   /// Dispose the client and release native resources.
   void dispose() {
     if (_handle != 0) {
+      _auth?.dispose();
+      _auth = null;
+      _http = null;
       _n.clientFree(_handle);
       _handle = 0;
     }

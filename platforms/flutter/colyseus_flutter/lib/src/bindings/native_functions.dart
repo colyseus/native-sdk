@@ -383,6 +383,35 @@ class NativeFunctions {
       Void Function(Pointer<Char>),
       void Function(Pointer<Char>)>('colyseus_flutter_free_string');
 
+  // ===== Extras: HTTP + auth =====
+  //
+  // The core's http/auth calls block, so these queue onto a worker thread and
+  // answer through a listener callable. Every string handed back is an owned
+  // copy — release it with [freeString].
+
+  late final httpRequest = _lib.lookupFunction<
+      Void Function(IntPtr, Int32, Pointer<Char>, Pointer<Char>, Int64,
+          Pointer<NativeFunction<HttpReplyNative>>),
+      void Function(int, int, Pointer<Char>, Pointer<Char>, int,
+          Pointer<NativeFunction<HttpReplyNative>>)>(
+      'colyseus_flutter_http_request');
+
+  late final authRequest = _lib.lookupFunction<
+      Void Function(IntPtr, Int32, Pointer<Char>, Pointer<Char>, Pointer<Char>,
+          Int64, Pointer<NativeFunction<AuthReplyNative>>),
+      void Function(int, int, Pointer<Char>, Pointer<Char>, Pointer<Char>, int,
+          Pointer<NativeFunction<AuthReplyNative>>)>(
+      'colyseus_flutter_auth_request');
+
+  late final authGetToken = _lib.lookupFunction<
+      Pointer<Char> Function(IntPtr),
+      Pointer<Char> Function(int)>('colyseus_flutter_auth_get_token');
+
+  late final authOnChange = _lib.lookupFunction<
+      Void Function(IntPtr, Pointer<NativeFunction<AuthChangeNative>>),
+      void Function(int, Pointer<NativeFunction<AuthChangeNative>>)>(
+      'colyseus_flutter_auth_on_change');
+
   // ===== Extras: field access =====
   //
   // Resolve a name once, then read/write through (type, offset, index).
@@ -481,3 +510,15 @@ class NativeFunctions {
       Int32 Function(IntPtr, Pointer<Utf8>),
       int Function(int, Pointer<Utf8>)>('colyseus_flutter_collection_contains');
 }
+
+/// `(requestId, status, body, errorCode, errorMessage)` — status/body on
+/// success, the error pair on failure. Both strings are owned copies.
+typedef HttpReplyNative = Void Function(
+    Int64, Int32, Pointer<Char>, Int32, Pointer<Char>);
+
+/// `(requestId, userJson, token, error)` — a non-null error means it failed.
+typedef AuthReplyNative = Void Function(
+    Int64, Pointer<Char>, Pointer<Char>, Pointer<Char>);
+
+/// `(userJson, token)` on every auth-state change.
+typedef AuthChangeNative = Void Function(Pointer<Char>, Pointer<Char>);

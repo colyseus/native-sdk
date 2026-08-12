@@ -261,6 +261,7 @@ fn buildFlutterLibrary(
         .files = &.{
             "src/flutter_export.c",
             "src/flutter_extras.c",
+            "src/flutter_http.c",
         },
         .flags = c_flags.items,
     });
