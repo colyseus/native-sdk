@@ -283,6 +283,26 @@ static void on_sample(void* current_value, void* previous_value, void* userdata)
     slot->ring_count = count < RING_CAP ? count + 1 : count;
 }
 
+/* ── ring time axis ──────────────────────────────────────────────────── */
+
+/*
+ * Ring samples are stamped with last_server_time once a timed patch has
+ * landed, and with local arrival time before that (see on_sample). Every mode
+ * that compares a sample against "now" has to pick the matching clock —
+ * differencing the caller's frame clock against a server-stamped sample is how
+ * extrapolate ended up projecting a constant cap instead of the sample's age.
+ */
+static bool predict_clock_synced(const colyseus_predict_t* p) {
+    return p->clock && colyseus_room_clock_last_server_time(p->clock) > 0;
+}
+
+/* "Now" on whichever axis the ring is currently stamped in. */
+static double predict_present(const colyseus_predict_t* p) {
+    return predict_clock_synced(p)
+        ? colyseus_room_clock_server_now(p->clock)
+        : p->render_time;
+}
+
 /* ── mode computers ──────────────────────────────────────────────────── */
 
 static double compute_raw(const predict_slot_t* slot) {
@@ -309,10 +329,13 @@ static double compute_lerp(colyseus_predict_t* p, const predict_slot_t* slot) {
     int newest = (start + count - 1) % RING_CAP;
     if (count == 1) return slot->ring_v[newest];
 
-    /* render at the SAME instant the server's lag-comp rewinds to */
-    double target = (p->clock && colyseus_room_clock_last_server_time(p->clock) > 0)
-        ? colyseus_room_clock_server_now(p->clock) - slot->opts.delay - colyseus_room_clock_smoothed_rtt(p->clock) / 2
-        : p->render_time - slot->opts.delay;
+    /* Render at the SAME instant the server's lag-comp rewinds to. On the
+     * server axis the one-way latency has to come off explicitly; the arrival
+     * axis already carries it, having been stamped after the transit. */
+    double target = predict_present(p) - slot->opts.delay;
+    if (predict_clock_synced(p)) {
+        target -= colyseus_room_clock_smoothed_rtt(p->clock) / 2;
+    }
 
     if (target <= slot->ring_t[start]) return slot->ring_v[start];
     if (target >= slot->ring_t[newest]) return slot->ring_v[newest];
@@ -356,7 +379,7 @@ static double compute_extrapolate(colyseus_predict_t* p, predict_slot_t* slot) {
          * the entity at a fixed offset (spectacularly so after a teleport,
          * whose slope is a discontinuity rather than a velocity). */
         double hold_t = newest_t;
-        if (p->clock) {
+        if (predict_clock_synced(p)) {
             double patch_t = colyseus_room_clock_last_server_time(p->clock);
             if (patch_t > hold_t) hold_t = patch_t;
         }
@@ -365,14 +388,8 @@ static double compute_extrapolate(colyseus_predict_t* p, predict_slot_t* slot) {
             raw = newest_v;
         } else {
             double slope = (newest_v - slot->ring_v[lb]) / dt;
-            /* Project by the snapshot's AGE, which is on the ring's own axis:
-             * server time once the clock syncs, arrival time before that.
-             * render_time is the caller's frame clock — differencing it
-             * against a server-stamped sample pins `ahead` at the cap. */
-            double present = (p->clock && colyseus_room_clock_last_server_time(p->clock) > 0)
-                ? colyseus_room_clock_server_now(p->clock)
-                : now;
-            double ahead = present - hold_t;
+            /* Project by the snapshot's AGE, measured on the ring's axis. */
+            double ahead = predict_present(p) - hold_t;
             if (ahead < 0) ahead = 0;
             else if (ahead > slot->opts.max_extrapolate) ahead = slot->opts.max_extrapolate;
             raw = newest_v + slope * ahead;
