@@ -115,6 +115,56 @@ void main() {
     });
   });
 
+  // Opaque parts are how a client-simulated entity with no decoded instance
+  // joins the world — an AI paddle, say. The store carries it without ever
+  // dereferencing it, and adopt is its only rollback restore point.
+  test('an opaque part reaches the step and survives a rollback', () async {
+    await withRoom(playground, 'lab-hockey', (client, room) async {
+      final me = await waitForOwnEntry(room);
+      final puck = await waitForValue(() => room.state?.getRef('puck'));
+
+      final predict = Predict.of(room);
+      final input = room.input()!;
+      final ghost = _Ghost(10, 20);
+
+      var sawGhost = false;
+      var adopts = 0;
+
+      predict.sim(
+        input: input,
+        options: SimOptions(
+          parts: [
+            SimPart('paddle', me),
+            SimPart('puck', puck),
+            SimPart.opaque('ghost', ghost),
+          ],
+          adopt: (world) {
+            adopts++;
+            // The store never touches an opaque part, so restoring it is the
+            // app's job. Without this a replay would compound its motion.
+            (world.opaque('ghost') as _Ghost).reset();
+          },
+        ),
+        step: (ctx, world, cmd) {
+          final g = world.opaque('ghost');
+          if (g is _Ghost) {
+            sawGhost = true;
+            g.x += 1;
+          }
+          final paddle = world.part('paddle');
+          if (paddle != null) stepEntity(paddle, cmd, ctx.dt);
+        },
+      );
+
+      await driveFrames(room, predict, input, 60, moveX: 1);
+
+      expect(sawGhost, isTrue,
+          reason: 'the opaque part never reached the step');
+      expect(adopts, greaterThan(0), reason: 'adopt never ran');
+      expect(ghost.x, greaterThan(10), reason: 'the step never advanced it');
+    });
+  });
+
   test('a world with no bound parts requires an adopt callback', () async {
     await withRoom(playground, 'lab-hockey', (client, room) async {
       await waitForOwnEntry(room);
@@ -132,4 +182,14 @@ void main() {
       );
     });
   });
+}
+
+/// An entity the client simulates itself, with no decoded instance behind it.
+class _Ghost {
+  double x;
+  final double startX;
+
+  _Ghost(this.x, this.startX);
+
+  void reset() => x = startX;
 }

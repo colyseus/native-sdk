@@ -20,7 +20,9 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
     `value` / `state` / `pendingCount` / `reconcileSeq` / `lastCorrection` /
     `drift` / `reset`.
   - `predict.sim(...)` for entities that interact, where rolling one back means
-    rolling back what it collided with.
+    rolling back what it collided with. Parts are either bound to a decoded
+    instance or opaque — an entity the client simulates itself, carried
+    through untouched and restored by the world's `adopt`.
   - `predict.defineEvent(...)` for optimistic events, predicted from the
     simulation with `ctx.predict` (replay-safe) or from UI code with
     `channel.predict`, settled with `confirm` / `reject`.

@@ -6,6 +6,7 @@ import 'bindings/colyseus_core.dart';
 import 'bindings/native_functions.dart';
 import 'colyseus.dart';
 import 'input_handle.dart';
+import 'payload_registry.dart';
 import 'predict.dart';
 import 'reconciler.dart';
 import 'schema.dart';
@@ -24,10 +25,20 @@ class SimPart {
   /// The authoritative instance, or null for an opaque part.
   final SchemaInstance? source;
 
-  const SimPart(this.name, this.source);
+  /// The app's own object, for an opaque part. Null for a bound one.
+  final Object? opaque;
 
-  /// A part the store doesn't manage; [SimOptions.adopt] restores it.
-  const SimPart.opaque(this.name) : source = null;
+  const SimPart(this.name, this.source) : opaque = null;
+
+  /// A part the store doesn't manage.
+  ///
+  /// Use it for state that has no decoded instance behind it — an AI the
+  /// client simulates, say. The store never touches [object]; reach it from
+  /// [SimWorld.opaque] inside the step, and restore it from authority in
+  /// [SimOptions.adopt], which is the rollback's only restore point for it.
+  const SimPart.opaque(this.name, [Object? object])
+      : source = null,
+        opaque = object;
 }
 
 /// The world handed to a composite step.
@@ -37,11 +48,20 @@ class SimWorld {
   final Pointer<colyseus_sim_world> _handle;
   final Map<String, SchemaView> _parts = {};
 
-  SimWorld._(this._handle);
+  SimWorld._(this._handle, this._opaque);
+
+  final Map<String, Object?> _opaque;
+
+  /// The app object behind the opaque part named [name].
+  ///
+  /// Opaque parts have no schema instance, so they are reached this way
+  /// rather than through [part].
+  Object? opaque(String name) => _opaque[name];
 
   /// A mutable view of the part named [name].
   ///
-  /// Only bound parts resolve; an opaque part has no schema instance to view.
+  /// Only bound parts resolve; an opaque part has no schema instance to view,
+  /// so use [opaque] for those.
   SchemaView? part(String name) {
     final cached = _parts[name];
     if (cached != null) return cached;
@@ -141,6 +161,13 @@ Reconciler createSimReconciler({
   SimWorld? world;
   SchemaView? commandView;
 
+  // Opaque parts stay on the Dart side; the native store only carries the
+  // cookie, and never dereferences it.
+  final opaqueByName = <String, Object?>{
+    for (final part in options.parts)
+      if (part.source == null) part.name: part.opaque,
+  };
+
   // A different world pointer means different mirrors, so the cached part
   // views go with it.
   SimWorld resolveWorld(Pointer<colyseus_sim_world> handle) {
@@ -148,7 +175,7 @@ Reconciler createSimReconciler({
     if (existing != null && existing._handle.address == handle.address) {
       return existing;
     }
-    return world = SimWorld._(handle);
+    return world = SimWorld._(handle, opaqueByName);
   }
 
   final stepCallable = NativeCallable<
@@ -215,6 +242,8 @@ Reconciler createSimReconciler({
         parts[i].vtable = Pointer<colyseus_schema_vtable_t>.fromAddress(
           n.instanceVtable(source.handle),
         );
+      } else {
+        parts[i].opaque = retainPayload(part.opaque);
       }
     }
 
