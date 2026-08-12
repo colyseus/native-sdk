@@ -3,6 +3,8 @@
 #include "tls_certificates.h"
 #include <colyseus/client.h>
 #include <colyseus/http.h>
+#include <colyseus/auth/auth.h>
+#include "cJSON.h"
 #include <colyseus/room.h>
 #include <colyseus/settings.h>
 #include <colyseus/schema/types.h>
@@ -853,7 +855,8 @@ static void on_gdext_http_error(const colyseus_http_error_t* error, void* userda
 }
 
 // Thread function — runs the blocking HTTP call
-static void gdext_http_thread_func(gdext_http_request_t* req) {
+static void gdext_http_thread_func(void* userdata) {
+    gdext_http_request_t* req = (gdext_http_request_t*)userdata;
     switch (req->method) {
         case 0: colyseus_http_get(req->http, req->path, on_gdext_http_success, on_gdext_http_error, req); break;
         case 1: colyseus_http_post(req->http, req->path, req->body, on_gdext_http_success, on_gdext_http_error, req); break;
@@ -869,19 +872,57 @@ static void gdext_http_thread_func(gdext_http_request_t* req) {
     free(req);
 }
 
+/*
+ * One detached thread per request. The core's http and auth calls BLOCK, and
+ * their result reaches Godot through the polled event queue rather than a
+ * signal emitted off-thread — which never fires in headless.
+ */
+typedef void (*gdext_request_fn)(void*);
+
+typedef struct {
+    gdext_request_fn run;
+    void* request;
+} gdext_thread_arg_t;
+
 #ifndef __EMSCRIPTEN__
 #ifdef _WIN32
-static DWORD WINAPI gdext_http_thread_wrapper(LPVOID arg) {
-    gdext_http_thread_func((gdext_http_request_t*)arg);
+static DWORD WINAPI gdext_request_thread(LPVOID arg) {
+    gdext_thread_arg_t* a = (gdext_thread_arg_t*)arg;
+    a->run(a->request);
+    free(a);
     return 0;
 }
 #else
-static void* gdext_http_thread_wrapper(void* arg) {
-    gdext_http_thread_func((gdext_http_request_t*)arg);
+static void* gdext_request_thread(void* arg) {
+    gdext_thread_arg_t* a = (gdext_thread_arg_t*)arg;
+    a->run(a->request);
+    free(a);
     return NULL;
 }
 #endif
 #endif
+
+static void gdext_spawn_request(gdext_request_fn run, void* request) {
+#ifdef __EMSCRIPTEN__
+    run(request); /* single-threaded: the browser blocks here anyway */
+#else
+    gdext_thread_arg_t* arg = (gdext_thread_arg_t*)calloc(1, sizeof(*arg));
+    if (!arg) { run(request); return; }
+    arg->run = run;
+    arg->request = request;
+#ifdef _WIN32
+    HANDLE thread = CreateThread(NULL, 0, gdext_request_thread, arg, 0, NULL);
+    if (thread) CloseHandle(thread);
+#else
+    pthread_t thread;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_create(&thread, &attr, gdext_request_thread, arg);
+    pthread_attr_destroy(&attr);
+#endif
+#endif
+}
 
 // Dispatch HTTP request, returns request_id
 static int64_t gdext_http_dispatch(ColyseusClientWrapper* wrapper, int method, const char* path, const char* body) {
@@ -900,20 +941,117 @@ static int64_t gdext_http_dispatch(ColyseusClientWrapper* wrapper, int method, c
     req->wrapper = wrapper;
     __sync_fetch_and_add(&wrapper->pending_http_requests, 1);
 
-#ifdef __EMSCRIPTEN__
-    gdext_http_thread_func(req);
-#elif defined(_WIN32)
-    HANDLE thread = CreateThread(NULL, 0, gdext_http_thread_wrapper, req, 0, NULL);
-    if (thread) CloseHandle(thread);
-#else
-    pthread_t thread;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_create(&thread, &attr, gdext_http_thread_wrapper, req);
-    pthread_attr_destroy(&attr);
-#endif
+    gdext_spawn_request(gdext_http_thread_func, req);
+    return g_http_request_counter;
+}
 
+// =============================================================================
+// Auth — the same road as HTTP
+//
+// Every auth call IS a request to /auth/*, and the core keeps the reply's
+// {user, token} shape, so recomposing that object lets the result travel the
+// HTTP event queue and reach GDScript through the same _http_response signal.
+// No second queue, no second signal, and the callback receives exactly what
+// the server sent.
+// =============================================================================
+
+typedef struct {
+    colyseus_auth_t* auth;
+    int op;              // gdext_auth_op_t
+    char* email;
+    char* password;
+    char* options_json;
+    int64_t request_id;
+    GDExtensionObjectPtr client_object;
+    ColyseusClientWrapper* wrapper;
+} gdext_auth_request_t;
+
+static void auth_event_push(gdext_auth_request_t* req, int is_error,
+                            int code, char* body_or_message) {
+    gdext_http_event_t* event = (gdext_http_event_t*)calloc(1, sizeof(gdext_http_event_t));
+    if (!event) { free(body_or_message); return; }
+    event->is_error = is_error;
+    event->request_id = req->request_id;
+    event->status_or_code = code;
+    event->body_or_message = body_or_message;
+    event->client_object = req->client_object;
+    http_event_push(event);
+}
+
+static void on_gdext_auth_success(const colyseus_auth_data_t* data, void* userdata) {
+    gdext_auth_request_t* req = (gdext_auth_request_t*)userdata;
+
+    cJSON* root = cJSON_CreateObject();
+    if (data && data->user_json) {
+        cJSON* user = cJSON_Parse(data->user_json);
+        if (user) cJSON_AddItemToObject(root, "user", user);
+    }
+    if (data && data->token) cJSON_AddStringToObject(root, "token", data->token);
+    char* body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+
+    auth_event_push(req, 0, 200, body ? body : strdup("{}"));
+}
+
+/* The core's auth error callback carries a message but no status, so the code
+ * is 0 and the server's body is the message. */
+static void on_gdext_auth_error(const char* message, void* userdata) {
+    gdext_auth_request_t* req = (gdext_auth_request_t*)userdata;
+    auth_event_push(req, 1, 0, strdup(message ? message : "auth request failed"));
+}
+
+static void gdext_auth_thread_func(void* userdata) {
+    gdext_auth_request_t* req = (gdext_auth_request_t*)userdata;
+    switch ((gdext_auth_op_t)req->op) {
+        case GDEXT_AUTH_GET_USER_DATA:
+            colyseus_auth_get_user_data(req->auth, on_gdext_auth_success, on_gdext_auth_error, req);
+            break;
+        case GDEXT_AUTH_REGISTER:
+            colyseus_auth_register_email_password(req->auth, req->email, req->password,
+                req->options_json, on_gdext_auth_success, on_gdext_auth_error, req);
+            break;
+        case GDEXT_AUTH_SIGNIN:
+            colyseus_auth_signin_email_password(req->auth, req->email, req->password,
+                on_gdext_auth_success, on_gdext_auth_error, req);
+            break;
+        case GDEXT_AUTH_SIGNIN_ANONYMOUS:
+            colyseus_auth_signin_anonymous(req->auth, req->options_json,
+                on_gdext_auth_success, on_gdext_auth_error, req);
+            break;
+        case GDEXT_AUTH_SEND_PASSWORD_RESET:
+            colyseus_auth_send_password_reset(req->auth, req->email,
+                on_gdext_auth_success, on_gdext_auth_error, req);
+            break;
+    }
+    if (req->wrapper) {
+        __sync_fetch_and_sub(&req->wrapper->pending_http_requests, 1);
+    }
+    free(req->email);
+    free(req->password);
+    free(req->options_json);
+    free(req);
+}
+
+static int64_t gdext_auth_dispatch(ColyseusClientWrapper* wrapper, int op,
+                                   const char* email, const char* password,
+                                   const char* options_json) {
+    if (!wrapper || !wrapper->native_client || !wrapper->native_client->auth) return 0;
+
+    gdext_auth_request_t* req = (gdext_auth_request_t*)calloc(1, sizeof(gdext_auth_request_t));
+    if (!req) return 0;
+
+    g_http_request_counter++;
+    req->auth = wrapper->native_client->auth;
+    req->op = op;
+    req->email = email ? strdup(email) : NULL;
+    req->password = password ? strdup(password) : NULL;
+    req->options_json = options_json ? strdup(options_json) : NULL;
+    req->request_id = g_http_request_counter;
+    req->client_object = wrapper->godot_object;
+    req->wrapper = wrapper;
+    __sync_fetch_and_add(&wrapper->pending_http_requests, 1);
+
+    gdext_spawn_request(gdext_auth_thread_func, req);
     return g_http_request_counter;
 }
 
@@ -1347,6 +1485,52 @@ void gdext_room_process_events(void) {
 // =============================================================================
 
 // http_get(path: String) -> int (request_id)
+/* Empty reaches the core as NULL: an absent email is not the same as "". */
+static char* auth_arg(const GDExtensionConstVariantPtr* args, GDExtensionInt count, int index) {
+    if (index >= count) return NULL;
+    String s;
+    constructors.string_from_variant_constructor(&s, (GDExtensionVariantPtr)args[index]);
+    char* value = string_to_c_str(&s);
+    destructors.string_destructor(&s);
+    if (value && value[0] == '\0') { free(value); return NULL; }
+    return value;
+}
+
+// auth_request(op: int, email: String, password: String, options_json: String) -> int
+void gdext_colyseus_client_auth_request(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
+    const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count,
+    GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
+    (void)p_method_userdata; (void)r_error;
+    ColyseusClientWrapper* wrapper = (ColyseusClientWrapper*)p_instance;
+    if (!wrapper || p_argument_count < 1) return;
+
+    int64_t op = 0;
+    constructors.int_from_variant_constructor(&op, (GDExtensionVariantPtr)p_args[0]);
+
+    char* email = auth_arg(p_args, p_argument_count, 1);
+    char* password = auth_arg(p_args, p_argument_count, 2);
+    char* options = auth_arg(p_args, p_argument_count, 3);
+
+    int64_t rid = gdext_auth_dispatch(wrapper, (int)op, email, password, options);
+
+    if (r_return) {
+        constructors.variant_from_int_constructor(r_return, &rid);
+    }
+    free(email);
+    free(password);
+    free(options);
+}
+
+// auth_signout() -> void
+void gdext_colyseus_client_auth_signout(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
+    const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+    (void)p_method_userdata; (void)p_args; (void)r_ret;
+    ColyseusClientWrapper* wrapper = (ColyseusClientWrapper*)p_instance;
+    if (wrapper && wrapper->native_client && wrapper->native_client->auth) {
+        colyseus_auth_signout(wrapper->native_client->auth);
+    }
+}
+
 void gdext_colyseus_client_http_get(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
     const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count,
     GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {

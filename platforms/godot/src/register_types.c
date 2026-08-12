@@ -1020,13 +1020,14 @@ static void register_colyseus_client(void) {
 
     // Register HTTP methods (use call_vararg — functions take Variant args)
     {
-        const char* http_methods[] = { "http_get", "http_post", "http_put", "http_delete", "http_patch" };
+        // auth_request rides along: it is a vararg int-returning method too.
+        const char* http_methods[] = { "http_get", "http_post", "http_put", "http_delete", "http_patch", "auth_request" };
         void* http_funcs[] = {
             gdext_colyseus_client_http_get, gdext_colyseus_client_http_post,
             gdext_colyseus_client_http_put, gdext_colyseus_client_http_delete,
-            gdext_colyseus_client_http_patch
+            gdext_colyseus_client_http_patch, gdext_colyseus_client_auth_request
         };
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 6; i++) {
             StringName method_name_string;
             constructors.string_name_new_with_latin1_chars(&method_name_string, http_methods[i], false);
 
@@ -1111,6 +1112,7 @@ static void register_colyseus_client(void) {
     }
 
     // Register auth methods (ptrcall — simple types)
+    bind_method_0_no_ret("_ColyseusClient", "auth_signout", gdext_colyseus_client_auth_signout);
     bind_method_1_no_ret("_ColyseusClient", "auth_set_token", gdext_colyseus_client_auth_set_token,
         "token", GDEXTENSION_VARIANT_TYPE_STRING);
     bind_method_0_with_ret("_ColyseusClient", "auth_get_token", gdext_colyseus_client_auth_get_token,

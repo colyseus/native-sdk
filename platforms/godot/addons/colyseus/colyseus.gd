@@ -524,8 +524,9 @@ class Client extends RefCounted:
 		if not _native:
 			push_error("Colyseus: ColyseusClient not available. Make sure the GDExtension is properly loaded.")
 			return
-		http = HTTP.new(_native)
-		auth = Auth.new(_native)
+		var replies := _Replies.new(_native)
+		http = HTTP.new(_native, replies)
+		auth = Auth.new(_native, replies)
 		if endpoint != "":
 			_native.set_endpoint(endpoint)
 		if not Colyseus._poll_instance:
@@ -1036,19 +1037,54 @@ class Reconciler extends RefCounted:
 ## Usage:
 ##   client.http.get_request("/test", func(err, data): print(data))
 ##   client.http.post("/save", {"key": "val"}, func(err, data): print(data))
+## Routes `_http_response` / `_http_error` back to the Callable that started the
+## request.
+##
+## HTTP and Auth share ONE of these per client: both dispatch through the same
+## native queue and draw their request ids from the same counter, so a second
+## router would receive — and have to ignore — the other's replies.
+class _Replies extends RefCounted:
+	var _callbacks: Dictionary = {}  # request_id -> Callable
+
+	func _init(native):
+		if native:
+			native._http_response.connect(_on_response)
+			native._http_error.connect(_on_error)
+
+	## Remembers `callback` for `request_id`, and hands the id straight back so
+	## a dispatch reads as one line.
+	func track(request_id: int, callback: Callable) -> int:
+		if request_id != 0 and callback.is_valid():
+			_callbacks[request_id] = callback
+		return request_id
+
+	func _take(request_id: int) -> Callable:
+		if not _callbacks.has(request_id):
+			return Callable()
+		var callback: Callable = _callbacks[request_id]
+		_callbacks.erase(request_id)
+		return callback
+
+	func _on_response(request_id: int, _status_code: int, body: String) -> void:
+		var callback := _take(request_id)
+		if not callback.is_valid():
+			return
+		var json := JSON.new()
+		callback.call(null, json.data if json.parse(body) == OK else body)
+
+	func _on_error(request_id: int, code: int, message: String) -> void:
+		var callback := _take(request_id)
+		if callback.is_valid():
+			callback.call({ "code": code, "message": message }, null)
+
+
 class HTTP extends RefCounted:
 	var _native
-	var _callbacks: Dictionary = {}  # request_id -> Callable
-	var _connected: bool = false
+	var _replies: _Replies
 
-	func _init(native_client):
+	func _init(native_client, replies: _Replies):
 		_native = native_client
-
-	func _ensure_signals():
-		if not _connected and _native:
-			_native._http_response.connect(_on_response)
-			_native._http_error.connect(_on_error)
-			_connected = true
+		_replies = replies
 
 	## Set the auth token (sent as Bearer header on all requests)
 	var auth_token: String:
@@ -1059,62 +1095,28 @@ class HTTP extends RefCounted:
 
 	## GET request (named get_request to avoid conflict with Object.get)
 	func get_request(path: String, callback: Callable) -> int:
-		_ensure_signals()
-		var rid = _native.http_get(path)
-		_callbacks[rid] = callback
-		return rid
+		return _replies.track(_native.http_get(path), callback)
 
 	## POST request (body auto-converted to JSON if Dictionary/Array)
 	func post(path: String, body, callback: Callable) -> int:
-		_ensure_signals()
-		var json_body = JSON.stringify(body) if (body is Dictionary or body is Array) else str(body)
-		var rid = _native.http_post(path, json_body)
-		_callbacks[rid] = callback
-		return rid
+		return _replies.track(_native.http_post(path, _json(body)), callback)
 
 	## PUT request
 	func put(path: String, body, callback: Callable) -> int:
-		_ensure_signals()
-		var json_body = JSON.stringify(body) if (body is Dictionary or body is Array) else str(body)
-		var rid = _native.http_put(path, json_body)
-		_callbacks[rid] = callback
-		return rid
+		return _replies.track(_native.http_put(path, _json(body)), callback)
 
 	## DELETE request
 	func delete(path: String, callback: Callable) -> int:
-		_ensure_signals()
-		var rid = _native.http_delete(path)
-		_callbacks[rid] = callback
-		return rid
+		return _replies.track(_native.http_delete(path), callback)
 
 	## PATCH request
 	func patch(path: String, body, callback: Callable) -> int:
-		_ensure_signals()
-		var json_body = JSON.stringify(body) if (body is Dictionary or body is Array) else str(body)
-		var rid = _native.http_patch(path, json_body)
-		_callbacks[rid] = callback
-		return rid
+		return _replies.track(_native.http_patch(path, _json(body)), callback)
 
-	func _on_response(request_id: int, status_code: int, body: String):
-		if not _callbacks.has(request_id):
-			return
-		var callback = _callbacks[request_id]
-		_callbacks.erase(request_id)
-		# Parse JSON body
-		var data = null
-		var json = JSON.new()
-		if json.parse(body) == OK:
-			data = json.data
-		else:
-			data = body
-		callback.call(null, data)
-
-	func _on_error(request_id: int, code: int, message: String):
-		if not _callbacks.has(request_id):
-			return
-		var callback = _callbacks[request_id]
-		_callbacks.erase(request_id)
-		callback.call({"code": code, "message": message}, null)
+	## Dictionaries and Arrays are encoded; anything else goes as its string
+	## form, so a caller can pass a pre-built JSON body verbatim.
+	func _json(body) -> String:
+		return JSON.stringify(body) if (body is Dictionary or body is Array) else str(body)
 
 # =============================================================================
 # Auth — token management
@@ -1125,15 +1127,54 @@ class HTTP extends RefCounted:
 ##   client.auth.set_token("my-jwt-token")
 ##   var token = client.auth.get_token()
 class Auth extends RefCounted:
+	## Mirrors gdext_auth_op_t in src/godot_colyseus.h — the order is the ABI.
+	enum _Op { GET_USER_DATA = 0, REGISTER = 1, SIGN_IN = 2, SIGN_IN_ANONYMOUS = 3, SEND_PASSWORD_RESET = 4 }
+
 	var _native
+	var _replies: _Replies
 
-	func _init(native_client):
+	func _init(native_client, replies: _Replies):
 		_native = native_client
+		_replies = replies
 
-	## Set the auth token (sent as Bearer header)
+	## Set the auth token (sent as Bearer header on every later request)
 	func set_token(token: String) -> void:
 		_native.auth_set_token(token)
 
-	## Get the current auth token
+	## Get the current auth token, or "" when signed out
 	func get_token() -> String:
 		return _native.auth_get_token()
+
+	## Sign in without credentials. The token still identifies the player, so
+	## keep it if you want them back on the same account next launch.
+	func sign_in_anonymously(callback: Callable, options: Dictionary = {}) -> int:
+		return _request(_Op.SIGN_IN_ANONYMOUS, "", "", callback, options)
+
+	## Create an account. `options` is merged into the request body.
+	func register_with_email_and_password(email: String, password: String,
+			callback: Callable, options: Dictionary = {}) -> int:
+		return _request(_Op.REGISTER, email, password, callback, options)
+
+	func sign_in_with_email_and_password(email: String, password: String,
+			callback: Callable) -> int:
+		return _request(_Op.SIGN_IN, email, password, callback)
+
+	## The user record behind the current token. Fails when there is none.
+	func get_user_data(callback: Callable) -> int:
+		return _request(_Op.GET_USER_DATA, "", "", callback)
+
+	func send_password_reset_email(email: String, callback: Callable) -> int:
+		return _request(_Op.SEND_PASSWORD_RESET, email, "", callback)
+
+	## Drop the token locally and clear it from secure storage. No request.
+	func sign_out() -> void:
+		_native.auth_signout()
+
+	## Every call answers the same way an HTTP one does — `callback(err, data)`,
+	## where a successful `data` is `{ "user": {...}, "token": "..." }`, the
+	## shape the server replied with.
+	func _request(op: int, email: String, password: String, callback: Callable,
+			options: Dictionary = {}) -> int:
+		var options_json := JSON.stringify(options) if not options.is_empty() else ""
+		return _replies.track(
+			_native.auth_request(op, email, password, options_json), callback)
