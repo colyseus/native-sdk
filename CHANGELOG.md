@@ -36,3 +36,11 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   most visible as a wrong position on a curving path. It now measures the age
   on the ring's own axis, matching `lerp` and the reckon path. The same
   expression exists in the JS SDK's `Predictor.computeExtrapolate`.
+- `extrapolate` also held a stale slope forever once a field stopped changing.
+  Samples land on CHANGE, so a field that goes still stops feeding the ring
+  while patches keep arriving, and the projection stayed pinned at
+  `newest + slope * max_extrapolate` indefinitely — parking the entity at a
+  fixed offset, spectacularly after a teleport, whose slope is a discontinuity
+  rather than a velocity. The slope window now extends to the newest patch,
+  which the absent callback proves the value still held at, so it decays as the
+  field stays quiet.

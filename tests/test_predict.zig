@@ -394,6 +394,25 @@ test "extrapolate_projects_snapshot_age_not_the_cap" {
     NOW = 5175;
     _ = c.colyseus_predict_tick(p, NOW);
     try testing.expectEqual(@as(f64, 45), c.colyseus_predict_value(p, ent, "c"));
+
+    // The field now goes STILL. Samples only land on a change, so the ring
+    // stops growing while patches keep coming. Projecting the last slope from
+    // the last sample forever would park it at newest + slope*cap (80 here);
+    // carrying the window out to the newest patch decays the slope instead.
+    var prev = c.colyseus_predict_value(p, ent, "c");
+    var t: f64 = 1150;
+    while (t <= 2400) : (t += 50) {
+        NOW = 4000 + t;
+        c.colyseus_room_clock_sample(clock, t, -1);
+        _ = c.colyseus_predict_tick(p, NOW);
+        const v = c.colyseus_predict_value(p, ent, "c");
+        // monotonically settling back toward the last known value, never past it
+        try testing.expect(v <= prev + 1e-9);
+        try testing.expect(v >= 30);
+        prev = v;
+    }
+    // a second and a bit of silence: within a whisker of the last sample
+    try testing.expect(prev < 31);
 }
 
 // ─── passive smoothing (fixture scenario D) ─────────────────────────────────

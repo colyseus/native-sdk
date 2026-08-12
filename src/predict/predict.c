@@ -348,7 +348,19 @@ static double compute_extrapolate(colyseus_predict_t* p, predict_slot_t* slot) {
     } else {
         int steps = count >= 3 ? 2 : 1;
         int lb = (start + count - 1 - steps + RING_CAP) % RING_CAP;
-        double dt = newest_t - slot->ring_t[lb];
+        /* A sample only lands when the value CHANGES, so a field that goes
+         * still stops feeding the ring. Its newest sample is nonetheless known
+         * to still hold at the latest patch — nothing has contradicted it — and
+         * carrying the window out to there decays the slope as the field stays
+         * quiet. Without that, a stale slope keeps projecting forever, parking
+         * the entity at a fixed offset (spectacularly so after a teleport,
+         * whose slope is a discontinuity rather than a velocity). */
+        double hold_t = newest_t;
+        if (p->clock) {
+            double patch_t = colyseus_room_clock_last_server_time(p->clock);
+            if (patch_t > hold_t) hold_t = patch_t;
+        }
+        double dt = hold_t - slot->ring_t[lb];
         if (dt <= 0) {
             raw = newest_v;
         } else {
@@ -360,7 +372,7 @@ static double compute_extrapolate(colyseus_predict_t* p, predict_slot_t* slot) {
             double present = (p->clock && colyseus_room_clock_last_server_time(p->clock) > 0)
                 ? colyseus_room_clock_server_now(p->clock)
                 : now;
-            double ahead = present - newest_t;
+            double ahead = present - hold_t;
             if (ahead < 0) ahead = 0;
             else if (ahead > slot->opts.max_extrapolate) ahead = slot->opts.max_extrapolate;
             raw = newest_v + slope * ahead;
