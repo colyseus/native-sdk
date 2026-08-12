@@ -121,9 +121,8 @@ class ColyseusAuth {
     final auth = _handle;
     if (auth == nullptr) return;
     // Null has to reach the core as a null POINTER — see ColyseusHttp.authToken.
-    final ptr = value?.toNativeUtf8();
-    core.colyseus_auth_set_token(auth, ptr?.cast<Char>() ?? nullptr);
-    if (ptr != null) malloc.free(ptr);
+    using((arena) => core.colyseus_auth_set_token(auth,
+        value == null ? nullptr : value.toNativeUtf8(allocator: arena).cast()));
   }
 
   /// Server-side route prefix, `/auth` unless the server moved it.
@@ -141,9 +140,7 @@ class ColyseusAuth {
       void Function(Pointer<colyseus_auth_t>, Pointer<Char>) apply, String value) {
     final auth = _handle;
     if (auth == nullptr) return;
-    final ptr = value.toNativeUtf8();
-    apply(auth, ptr.cast<Char>());
-    malloc.free(ptr);
+    using((arena) => apply(auth, value.toNativeUtf8(allocator: arena).cast()));
   }
 
   /// Fires whenever the token changes — a sign-in, a refresh, a sign-out.
@@ -208,21 +205,20 @@ class ColyseusAuth {
     final completer = Completer<ColyseusAuthData>();
     final id = _replies.register(completer);
 
-    final emailPtr = email?.toNativeUtf8();
-    final passwordPtr = password?.toNativeUtf8();
-    final optionsPtr = options == null ? null : jsonEncode(options).toNativeUtf8();
-    _n.authRequest(
-      auth.address,
-      op.index,
-      emailPtr?.cast<Char>() ?? nullptr,
-      passwordPtr?.cast<Char>() ?? nullptr,
-      optionsPtr?.cast<Char>() ?? nullptr,
-      id,
-      _replyPointer(),
-    );
-    for (final ptr in [emailPtr, passwordPtr, optionsPtr]) {
-      if (ptr != null) malloc.free(ptr);
-    }
+    // The glue copies every string before it returns, so the arena can
+    // reclaim them as soon as the call does.
+    Pointer<Char> str(Arena arena, String? value) =>
+        value == null ? nullptr : value.toNativeUtf8(allocator: arena).cast();
+
+    using((arena) => _n.authRequest(
+          auth.address,
+          op.index,
+          str(arena, email),
+          str(arena, password),
+          str(arena, options == null ? null : jsonEncode(options)),
+          id,
+          _replyPointer(),
+        ));
 
     return completer.future;
   }

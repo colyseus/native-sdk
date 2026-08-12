@@ -115,10 +115,8 @@ class ColyseusHttp {
   set authToken(String? token) {
     // Null has to reach the core as a null POINTER: it only omits the header
     // when auth_token is null, so an empty string would send an empty Bearer.
-    final ptr = token?.toNativeUtf8();
-    core.colyseus_http_set_auth_token(
-        _handle, ptr?.cast<Char>() ?? nullptr);
-    if (ptr != null) malloc.free(ptr);
+    using((arena) => core.colyseus_http_set_auth_token(_handle,
+        token == null ? nullptr : token.toNativeUtf8(allocator: arena).cast()));
   }
 
   Future<ColyseusHttpResponse> get(String path) => _send(_Method.get, path);
@@ -150,18 +148,18 @@ class ColyseusHttp {
     final encoded =
         body == null ? null : (body is String ? body : jsonEncode(body));
 
-    final pathPtr = path.toNativeUtf8();
-    final bodyPtr = encoded?.toNativeUtf8();
-    _n.httpRequest(
-      http.address,
-      method.index,
-      pathPtr.cast<Char>(),
-      bodyPtr?.cast<Char>() ?? nullptr,
-      id,
-      _replyPointer(),
-    );
-    malloc.free(pathPtr);
-    if (bodyPtr != null) malloc.free(bodyPtr);
+    // The glue copies both strings before it returns, so the arena can
+    // reclaim them as soon as the call does.
+    using((arena) => _n.httpRequest(
+          http.address,
+          method.index,
+          path.toNativeUtf8(allocator: arena).cast(),
+          encoded == null
+              ? nullptr
+              : encoded.toNativeUtf8(allocator: arena).cast(),
+          id,
+          _replyPointer(),
+        ));
 
     return completer.future;
   }
