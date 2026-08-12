@@ -520,5 +520,6 @@ typedef HttpReplyNative = Void Function(
 typedef AuthReplyNative = Void Function(
     Int64, Pointer<Char>, Pointer<Char>, Pointer<Char>);
 
-/// `(userJson, token)` on every auth-state change.
-typedef AuthChangeNative = Void Function(Pointer<Char>, Pointer<Char>);
+/// `(auth, userJson, token)` on every auth-state change; `auth` names which
+/// handle it came from, so a program holding several clients can route it.
+typedef AuthChangeNative = Void Function(IntPtr, Pointer<Char>, Pointer<Char>);

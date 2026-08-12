@@ -7,8 +7,13 @@ import 'package:ffi/ffi.dart';
 import 'bindings/colyseus_core.dart';
 import 'bindings/native_functions.dart';
 import 'colyseus.dart';
+import 'native_reply.dart';
 
 final _n = NativeFunctions.instance;
+
+/// Mirrors `flutter_auth_op_t` in `src/flutter_colyseus.h` — the glue switches
+/// on the ordinal, so the order here is part of the ABI.
+enum _Op { getUserData, register, signIn, signInAnonymous, sendPasswordReset }
 
 /// An auth call that the server rejected, or that never reached it.
 class ColyseusAuthException implements Exception {
@@ -50,54 +55,40 @@ class ColyseusAuthData {
       'user: ${user?.keys.toList()})';
 }
 
-final Map<int, Completer<ColyseusAuthData>> _pending = {};
-int _nextRequestId = 1;
+final _replies = ReplyRegistry<ColyseusAuthData>();
 
-String? _takeString(Pointer<Char> ptr) {
-  if (ptr == nullptr) return null;
-  final value = ptr.cast<Utf8>().toDartString();
-  _n.freeString(ptr);
-  return value;
-}
-
-void _onAuthReply(int requestId, Pointer<Char> userJson, Pointer<Char> token,
+void _onReply(int requestId, Pointer<Char> userJson, Pointer<Char> token,
     Pointer<Char> error) {
-  final completer = _pending.remove(requestId);
+  // Take all three before anything can bail out: they are ours to release.
+  final user = takeOwnedString(userJson);
+  final tokenText = takeOwnedString(token);
+  final errorText = takeOwnedString(error);
 
-  // Always drain, even with nobody waiting — these are copies made for us.
-  final user = _takeString(userJson);
-  final tokenText = _takeString(token);
-  final errorText = _takeString(error);
+  final completer = _replies.take(requestId);
+  if (completer == null) return;
 
-  if (completer == null || completer.isCompleted) return;
   if (errorText != null) {
     completer.completeError(ColyseusAuthException(errorText));
-    return;
+  } else {
+    completer.complete(ColyseusAuthData(tokenText, user));
   }
-  completer.complete(ColyseusAuthData(tokenText, user));
 }
 
 NativeCallable<AuthReplyNative>? _replyCallable;
 
-Pointer<NativeFunction<AuthReplyNative>> _authReplyPointer() {
-  return (_replyCallable ??=
-          NativeCallable<AuthReplyNative>.listener(_onAuthReply))
-      .nativeFunction;
-}
+Pointer<NativeFunction<AuthReplyNative>> _replyPointer() =>
+    (_replyCallable ??= NativeCallable<AuthReplyNative>.listener(_onReply))
+        .nativeFunction;
 
-/// Change notifications, keyed by the auth handle they belong to.
-final Map<int, StreamController<ColyseusAuthData>> _changeControllers = {};
+/// Change subscriptions, keyed by the auth handle the notification names.
+final Map<int, StreamController<ColyseusAuthData>> _changes = {};
 NativeCallable<AuthChangeNative>? _changeCallable;
 
-void _onAuthChange(Pointer<Char> userJson, Pointer<Char> token) {
-  final user = _takeString(userJson);
-  final tokenText = _takeString(token);
-  final data = ColyseusAuthData(tokenText, user);
-  // The native hook carries no handle, and one client per isolate is the
-  // normal case; broadcast to every live subscriber rather than guess.
-  for (final controller in _changeControllers.values) {
-    if (!controller.isClosed) controller.add(data);
-  }
+void _onChange(int auth, Pointer<Char> userJson, Pointer<Char> token) {
+  final data =
+      ColyseusAuthData(takeOwnedString(token), takeOwnedString(userJson));
+  final controller = _changes[auth];
+  if (controller != null && !controller.isClosed) controller.add(data);
 }
 
 /// The auth surface of a [ColyseusClient], reached as `client.auth`.
@@ -120,117 +111,118 @@ class ColyseusAuth {
   String? get token {
     final auth = _handle;
     if (auth == nullptr) return null;
-    final ptr = _n.authGetToken(auth.address);
-    final value = _takeString(ptr);
+    final value = takeOwnedString(_n.authGetToken(auth.address));
     return (value == null || value.isEmpty) ? null : value;
   }
 
-  /// Adopt a token obtained elsewhere (a previous session, your own backend).
+  /// Adopt a token obtained elsewhere (a previous session, your own backend),
+  /// or null to drop it.
   set token(String? value) {
     final auth = _handle;
     if (auth == nullptr) return;
-    final ptr = (value ?? '').toNativeUtf8();
-    core.colyseus_auth_set_token(auth, ptr.cast<Char>());
-    malloc.free(ptr);
+    // Null has to reach the core as a null POINTER — see ColyseusHttp.authToken.
+    final ptr = value?.toNativeUtf8();
+    core.colyseus_auth_set_token(auth, ptr?.cast<Char>() ?? nullptr);
+    if (ptr != null) malloc.free(ptr);
   }
 
   /// Server-side route prefix, `/auth` unless the server moved it.
-  set path(String value) {
-    final auth = _handle;
-    if (auth == nullptr) return;
-    final ptr = value.toNativeUtf8();
-    core.colyseus_auth_set_path(auth, ptr.cast<Char>());
-    malloc.free(ptr);
-  }
+  set path(String value) => _setString(core.colyseus_auth_set_path, value);
 
   /// Key the token is persisted under in the platform's secure storage.
-  set storageKey(String value) {
+  ///
+  /// It defaults to one process-wide key, so a signed-in session outlives the
+  /// process and is restored by the next client — give a test run its own key
+  /// if you don't want that.
+  set storageKey(String value) =>
+      _setString(core.colyseus_auth_set_storage_key, value);
+
+  void _setString(
+      void Function(Pointer<colyseus_auth_t>, Pointer<Char>) apply, String value) {
     final auth = _handle;
     if (auth == nullptr) return;
     final ptr = value.toNativeUtf8();
-    core.colyseus_auth_set_storage_key(auth, ptr.cast<Char>());
+    apply(auth, ptr.cast<Char>());
     malloc.free(ptr);
   }
 
   /// Fires whenever the token changes — a sign-in, a refresh, a sign-out.
   ///
-  /// A sign-out arrives as a [ColyseusAuthData] with a null token, which is
-  /// the cue to send the player back to a login screen.
+  /// Subscribing emits the CURRENT state first, so a listener attached at
+  /// startup hears one event without anything having happened: a null token
+  /// when signed out, or the restored session when secure storage had one.
+  /// A null token is the cue to send the player back to a login screen.
   Stream<ColyseusAuthData> get onChange {
     final auth = _handle;
     if (auth == nullptr) return const Stream.empty();
 
-    final existing = _changeControllers[auth.address];
-    if (existing != null) return existing.stream;
+    return (_changes[auth.address] ??= _subscribe(auth.address)).stream;
+  }
 
-    final controller = StreamController<ColyseusAuthData>.broadcast();
-    _changeControllers[auth.address] = controller;
-    _changeCallable ??=
-        NativeCallable<AuthChangeNative>.listener(_onAuthChange);
-    _n.authOnChange(auth.address, _changeCallable!.nativeFunction);
-    return controller.stream;
+  StreamController<ColyseusAuthData> _subscribe(int auth) {
+    _changeCallable ??= NativeCallable<AuthChangeNative>.listener(_onChange);
+    _n.authOnChange(auth, _changeCallable!.nativeFunction);
+    return StreamController<ColyseusAuthData>.broadcast();
   }
 
   /// The user record behind the current token.
-  Future<ColyseusAuthData> getUserData() => _send(0, null, null, null);
+  Future<ColyseusAuthData> getUserData() => _send(_Op.getUserData);
 
   /// Create an account. [options] is merged into the request body.
   Future<ColyseusAuthData> registerWithEmailAndPassword(
           String email, String password, {Map<String, dynamic>? options}) =>
-      _send(1, email, password, options);
+      _send(_Op.register, email: email, password: password, options: options);
 
   Future<ColyseusAuthData> signInWithEmailAndPassword(
           String email, String password) =>
-      _send(2, email, password, null);
+      _send(_Op.signIn, email: email, password: password);
 
   /// Sign in without credentials. The token still identifies the player, so
   /// keep it if you want them to come back to the same account.
   Future<ColyseusAuthData> signInAnonymously({Map<String, dynamic>? options}) =>
-      _send(3, null, null, options);
+      _send(_Op.signInAnonymous, options: options);
 
   Future<ColyseusAuthData> sendPasswordResetEmail(String email) =>
-      _send(4, email, null, null);
+      _send(_Op.sendPasswordReset, email: email);
 
   /// Drop the token locally and notify [onChange]. No request is made.
   void signOut() {
     final auth = _handle;
-    if (auth == nullptr) return;
-    core.colyseus_auth_signout(auth);
+    if (auth != nullptr) core.colyseus_auth_signout(auth);
   }
 
   /// Release this client's change subscription.
   void dispose() {
     final auth = _handle;
     if (auth == nullptr) return;
-    _changeControllers.remove(auth.address)?.close();
+    _changes.remove(auth.address)?.close();
   }
 
-  Future<ColyseusAuthData> _send(
-      int op, String? arg1, String? arg2, Map<String, dynamic>? options) {
+  Future<ColyseusAuthData> _send(_Op op,
+      {String? email, String? password, Map<String, dynamic>? options}) {
     final auth = _handle;
     if (auth == nullptr) {
       return Future.error(ColyseusAuthException('client has been disposed'));
     }
 
-    final id = _nextRequestId++;
     final completer = Completer<ColyseusAuthData>();
-    _pending[id] = completer;
+    final id = _replies.register(completer);
 
-    final a1 = arg1?.toNativeUtf8();
-    final a2 = arg2?.toNativeUtf8();
-    final opts = options == null ? null : jsonEncode(options).toNativeUtf8();
+    final emailPtr = email?.toNativeUtf8();
+    final passwordPtr = password?.toNativeUtf8();
+    final optionsPtr = options == null ? null : jsonEncode(options).toNativeUtf8();
     _n.authRequest(
       auth.address,
-      op,
-      a1 == null ? nullptr : a1.cast<Char>(),
-      a2 == null ? nullptr : a2.cast<Char>(),
-      opts == null ? nullptr : opts.cast<Char>(),
+      op.index,
+      emailPtr?.cast<Char>() ?? nullptr,
+      passwordPtr?.cast<Char>() ?? nullptr,
+      optionsPtr?.cast<Char>() ?? nullptr,
       id,
-      _authReplyPointer(),
+      _replyPointer(),
     );
-    if (a1 != null) malloc.free(a1);
-    if (a2 != null) malloc.free(a2);
-    if (opts != null) malloc.free(opts);
+    for (final ptr in [emailPtr, passwordPtr, optionsPtr]) {
+      if (ptr != null) malloc.free(ptr);
+    }
 
     return completer.future;
   }

@@ -153,13 +153,13 @@ FLUTTER_EXPORT void colyseus_flutter_http_request(intptr_t http, int method,
 /**
  * Queue an auth call on the same worker.
  *
- * `arg1`/`arg2` are email/password where the op takes them, `options_json` the
- * optional payload for register and anonymous sign-in. `callback` is a
+ * `email_or_subject`/`password` are filled where the op takes them,
+ * `options_json` is the optional payload for register and anonymous sign-in. `callback` is a
  * listener of shape `(int64 request_id, char* user_json, char* token, char* error)`;
  * a non-NULL `error` means the call failed. Strings are heap copies.
  */
 FLUTTER_EXPORT void colyseus_flutter_auth_request(intptr_t auth, int op,
-    const char* arg1, const char* arg2, const char* options_json,
+    const char* email_or_subject, const char* password, const char* options_json,
     int64_t request_id, void* callback);
 
 /**
@@ -171,7 +171,8 @@ FLUTTER_EXPORT char* colyseus_flutter_auth_get_token(intptr_t auth);
 
 /**
  * Subscribe to auth-state changes. `callback` is a listener of shape
- * `(char* user_json, char* token)`, both heap copies.
+ * `(intptr_t auth, char* user_json, char* token)` — the handle names which
+ * auth fired, and both strings are heap copies.
  */
 FLUTTER_EXPORT void colyseus_flutter_auth_on_change(intptr_t auth, void* callback);
 

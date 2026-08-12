@@ -66,9 +66,9 @@ typedef struct fh_task {
     fh_kind_t kind;
     int op;                 /* flutter_http_method_t or flutter_auth_op_t */
     void* target;           /* colyseus_http_t* or colyseus_auth_t* */
-    char* arg1;             /* path, or email */
-    char* arg2;             /* json body, or password */
-    char* arg3;             /* options json */
+    char* subject;          /* HTTP path, or the account's email */
+    char* payload;          /* HTTP json body, or the password */
+    char* options;          /* options json (register / anonymous sign-in) */
     int64_t request_id;
     void* callback;         /* flutter_http_cb or flutter_auth_cb */
     struct fh_task* next;
@@ -86,7 +86,6 @@ typedef struct {
 #endif
     fh_task_t* head;
     fh_task_t* tail;
-    int started;
 } fh_worker_t;
 
 static fh_worker_t g_worker;
@@ -100,9 +99,9 @@ static char* fh_dup(const char* s) {
 }
 
 static void fh_task_free(fh_task_t* t) {
-    free(t->arg1);
-    free(t->arg2);
-    free(t->arg3);
+    free(t->subject);
+    free(t->payload);
+    free(t->options);
     free(t);
 }
 
@@ -143,28 +142,40 @@ static fh_thread_return_t FH_THREAD_CALL fh_worker_func(void* arg) {
 }
 #endif /* !__EMSCRIPTEN__ */
 
+/* Nothing joins the worker: it outlives every client and the process reclaims
+ * it at exit. Started once however many isolates race to the first request. */
+#ifdef _WIN32
+static INIT_ONCE g_worker_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK fh_worker_init(PINIT_ONCE o, PVOID p, PVOID* c) {
+    (void)o; (void)p; (void)c;
+    InitializeCriticalSection(&g_worker.mutex);
+    InitializeConditionVariable(&g_worker.cond);
+    g_worker.thread = CreateThread(NULL, 0, fh_worker_func, NULL, 0, NULL);
+    return TRUE;
+}
+static void fh_worker_start(void) {
+    InitOnceExecuteOnce(&g_worker_once, fh_worker_init, NULL, NULL);
+}
+#elif !defined(__EMSCRIPTEN__)
+static pthread_once_t g_worker_once = PTHREAD_ONCE_INIT;
+static void fh_worker_init(void) {
+    pthread_mutex_init(&g_worker.mutex, NULL);
+    pthread_cond_init(&g_worker.cond, NULL);
+    pthread_create(&g_worker.thread, NULL, fh_worker_func, NULL);
+    pthread_detach(g_worker.thread);
+}
+static void fh_worker_start(void) {
+    pthread_once(&g_worker_once, fh_worker_init);
+}
+#endif
+
 static void fh_enqueue(fh_task_t* task) {
 #ifdef __EMSCRIPTEN__
     /* Single-threaded: the request runs inline. */
     fh_run_task(task);
     fh_task_free(task);
 #else
-    if (!g_worker.started) {
-#ifdef _WIN32
-        InitializeCriticalSection(&g_worker.mutex);
-        InitializeConditionVariable(&g_worker.cond);
-        g_worker.started = 1;
-        g_worker.thread = CreateThread(NULL, 0, fh_worker_func, NULL, 0, NULL);
-#else
-        pthread_mutex_init(&g_worker.mutex, NULL);
-        pthread_cond_init(&g_worker.cond, NULL);
-        g_worker.started = 1;
-        pthread_create(&g_worker.thread, NULL, fh_worker_func, NULL);
-        /* Nothing joins it: the worker outlives every client and the process
-         * reclaims it at exit. */
-        pthread_detach(g_worker.thread);
-#endif
-    }
+    fh_worker_start();
 
 #ifdef _WIN32
     EnterCriticalSection(&g_worker.mutex);
@@ -225,19 +236,19 @@ static void fh_run_task(fh_task_t* task) {
         colyseus_http_t* http = (colyseus_http_t*)task->target;
         switch ((flutter_http_method_t)task->op) {
             case FLUTTER_HTTP_GET:
-                colyseus_http_get(http, task->arg1, fh_http_success, fh_http_error, task);
+                colyseus_http_get(http, task->subject, fh_http_success, fh_http_error, task);
                 break;
             case FLUTTER_HTTP_POST:
-                colyseus_http_post(http, task->arg1, task->arg2, fh_http_success, fh_http_error, task);
+                colyseus_http_post(http, task->subject, task->payload, fh_http_success, fh_http_error, task);
                 break;
             case FLUTTER_HTTP_PUT:
-                colyseus_http_put(http, task->arg1, task->arg2, fh_http_success, fh_http_error, task);
+                colyseus_http_put(http, task->subject, task->payload, fh_http_success, fh_http_error, task);
                 break;
             case FLUTTER_HTTP_DELETE:
-                colyseus_http_delete(http, task->arg1, fh_http_success, fh_http_error, task);
+                colyseus_http_delete(http, task->subject, fh_http_success, fh_http_error, task);
                 break;
             case FLUTTER_HTTP_PATCH:
-                colyseus_http_patch(http, task->arg1, task->arg2, fh_http_success, fh_http_error, task);
+                colyseus_http_patch(http, task->subject, task->payload, fh_http_success, fh_http_error, task);
                 break;
         }
         return;
@@ -249,19 +260,19 @@ static void fh_run_task(fh_task_t* task) {
             colyseus_auth_get_user_data(auth, fh_auth_success, fh_auth_error, task);
             break;
         case FLUTTER_AUTH_REGISTER:
-            colyseus_auth_register_email_password(auth, task->arg1, task->arg2,
-                task->arg3, fh_auth_success, fh_auth_error, task);
+            colyseus_auth_register_email_password(auth, task->subject, task->payload,
+                task->options, fh_auth_success, fh_auth_error, task);
             break;
         case FLUTTER_AUTH_SIGNIN:
-            colyseus_auth_signin_email_password(auth, task->arg1, task->arg2,
+            colyseus_auth_signin_email_password(auth, task->subject, task->payload,
                 fh_auth_success, fh_auth_error, task);
             break;
         case FLUTTER_AUTH_SIGNIN_ANONYMOUS:
-            colyseus_auth_signin_anonymous(auth, task->arg3,
+            colyseus_auth_signin_anonymous(auth, task->options,
                 fh_auth_success, fh_auth_error, task);
             break;
         case FLUTTER_AUTH_SEND_PASSWORD_RESET:
-            colyseus_auth_send_password_reset(auth, task->arg1,
+            colyseus_auth_send_password_reset(auth, task->subject,
                 fh_auth_success, fh_auth_error, task);
             break;
     }
@@ -276,15 +287,15 @@ FLUTTER_EXPORT void colyseus_flutter_http_request(intptr_t http, int method,
     task->kind = FH_KIND_HTTP;
     task->op = method;
     task->target = (void*)http;
-    task->arg1 = fh_dup(path);
-    task->arg2 = fh_dup(json_body);
+    task->subject = fh_dup(path);
+    task->payload = fh_dup(json_body);
     task->request_id = request_id;
     task->callback = callback;
     fh_enqueue(task);
 }
 
 FLUTTER_EXPORT void colyseus_flutter_auth_request(intptr_t auth, int op,
-    const char* arg1, const char* arg2, const char* options_json,
+    const char* email_or_subject, const char* password, const char* options_json,
     int64_t request_id, void* callback)
 {
     if (!auth) return;
@@ -293,9 +304,9 @@ FLUTTER_EXPORT void colyseus_flutter_auth_request(intptr_t auth, int op,
     task->kind = FH_KIND_AUTH;
     task->op = op;
     task->target = (void*)auth;
-    task->arg1 = fh_dup(arg1);
-    task->arg2 = fh_dup(arg2);
-    task->arg3 = fh_dup(options_json);
+    task->subject = fh_dup(email_or_subject);
+    task->payload = fh_dup(password);
+    task->options = fh_dup(options_json);
     task->request_id = request_id;
     task->callback = callback;
     fh_enqueue(task);
@@ -315,15 +326,32 @@ FLUTTER_EXPORT char* colyseus_flutter_auth_get_token(intptr_t auth) {
     return fh_dup(colyseus_auth_get_token((colyseus_auth_t*)auth));
 }
 
-typedef void (*flutter_auth_change_cb)(char* user_json, char* token);
+/*
+ * Carries the auth handle so a Dart side holding several clients can route the
+ * notification to the right one; the core's own hook passes only the payload.
+ */
+typedef void (*flutter_auth_change_cb)(intptr_t auth, char* user_json, char* token);
+
+typedef struct {
+    flutter_auth_change_cb callback;
+    colyseus_auth_t* auth;
+} fh_change_binding_t;
 
 static void fh_auth_change(const colyseus_auth_data_t* data, void* userdata) {
-    flutter_auth_change_cb cb = (flutter_auth_change_cb)userdata;
-    if (!cb) return;
-    cb(fh_dup(data ? data->user_json : NULL), fh_dup(data ? data->token : NULL));
+    fh_change_binding_t* binding = (fh_change_binding_t*)userdata;
+    if (!binding || !binding->callback) return;
+    binding->callback((intptr_t)binding->auth,
+        fh_dup(data ? data->user_json : NULL),
+        fh_dup(data ? data->token : NULL));
 }
 
 FLUTTER_EXPORT void colyseus_flutter_auth_on_change(intptr_t auth, void* callback) {
     if (!auth) return;
-    colyseus_auth_on_change((colyseus_auth_t*)auth, fh_auth_change, callback);
+    /* One binding per auth, leaked deliberately: the core holds the pointer for
+     * as long as the auth lives and has no unsubscribe. */
+    fh_change_binding_t* binding = (fh_change_binding_t*)calloc(1, sizeof(*binding));
+    if (!binding) return;
+    binding->callback = (flutter_auth_change_cb)callback;
+    binding->auth = (colyseus_auth_t*)auth;
+    colyseus_auth_on_change((colyseus_auth_t*)auth, fh_auth_change, binding);
 }

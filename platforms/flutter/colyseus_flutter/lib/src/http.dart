@@ -7,8 +7,13 @@ import 'package:ffi/ffi.dart';
 import 'bindings/colyseus_core.dart';
 import 'bindings/native_functions.dart';
 import 'colyseus.dart';
+import 'native_reply.dart';
 
 final _n = NativeFunctions.instance;
+
+/// Mirrors `flutter_http_method_t` in `src/flutter_colyseus.h` — the glue
+/// switches on the ordinal, so the order here is part of the ABI.
+enum _Method { get, post, put, delete, patch }
 
 /// A non-2xx reply, or a transport failure before one arrived.
 class ColyseusHttpException implements Exception {
@@ -38,71 +43,53 @@ class ColyseusHttpResponse {
   ///
   /// The Colyseus routes answer JSON; this is the reader for them. Reach for
   /// [body] when an endpoint returns something else.
-  dynamic get json {
-    if (_decoded != null) return _decoded;
+  dynamic get json => _decoded ??= _decode();
+
+  dynamic _decoded;
+
+  dynamic _decode() {
     try {
-      return _decoded = jsonDecode(body);
+      return jsonDecode(body);
     } on FormatException {
       return null;
     }
   }
 
-  dynamic _decoded;
-
   @override
   String toString() => 'ColyseusHttpResponse($statusCode, ${body.length} bytes)';
 }
 
-/// Pending requests, keyed by the id handed to native code.
-///
-/// One registry for the whole isolate: the reply carries its id back, so a
-/// single listener callable can serve every client.
-final Map<int, Completer<ColyseusHttpResponse>> _pending = {};
-int _nextRequestId = 1;
+final _replies = ReplyRegistry<ColyseusHttpResponse>();
 
-void _onHttpReply(int requestId, int status, Pointer<Char> body, int errorCode,
+void _onReply(int requestId, int status, Pointer<Char> body, int errorCode,
     Pointer<Char> errorMessage) {
-  final completer = _pending.remove(requestId);
+  // Take both before anything can bail out: they are ours to release.
+  final bodyText = takeOwnedString(body);
+  final errorText = takeOwnedString(errorMessage);
 
-  // Read then release: these are copies the native side made for us, and they
-  // leak whether or not anyone is still waiting on the request.
-  String? bodyText;
-  if (body != nullptr) {
-    bodyText = body.cast<Utf8>().toDartString();
-    _n.freeString(body);
-  }
-  String? errorText;
-  if (errorMessage != nullptr) {
-    errorText = errorMessage.cast<Utf8>().toDartString();
-    _n.freeString(errorMessage);
-  }
+  final completer = _replies.take(requestId);
+  if (completer == null) return;
 
-  if (completer == null || completer.isCompleted) return;
-
-  if (errorCode != 0 || status == 0) {
+  if (errorText != null || status == 0) {
     completer.completeError(
         ColyseusHttpException(errorCode, errorText ?? 'request failed'));
-    return;
+  } else if (status < 200 || status >= 300) {
+    completer.completeError(
+        ColyseusHttpException(status, 'HTTP $status', body: bodyText ?? ''));
+  } else {
+    completer.complete(ColyseusHttpResponse(status, bodyText ?? ''));
   }
-  if (status < 200 || status >= 300) {
-    completer.completeError(ColyseusHttpException(
-        status, 'HTTP $status', body: bodyText ?? ''));
-    return;
-  }
-  completer.complete(ColyseusHttpResponse(status, bodyText ?? ''));
 }
 
-/// Late-bound so a program that never makes a request pays nothing, and so the
-/// callable outlives every client (it is never closed).
-NativeCallable<HttpReplyNative>? _httpCallable;
+/// Late-bound so a program that never makes a request pays nothing, and never
+/// closed, because the callable outlives every client.
+NativeCallable<HttpReplyNative>? _callable;
 
-Pointer<NativeFunction<HttpReplyNative>> _httpReplyPointer() {
-  // A listener, not isolateLocal: the reply arrives on the worker thread, and
-  // a listener is the only shape that may cross threads.
-  return (_httpCallable ??=
-          NativeCallable<HttpReplyNative>.listener(_onHttpReply))
-      .nativeFunction;
-}
+Pointer<NativeFunction<HttpReplyNative>> _replyPointer() =>
+    // A listener, not isolateLocal: the reply arrives on the worker thread,
+    // and a listener is the only shape that may cross threads.
+    (_callable ??= NativeCallable<HttpReplyNative>.listener(_onReply))
+        .nativeFunction;
 
 /// The HTTP surface of a [ColyseusClient], reached as `client.http`.
 ///
@@ -126,35 +113,37 @@ class ColyseusHttp {
   /// Setting it through [ColyseusAuth.token] is usually what you want — that
   /// keeps the auth module's own state in step.
   set authToken(String? token) {
-    final ptr = token == null ? nullptr : token.toNativeUtf8();
+    // Null has to reach the core as a null POINTER: it only omits the header
+    // when auth_token is null, so an empty string would send an empty Bearer.
+    final ptr = token?.toNativeUtf8();
     core.colyseus_http_set_auth_token(
-        _handle, ptr == nullptr ? nullptr : ptr.cast<Char>());
-    if (ptr != nullptr) malloc.free(ptr);
+        _handle, ptr?.cast<Char>() ?? nullptr);
+    if (ptr != null) malloc.free(ptr);
   }
 
-  Future<ColyseusHttpResponse> get(String path) => _send(0, path, null);
+  Future<ColyseusHttpResponse> get(String path) => _send(_Method.get, path);
 
   Future<ColyseusHttpResponse> post(String path, {Object? body}) =>
-      _send(1, path, body);
+      _send(_Method.post, path, body);
 
   Future<ColyseusHttpResponse> put(String path, {Object? body}) =>
-      _send(2, path, body);
+      _send(_Method.put, path, body);
 
-  Future<ColyseusHttpResponse> delete(String path) => _send(3, path, null);
+  Future<ColyseusHttpResponse> delete(String path) =>
+      _send(_Method.delete, path);
 
   Future<ColyseusHttpResponse> patch(String path, {Object? body}) =>
-      _send(4, path, body);
+      _send(_Method.patch, path, body);
 
-  Future<ColyseusHttpResponse> _send(int method, String path, Object? body) {
+  Future<ColyseusHttpResponse> _send(_Method method, String path,
+      [Object? body]) {
     final http = _handle;
     if (http == nullptr) {
-      return Future.error(
-          ColyseusHttpException(0, 'client has been disposed'));
+      return Future.error(ColyseusHttpException(0, 'client has been disposed'));
     }
 
-    final id = _nextRequestId++;
     final completer = Completer<ColyseusHttpResponse>();
-    _pending[id] = completer;
+    final id = _replies.register(completer);
 
     // A String body goes out verbatim; anything else is encoded, so callers
     // can pass a Map without stringifying it first.
@@ -165,11 +154,11 @@ class ColyseusHttp {
     final bodyPtr = encoded?.toNativeUtf8();
     _n.httpRequest(
       http.address,
-      method,
+      method.index,
       pathPtr.cast<Char>(),
-      bodyPtr == null ? nullptr : bodyPtr.cast<Char>(),
+      bodyPtr?.cast<Char>() ?? nullptr,
       id,
-      _httpReplyPointer(),
+      _replyPointer(),
     );
     malloc.free(pathPtr);
     if (bodyPtr != null) malloc.free(bodyPtr);

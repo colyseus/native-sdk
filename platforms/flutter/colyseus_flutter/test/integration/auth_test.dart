@@ -155,6 +155,32 @@ void main() {
     client.dispose();
   });
 
+  // The native hook now names the auth handle it fired for, so a program
+  // holding two clients does not see the other one's sign-ins.
+  test('onChange only reports its own client', () async {
+    final a = ColyseusClient(exampleServer);
+    final b = ColyseusClient(exampleServer);
+
+    final seenA = <ColyseusAuthData>[];
+    final seenB = <ColyseusAuthData>[];
+    final subA = a.auth.onChange.listen(seenA.add);
+    final subB = b.auth.onChange.listen(seenB.add);
+    await settle(const Duration(milliseconds: 50));
+
+    await a.auth.signInAnonymously();
+    expect(await waitFor(() => seenA.any((d) => d.token != null)), isTrue);
+    await settle(const Duration(milliseconds: 100));
+    // Subscribing emits the current state, so b has its own signed-out event;
+    // what it must never see is a's token.
+    expect(seenB.every((d) => d.token == null), isTrue,
+        reason: 'b saw a token that belonged to a');
+
+    await subA.cancel();
+    await subB.cancel();
+    a.dispose();
+    b.dispose();
+  });
+
   test('signOut clears the token', () async {
     final client = ColyseusClient(exampleServer);
     await client.auth.signInAnonymously();
