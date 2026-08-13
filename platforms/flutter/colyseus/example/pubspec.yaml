@@ -1,4 +1,4 @@
-name: colyseus_flutter_example
+name: colyseus_example
 description: Example app using the Colyseus Flutter plugin.
 
 environment:
@@ -8,7 +8,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  colyseus_flutter:
+  colyseus:
     path: ../
 
 dev_dependencies:

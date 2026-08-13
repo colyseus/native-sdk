@@ -1,5 +1,9 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
-import 'package:colyseus_flutter/colyseus_flutter.dart';
+import 'package:colyseus/colyseus.dart';
+
+import 'gen/schema.dart';
 
 void main() {
   runApp(const ColyseusExampleApp());
@@ -30,9 +34,19 @@ class RoomPage extends StatefulWidget {
 
 class _RoomPageState extends State<RoomPage> {
   ColyseusClient? _client;
-  ColyseusRoom? _room;
+  ColyseusRoom<TestRoomState>? _room;
   final List<String> _log = [];
   bool _connecting = false;
+  final _rng = Random();
+
+  /// The typed root state, or null before the first patch decodes.
+  TestRoomState? get _state => _room?.state;
+
+  /// This client's own entry, typed.
+  Player? get _me {
+    final room = _room;
+    return room == null ? null : _state?.players[room.sessionId];
+  }
 
   @override
   void initState() {
@@ -60,18 +74,13 @@ class _RoomPageState extends State<RoomPage> {
       _client = ColyseusClient('ws://localhost:2567');
       _addLog('Client created');
 
-      final room = await _client!.joinOrCreate('my_room');
+      final room = await _client!.joinOrCreate('my_room',
+          stateType: TestRoomState.new);
       _room = room;
       _addLog('Joined room: ${room.id}');
       _addLog('Session ID: ${room.sessionId}');
 
-      room.onStateChange.listen((_) {
-        _addLog('State changed');
-      });
-
-      room.onMessage('chat').listen((data) {
-        _addLog('Chat: $data');
-      });
+      room.onStateChange.listen((_) => setState(() {}));
 
       room.onMessageAny.listen((entry) {
         _addLog('Message [${entry.key}]: ${entry.value}');
@@ -87,6 +96,11 @@ class _RoomPageState extends State<RoomPage> {
           _room = null;
         });
       });
+
+      // The join resolves on the seat confirmation, which can arrive before
+      // the first state patch — bind once the state exists.
+      final state = room.state ?? await room.onStateChange.first;
+      _bindStateCallbacks(room, state);
     } catch (e) {
       _addLog('Error: $e');
     } finally {
@@ -94,10 +108,37 @@ class _RoomPageState extends State<RoomPage> {
     }
   }
 
-  void _sendMessage() {
-    _room?.send('chat', {'text': 'Hello from Flutter!'});
-    _addLog('Sent chat message');
+  /// Schema callbacks, C#-style: `Callbacks.get(room)` and the typed field
+  /// to observe. Keys and values are statically typed from the generated
+  /// classes in `lib/gen/schema.dart`.
+  void _bindStateCallbacks(ColyseusRoom room, TestRoomState state) {
+    final callbacks = Callbacks.get(room);
+
+    callbacks.onAdd(state.players, (sessionId, player) {
+      final who = player.isBot ? 'bot' : 'player';
+      _addLog('+ $who $sessionId at '
+          '(${player.x.toStringAsFixed(0)}, ${player.y.toStringAsFixed(0)})');
+    });
+
+    callbacks.onRemove(state.players, (sessionId, player) {
+      _addLog('- $sessionId removed');
+    });
+
+    callbacks.listen(state, 'currentTurn', (String turn, String? previous) {
+      final from = (previous == null || previous.isEmpty) ? '(none)' : previous;
+      _addLog('turn: $from -> $turn');
+    });
   }
+
+  void _move() {
+    final x = _rng.nextInt(800), y = _rng.nextInt(600);
+    _room?.send('move', {'x': x, 'y': y});
+    _addLog('Sent move to ($x, $y)');
+  }
+
+  void _addBot() => _room?.send('add_bot');
+
+  void _removeBot() => _room?.send('remove_bot', {'name': 'any'});
 
   void _leave() {
     _room?.leave();
@@ -126,8 +167,18 @@ class _RoomPageState extends State<RoomPage> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: _room != null ? _sendMessage : null,
-                  child: const Text('Send Chat'),
+                  onPressed: _room != null ? _move : null,
+                  child: const Text('Move'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _room != null ? _addBot : null,
+                  child: const Text('Add Bot'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _room != null ? _removeBot : null,
+                  child: const Text('Remove Bot'),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
@@ -141,7 +192,11 @@ class _RoomPageState extends State<RoomPage> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
               child: Text(
-                'Room: ${_room!.name} | Connected: ${_room!.isConnected}',
+                // Typed reads through the generated classes.
+                'Room: ${_room!.name} | '
+                'Players: ${_state?.players.length ?? 0} | '
+                'Me: (${_me?.x.toStringAsFixed(0) ?? '-'}, '
+                '${_me?.y.toStringAsFixed(0) ?? '-'})',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),

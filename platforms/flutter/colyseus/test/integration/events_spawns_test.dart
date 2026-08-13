@@ -1,7 +1,7 @@
 @Tags(['integration'])
 library;
 
-import 'package:colyseus_flutter/colyseus_flutter.dart';
+import 'package:colyseus/colyseus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'harness.dart';
@@ -16,7 +16,7 @@ void main() {
     test('a UI-born prediction confirms', () async {
       await withRoom(playground, 'lab-goal', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
 
         final predicted = <Object?>[];
         final confirmed = <Object?>[];
@@ -46,7 +46,7 @@ void main() {
     test('reject settles the other way', () async {
       await withRoom(playground, 'lab-goal', (client, room) async {
         await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
 
         final rejected = <Object?>[];
         final goals = predict.defineEvent(onReject: rejected.add);
@@ -61,7 +61,7 @@ void main() {
     test('a duplicate key is dropped while pending', () async {
       await withRoom(playground, 'lab-goal', (client, room) async {
         await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         final goals = predict.defineEvent();
 
         expect(goals.predict('dup'), isTrue);
@@ -74,7 +74,7 @@ void main() {
     test('confirming nothing reports an unpredicted signal', () async {
       await withRoom(playground, 'lab-goal', (client, room) async {
         await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
 
         final unpredicted = <String>[];
         final goals = predict.defineEvent(onUnpredicted: unpredicted.add);
@@ -88,7 +88,7 @@ void main() {
     test('clear drops pending predictions silently', () async {
       await withRoom(playground, 'lab-goal', (client, room) async {
         await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
 
         final settled = <Object?>[];
         final goals = predict.defineEvent(
@@ -109,7 +109,7 @@ void main() {
     test('a sim-born prediction fires once despite replay', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         final input = room.input()!;
 
         final fired = <Object?>[];
@@ -165,7 +165,7 @@ void main() {
         () async {
       await withRoom(playground, 'lab-projectile', (client, room) async {
         await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
 
         final rejects = <int>[];
         final store = predict.spawns(
@@ -210,7 +210,7 @@ void main() {
     test('cancel drops a pending spawn', () async {
       await withRoom(playground, 'lab-projectile', (client, room) async {
         await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
 
         final store = predict.spawns(
           'projectiles',
@@ -232,7 +232,7 @@ void main() {
     test('the local step advances pending spawns', () async {
       await withRoom(playground, 'lab-projectile', (client, room) async {
         await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
 
         final store = predict.spawns(
           'projectiles',

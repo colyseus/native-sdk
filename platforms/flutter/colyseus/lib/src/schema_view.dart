@@ -113,10 +113,18 @@ class SchemaView {
 
   /// A view over the child instance at [field], or null when absent.
   SchemaView? child(String field) {
+    final handle = childHandle(field);
+    return handle == 0 ? null : SchemaView(handle);
+  }
+
+  /// The native handle behind [field], or 0 when absent.
+  ///
+  /// Works for any pointer-shaped field — ref, map and array alike — which is
+  /// what the typed façade layer resolves its children and collections with.
+  int childHandle(String field) {
     final f = _resolve(field);
-    if (f == null) return null;
-    final ref = _n.fieldGetRef(_handle, f.offset, f.index);
-    return ref == 0 ? null : SchemaView(ref);
+    if (f == null) return 0;
+    return _n.fieldGetRef(_handle, f.offset, f.index);
   }
 
   @override

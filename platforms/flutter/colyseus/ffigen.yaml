@@ -9,7 +9,7 @@
 # ones that have to track the headers by eye.
 #
 # Regenerate after any core header change:
-#   cd platforms/flutter/colyseus_flutter && dart run ffigen
+#   cd platforms/flutter/colyseus && dart run ffigen
 name: ColyseusCore
 description: FFI bindings for the Colyseus native SDK's 0.18 C API.
 output: 'lib/src/bindings/colyseus_core.dart'

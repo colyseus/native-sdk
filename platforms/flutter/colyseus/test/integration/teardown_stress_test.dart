@@ -1,7 +1,7 @@
 @Tags(['integration'])
 library;
 
-import 'package:colyseus_flutter/colyseus_flutter.dart';
+import 'package:colyseus/colyseus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'harness.dart';
@@ -24,7 +24,7 @@ void main() {
       // Enough frames to get the transport genuinely busy: decode, acks and
       // the input round trip all running when the teardown starts.
       final input = room.input()!;
-      final predict = Predict.of(room);
+      final predict = Predict.get(room);
       predict.attachAll('players',
           config: {'x': PredictMode.damped, 'y': PredictMode.damped});
 
@@ -66,7 +66,7 @@ void main() {
       final room = await client.joinOrCreate('lab-move');
 
       final input = room.input()!;
-      final predict = Predict.of(room);
+      final predict = Predict.get(room);
       for (var f = 0; f < 20; f++) {
         Colyseus.pump();
         final steps = predict.tick(room.clock.now);
@@ -101,7 +101,7 @@ void main() {
     );
 
     final input = room.input()!;
-    final predict = Predict.of(room);
+    final predict = Predict.get(room);
     var reconnects = 0;
     room.onReconnect.listen((_) => reconnects++);
 

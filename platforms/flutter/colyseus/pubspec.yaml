@@ -1,6 +1,16 @@
-name: colyseus_flutter
+name: colyseus
 description: Colyseus multiplayer game client for Flutter, backed by the native C SDK.
 version: 0.18.0
+homepage: https://colyseus.io
+repository: https://github.com/colyseus/native-sdk
+issue_tracker: https://github.com/colyseus/native-sdk/issues
+documentation: https://docs.colyseus.io
+topics:
+  - multiplayer
+  - networking
+  - game-development
+  - websocket
+  - ffi
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

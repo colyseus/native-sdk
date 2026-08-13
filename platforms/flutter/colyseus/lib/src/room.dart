@@ -6,6 +6,7 @@ import 'package:meta/meta.dart';
 
 import 'bindings/colyseus_core.dart';
 import 'bindings/native_functions.dart';
+import 'callbacks.dart';
 import 'colyseus.dart';
 import 'event_poller.dart';
 import 'input_handle.dart';
@@ -13,6 +14,7 @@ import 'predict.dart';
 import 'message.dart';
 import 'room_clock.dart';
 import 'schema.dart';
+import 'schema_ref.dart';
 import 'schema_view.dart';
 import 'types.dart';
 
@@ -20,12 +22,19 @@ final _n = NativeFunctions.instance;
 
 /// Represents a room connection to a Colyseus server.
 ///
+/// [TState] is the room's schema root. Joining with a generated class —
+/// `client.joinOrCreate('my_room', stateType: MyRoomState.new)`, the Dart
+/// spelling of C#'s `JoinOrCreate<MyRoomState>("my_room")` — types [state]
+/// and [onStateChange]; joining without one leaves them on the dynamic
+/// [SchemaInstance] accessors.
+///
 /// All events are exposed as [Stream]s for idiomatic Dart usage:
 /// ```dart
-/// room.onStateChange.listen((_) {
-///   final state = room.state;
-///   print(state['score']);
-/// });
+/// final room = await client.joinOrCreate('my_room',
+///     stateType: MyRoomState.new);
+///
+/// final state = await room.onStateChange.first;   // typed, first patch
+/// print(state.players.length);
 ///
 /// room.onMessage('chat').listen((data) {
 ///   print(data['text']);
@@ -39,11 +48,14 @@ final _n = NativeFunctions.instance;
 ///   print('Left with code: $code');
 /// });
 /// ```
-class ColyseusRoom {
+class ColyseusRoom<TState extends SchemaInstance> {
   final int _roomRef;
+  final TState Function(int handle)? _stateType;
+  TState? _stateWrapper;
+  int _stateWrapperHandle = 0;
 
   final _onJoinController = StreamController<void>.broadcast();
-  final _onStateChangeController = StreamController<void>.broadcast();
+  final _onStateChangeController = StreamController<TState>.broadcast();
   final _onErrorController = StreamController<ColyseusError>.broadcast();
   final _onLeaveController = StreamController<int>.broadcast();
   final _onDropController = StreamController<ColyseusError>.broadcast();
@@ -52,11 +64,7 @@ class ColyseusRoom {
   final _onMessageAnyController =
       StreamController<MapEntry<String, dynamic>>.broadcast();
 
-  // Schema callback streams, keyed by callback handle
-  final Map<int, StreamController<dynamic>> _propertyChangeControllers = {};
-  final Map<int, StreamController<dynamic>> _itemAddControllers = {};
-  final Map<int, StreamController<dynamic>> _itemRemoveControllers = {};
-  int _callbacksHandle = 0;
+  StateCallbacks? _stateCallbacks;
   RoomClock? _clock;
   InputHandle? _input;
   NativeCallable<Bool Function(Pointer<Void>, Pointer<Void>)>? _allowRewind;
@@ -68,11 +76,13 @@ class ColyseusRoom {
   /// [dispose] can enforce that instead of leaving it to call order.
   final List<Predict> _predicts = [];
 
-  ColyseusRoom._(this._roomRef);
+  ColyseusRoom._(this._roomRef, this._stateType);
 
   /// Create a room instance (called internally by ColyseusClient).
-  static ColyseusRoom create(int roomRef) {
-    return ColyseusRoom._(roomRef);
+  @internal
+  static ColyseusRoom<T> create<T extends SchemaInstance>(
+      int roomRef, T Function(int handle)? stateType) {
+    return ColyseusRoom<T>._(roomRef, stateType);
   }
 
   // ===== Properties =====
@@ -99,11 +109,52 @@ class ColyseusRoom {
   /// The room reference handle.
   int get roomRef => _roomRef;
 
-  /// Get the root state as a dynamic schema accessor.
-  SchemaInstance? get state {
+  /// The root state, or null before the first patch decodes.
+  ///
+  /// Typed by the `stateType:` the room was joined with; a room joined
+  /// without one reads dynamically through [SchemaInstance]. The typed
+  /// wrapper is kept for as long as the underlying instance lives, so
+  /// reading this every frame is cheap.
+  TState? get state {
     final handle = _n.roomGetState(_roomRef);
-    return handle != 0 ? SchemaInstance(handle) : null;
+    if (handle == 0) return null;
+
+    final create = _stateType;
+    if (create == null) return SchemaInstance(handle) as TState;
+
+    // The root handle only changes when the decoder rebuilds the state
+    // (reconnect); the wrapper follows it.
+    final cached = _stateWrapper;
+    if (cached != null && _stateWrapperHandle == handle) return cached;
+
+    final made = create(handle);
+    // Children resolved through the wrapper share the room's schema cache.
+    if (made is SchemaRef) made.attachCache(schemaCache);
+    _stateWrapper = made;
+    _stateWrapperHandle = handle;
+    return made;
   }
+
+  /// The root state wrapped in [create] — for narrowing to a class other
+  /// than the room's own `stateType:` (a façade over part of the schema,
+  /// say). Rooms joined with a `stateType:` mostly want [state] instead.
+  ///
+  /// Wrappers come from this room's [schemaCache], so calling this every
+  /// frame hands back the same instances with their field resolution warm.
+  T? stateAs<T extends SchemaRef>(T Function(int handle) create) {
+    final handle = _n.roomGetState(_roomRef);
+    return handle != 0 ? schemaCache.wrap(handle, create) : null;
+  }
+
+  /// Wrapper identity for typed schema access; cleared on reconnect and
+  /// dispose, when the decoder replaces instances wholesale.
+  @internal
+  final SchemaCache schemaCache = SchemaCache();
+
+  /// The schema-callbacks surface for this room; reach it via [Callbacks.get].
+  @internal
+  StateCallbacks get stateCallbacks =>
+      _stateCallbacks ??= StateCallbacks.internal(this);
 
   /// The core room pointer the 0.18 APIs take, or `nullptr` before the join
   /// resolves.
@@ -247,8 +298,11 @@ class ColyseusRoom {
   /// Fires when the client has joined the room.
   Stream<void> get onJoin => _onJoinController.stream;
 
-  /// Fires when the room state has changed.
-  Stream<void> get onStateChange => _onStateChangeController.stream;
+  /// Fires with the (typed) root state after every decoded patch.
+  ///
+  /// `room.onStateChange.first` is the bind-once idiom: the first event is
+  /// the first decoded state, the place to register schema callbacks.
+  Stream<TState> get onStateChange => _onStateChangeController.stream;
 
   /// Fires on room errors.
   Stream<ColyseusError> get onError => _onErrorController.stream;
@@ -327,114 +381,6 @@ class ColyseusRoom {
     malloc.free(dataPtr);
   }
 
-  // ===== Schema Callbacks =====
-
-  /// One native callbacks manager per room, created on first subscription.
-  ///
-  /// The manager wraps the room's decoder, so it can only be built once the
-  /// serializer exists — i.e. after the join handshake.
-  int get _callbacks {
-    if (_callbacksHandle == 0) {
-      _callbacksHandle = _n.callbacksCreate(_roomRef);
-      if (_callbacksHandle == 0) {
-        throw StateError(
-          'Failed to create callbacks manager — is the room joined yet?',
-        );
-      }
-    }
-    return _callbacksHandle;
-  }
-
-  /// Registers a native schema callback and bridges it to a Dart stream.
-  ///
-  /// Cancelling the returned subscription unregisters the native callback,
-  /// so listeners don't outlive their subscribers.
-  StreamSubscription<dynamic> _subscribe(
-    int Function(int callbacks, int instance, Pointer<Utf8> property) register,
-    Map<int, StreamController<dynamic>> controllers,
-    String property,
-    int instanceHandle,
-    void Function(dynamic event) deliver,
-  ) {
-    final callbacks = _callbacks;
-
-    final propPtr = property.toNativeUtf8();
-    final int handle;
-    try {
-      handle = register(callbacks, instanceHandle, propPtr);
-    } finally {
-      malloc.free(propPtr);
-    }
-
-    if (handle < 0) {
-      throw StateError('Failed to register "$property" callback');
-    }
-
-    final controller = StreamController<dynamic>.broadcast(
-      onCancel: () {
-        _n.callbacksRemoveHandle(callbacks, handle);
-        controllers.remove(handle)?.close();
-      },
-    );
-    controllers[handle] = controller;
-
-    return controller.stream.listen(deliver);
-  }
-
-  /// Listen to property changes on a schema instance.
-  ///
-  /// [instanceHandle] defaults to the root state. Cancel the returned
-  /// subscription to stop listening and release the native callback.
-  StreamSubscription<dynamic> listen(
-    String property,
-    void Function(dynamic value, dynamic previousValue) callback, {
-    int instanceHandle = 0,
-  }) {
-    return _subscribe(
-      _n.callbacksListen,
-      _propertyChangeControllers,
-      property,
-      instanceHandle,
-      (event) {
-        if (event is Map) callback(event['value'], event['previousValue']);
-      },
-    );
-  }
-
-  /// Listen to items added to a collection.
-  StreamSubscription<dynamic> onAdd(
-    String property,
-    void Function(dynamic value, String key) callback, {
-    int instanceHandle = 0,
-  }) {
-    return _subscribe(
-      _n.callbacksOnAdd,
-      _itemAddControllers,
-      property,
-      instanceHandle,
-      (event) {
-        if (event is Map) callback(event['value'], event['key'] as String);
-      },
-    );
-  }
-
-  /// Listen to items removed from a collection.
-  StreamSubscription<dynamic> onRemove(
-    String property,
-    void Function(dynamic value, String key) callback, {
-    int instanceHandle = 0,
-  }) {
-    return _subscribe(
-      _n.callbacksOnRemove,
-      _itemRemoveControllers,
-      property,
-      instanceHandle,
-      (event) {
-        if (event is Map) callback(event['value'], event['key'] as String);
-      },
-    );
-  }
-
   // ===== Lifecycle =====
 
   /// Leave the room gracefully.
@@ -443,7 +389,7 @@ class ColyseusRoom {
   }
 
   @internal
-  /// Registers a prediction layer for ordered teardown. Called by [Predict.of].
+  /// Registers a prediction layer for ordered teardown. Called by [Predict.get].
   void registerPredict(Predict predict) => _predicts.add(predict);
 
   @internal
@@ -459,6 +405,12 @@ class ColyseusRoom {
     }
     _predicts.clear();
 
+    _stateCallbacks?.dispose();
+    _stateCallbacks = null;
+    schemaCache.clear();
+    _stateWrapper = null;
+    _stateWrapperHandle = 0;
+
     _onJoinController.close();
     _onStateChangeController.close();
     _onErrorController.close();
@@ -470,23 +422,6 @@ class ColyseusRoom {
       c.close();
     }
     _messageControllers.clear();
-    for (final c in _propertyChangeControllers.values) {
-      c.close();
-    }
-    _propertyChangeControllers.clear();
-    for (final c in _itemAddControllers.values) {
-      c.close();
-    }
-    _itemAddControllers.clear();
-    for (final c in _itemRemoveControllers.values) {
-      c.close();
-    }
-    _itemRemoveControllers.clear();
-
-    if (_callbacksHandle != 0) {
-      _n.callbacksFree(_callbacksHandle);
-      _callbacksHandle = 0;
-    }
 
     _allowRewind?.close();
     _allowRewind = null;
@@ -502,7 +437,8 @@ class ColyseusRoom {
   }
 
   void handleStateChange() {
-    _onStateChangeController.add(null);
+    final current = state;
+    if (current != null) _onStateChangeController.add(current);
   }
 
   void handleMessage(String type, dynamic data) {
@@ -523,6 +459,11 @@ class ColyseusRoom {
   }
 
   void handleReconnect() {
+    // The reconnect handshake resyncs the full state, freeing and replacing
+    // every decoded instance — cached wrappers must not survive it.
+    schemaCache.clear();
+    _stateWrapper = null;
+    _stateWrapperHandle = 0;
     _onReconnectController.add(null);
   }
 
@@ -535,53 +476,9 @@ class ColyseusRoom {
     String prevValueString,
     int instanceHandle,
   ) {
-    final controller = _propertyChangeControllers[callbackHandle];
-    if (controller == null) return;
-
-    final type = SchemaFieldType.fromValue(valueType);
-    dynamic value;
-    dynamic previousValue;
-
-    if (type == SchemaFieldType.string) {
-      value = valueString;
-      previousValue = prevValueString;
-    } else if (type == SchemaFieldType.ref) {
-      value = instanceHandle != 0 ? SchemaInstance(instanceHandle) : null;
-      previousValue = null;
-    } else if (type == SchemaFieldType.boolean) {
-      value = valueNumber > 0.5;
-      previousValue = prevValueNumber > 0.5;
-    } else {
-      value = valueNumber;
-      previousValue = prevValueNumber;
-    }
-
-    controller.add({'value': value, 'previousValue': previousValue});
-  }
-
-  /// Collection items arrive either as instance handles (schema children) or
-  /// as values already unboxed by the native trampoline (primitive children,
-  /// flagged by the event carrying the child's own field type).
-  dynamic _itemValue(
-    int valueType,
-    int instanceHandle,
-    double valueNumber,
-    String valueString,
-  ) {
-    switch (SchemaFieldType.fromValue(valueType)) {
-      case SchemaFieldType.ref:
-      case SchemaFieldType.array:
-      case SchemaFieldType.map:
-        return instanceHandle != 0 ? SchemaInstance(instanceHandle) : null;
-      case SchemaFieldType.string:
-        return valueString;
-      case SchemaFieldType.boolean:
-        return valueNumber > 0.5;
-      case null:
-        return null;
-      default:
-        return valueNumber;
-    }
+    _stateCallbacks?.dispatchPropertyChange(callbackHandle, valueType,
+        valueNumber, valueString, prevValueNumber, prevValueString,
+        instanceHandle);
   }
 
   void handleItemAdd(
@@ -592,10 +489,9 @@ class ColyseusRoom {
     double valueNumber,
     String valueString,
   ) {
-    _itemAddControllers[callbackHandle]?.add({
-      'value': _itemValue(valueType, instanceHandle, valueNumber, valueString),
-      'key': key,
-    });
+    _stateCallbacks?.dispatchItemAdd(
+        callbackHandle, key, instanceHandle, valueType, valueNumber,
+        valueString);
   }
 
   void handleItemRemove(
@@ -606,10 +502,13 @@ class ColyseusRoom {
     double valueNumber,
     String valueString,
   ) {
-    _itemRemoveControllers[callbackHandle]?.add({
-      'value': _itemValue(valueType, instanceHandle, valueNumber, valueString),
-      'key': key,
-    });
+    _stateCallbacks?.dispatchItemRemove(
+        callbackHandle, key, instanceHandle, valueType, valueNumber,
+        valueString);
+  }
+
+  void handleInstanceChange(int callbackHandle) {
+    _stateCallbacks?.dispatchInstanceChange(callbackHandle);
   }
 
   @override

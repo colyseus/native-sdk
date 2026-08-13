@@ -138,7 +138,7 @@ typedef ReckonStep = void Function(
 /// inputs are due:
 ///
 /// ```dart
-/// final predict = Predict.of(room);
+/// final predict = Predict.get(room);
 /// predict.attachAll('players', config: {'x': PredictMode.damped,
 ///                                       'y': PredictMode.damped},
 ///                   exceptKey: room.sessionId);
@@ -164,10 +164,12 @@ class Predict {
 
   /// The prediction layer for [room], wired to its clock and input channel.
   ///
-  /// Each call builds a new one; hold onto the result and [dispose] it when
-  /// the screen goes away. Disposing the room also disposes it, so it can
-  /// never outlive the decoder its callbacks live on.
-  factory Predict.of(ColyseusRoom room) {
+  /// The Dart spelling of C#'s `Predict.For(room)` (`for` is a reserved word
+  /// here), and the same access shape as [Callbacks.get]. Unlike
+  /// [Callbacks.get], each call builds a new layer: hold onto the result and
+  /// [dispose] it when the screen goes away. Disposing the room also disposes
+  /// it, so it can never outlive the decoder its callbacks live on.
+  static Predict get(ColyseusRoom room) {
     final native = room.nativeRoom;
     if (native == nullptr) {
       throw StateError('Room is not connected yet — await the join first');

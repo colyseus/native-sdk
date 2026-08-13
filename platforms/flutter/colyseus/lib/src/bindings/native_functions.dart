@@ -347,16 +347,20 @@ class NativeFunctions {
       void Function(int, int)>('colyseus_flutter_callbacks_remove_handle');
 
   late final callbacksListen = _lib.lookupFunction<
-      Int32 Function(IntPtr, IntPtr, Pointer<Utf8>),
-      int Function(int, int, Pointer<Utf8>)>('colyseus_flutter_callbacks_listen');
+      Int32 Function(IntPtr, IntPtr, Pointer<Utf8>, Int32),
+      int Function(int, int, Pointer<Utf8>, int)>('colyseus_flutter_callbacks_listen');
 
   late final callbacksOnAdd = _lib.lookupFunction<
-      Int32 Function(IntPtr, IntPtr, Pointer<Utf8>),
-      int Function(int, int, Pointer<Utf8>)>('colyseus_flutter_callbacks_on_add');
+      Int32 Function(IntPtr, IntPtr, Pointer<Utf8>, Int32),
+      int Function(int, int, Pointer<Utf8>, int)>('colyseus_flutter_callbacks_on_add');
 
   late final callbacksOnRemove = _lib.lookupFunction<
       Int32 Function(IntPtr, IntPtr, Pointer<Utf8>),
       int Function(int, int, Pointer<Utf8>)>('colyseus_flutter_callbacks_on_remove');
+
+  late final callbacksOnChange = _lib.lookupFunction<
+      Int32 Function(IntPtr, IntPtr),
+      int Function(int, int)>('colyseus_flutter_callbacks_on_change');
 
   // ===== Extras: room bridge =====
 
@@ -499,7 +503,23 @@ class NativeFunctions {
 
   late final collectionGet = _lib.lookupFunction<
       IntPtr Function(IntPtr, Int32, Pointer<Utf8>, Int32),
-      int Function(int, int, Pointer<Utf8>, int)>('colyseus_flutter_collection_get');
+      int Function(int, int, Pointer<Utf8>, int)>(
+      'colyseus_flutter_collection_get', isLeaf: true);
+
+  /// -2 for schema children, else the child's colyseus_field_type_t.
+  late final collectionChildType = _lib.lookupFunction<
+      Int32 Function(IntPtr, Int32),
+      int Function(int, int)>(
+      'colyseus_flutter_collection_child_type', isLeaf: true);
+
+  late final collectionValueNumber = _lib.lookupFunction<
+      Double Function(IntPtr, Int32),
+      double Function(int, int)>(
+      'colyseus_flutter_collection_value_number', isLeaf: true);
+
+  late final collectionValueString = _lib.lookupFunction<
+      Pointer<Utf8> Function(IntPtr),
+      Pointer<Utf8> Function(int)>('colyseus_flutter_collection_value_string');
 
   late final collectionCount = _lib.lookupFunction<
       Int32 Function(IntPtr, Int32),

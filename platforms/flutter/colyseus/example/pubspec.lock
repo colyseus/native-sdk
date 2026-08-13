@@ -17,7 +17,7 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.19.1"
-  colyseus_flutter:
+  colyseus:
     dependency: "direct main"
     description:
       path: ".."

@@ -491,6 +491,18 @@ static void flutter_item_add_trampoline(void* value, void* key, void* userdata) 
     event_queue_push(&event);
 }
 
+static void flutter_instance_change_trampoline(void* userdata) {
+    flutter_callback_entry_t* entry = (flutter_callback_entry_t*)userdata;
+    if (!entry || !entry->active) return;
+
+    flutter_event_t event = {0};
+    event.type = FLUTTER_EVENT_INSTANCE_CHANGE;
+    event.room_handle = entry->room_handle;
+    event.schema.callback_handle = entry->index;
+
+    event_queue_push(&event);
+}
+
 static void flutter_item_remove_trampoline(void* value, void* key, void* userdata) {
     flutter_callback_entry_t* entry = (flutter_callback_entry_t*)userdata;
     if (!entry || !entry->active) return;
@@ -1574,7 +1586,7 @@ FLUTTER_EXPORT void colyseus_flutter_callbacks_remove_handle(intptr_t callbacks_
     entry->active = false;
 }
 
-FLUTTER_EXPORT int colyseus_flutter_callbacks_listen(intptr_t callbacks_handle, intptr_t instance_handle, const char* property) {
+FLUTTER_EXPORT int colyseus_flutter_callbacks_listen(intptr_t callbacks_handle, intptr_t instance_handle, const char* property, int immediate) {
     flutter_callbacks_wrapper_t* wrapper = (flutter_callbacks_wrapper_t*)callbacks_handle;
     if (!wrapper || !wrapper->native || !property) return -1;
 
@@ -1602,13 +1614,13 @@ FLUTTER_EXPORT int colyseus_flutter_callbacks_listen(intptr_t callbacks_handle, 
         property,
         flutter_property_change_trampoline,
         entry,
-        false  // not immediate
+        immediate != 0
     );
 
     return entry->index;
 }
 
-FLUTTER_EXPORT int colyseus_flutter_callbacks_on_add(intptr_t callbacks_handle, intptr_t instance_handle, const char* property) {
+FLUTTER_EXPORT int colyseus_flutter_callbacks_on_add(intptr_t callbacks_handle, intptr_t instance_handle, const char* property, int immediate) {
     flutter_callbacks_wrapper_t* wrapper = (flutter_callbacks_wrapper_t*)callbacks_handle;
     if (!wrapper || !wrapper->native || !property) return -1;
 
@@ -1639,7 +1651,7 @@ FLUTTER_EXPORT int colyseus_flutter_callbacks_on_add(intptr_t callbacks_handle, 
         property,
         flutter_item_add_trampoline,
         entry,
-        true  // immediate
+        immediate != 0
     );
 
     return entry->index;
@@ -1675,6 +1687,35 @@ FLUTTER_EXPORT int colyseus_flutter_callbacks_on_remove(intptr_t callbacks_handl
         instance,
         property,
         flutter_item_remove_trampoline,
+        entry
+    );
+
+    return entry->index;
+}
+
+FLUTTER_EXPORT int colyseus_flutter_callbacks_on_change(intptr_t callbacks_handle, intptr_t instance_handle) {
+    flutter_callbacks_wrapper_t* wrapper = (flutter_callbacks_wrapper_t*)callbacks_handle;
+    if (!wrapper || !wrapper->native) return -1;
+
+    void* instance = NULL;
+    if (instance_handle == 0) {
+        instance = colyseus_room_get_state(wrapper->room);
+    } else {
+        instance = (void*)instance_handle;
+    }
+    if (!instance) return -1;
+
+    flutter_callback_entry_t* entry = flutter_find_free_callback_entry();
+    if (!entry) return -1;
+
+    entry->active = true;
+    entry->room_handle = wrapper->room_ref;
+    entry->callback_type = 3;  // ON_CHANGE
+
+    entry->native_handle = colyseus_callbacks_on_change_instance(
+        wrapper->native,
+        instance,
+        flutter_instance_change_trampoline,
         entry
     );
 

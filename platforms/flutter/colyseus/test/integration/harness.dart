@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:colyseus_flutter/colyseus_flutter.dart';
+import 'package:colyseus/colyseus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// The repo's example-server (`cd example-server && npm start`).
@@ -126,8 +126,8 @@ Future<void> withRoom(
   ColyseusRoom? room;
   try {
     room = shared
-        ? await client.joinOrCreate(roomName, options)
-        : await client.create(roomName, options);
+        ? await client.joinOrCreate(roomName, options: options)
+        : await client.create(roomName, options: options);
     await body(client, room);
   } finally {
     if (room != null) {

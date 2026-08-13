@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:colyseus_flutter/src/msgpack.dart';
+import 'package:colyseus/src/msgpack.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Uint8List bytes(List<int> values) => Uint8List.fromList(values);

@@ -3,7 +3,7 @@ library;
 
 import 'dart:math';
 
-import 'package:colyseus_flutter/colyseus_flutter.dart';
+import 'package:colyseus/colyseus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'harness.dart';
@@ -65,7 +65,7 @@ void main() {
     test('value falls back to the raw field when untracked', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         expect(predict.value(me!, 'x'), me['x']);
@@ -76,7 +76,7 @@ void main() {
     test('attachAll tracks entries and smooths them', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         predict.attachAll('players', config: {
@@ -101,7 +101,7 @@ void main() {
     test('lerp with an explicit delay stays behind the raw value', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         predict.attachAll('players', config: {
@@ -120,7 +120,7 @@ void main() {
     test('exceptKey leaves one entry untracked', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         predict.attachAll(
@@ -152,7 +152,7 @@ void main() {
         });
         expect(bots, isNotNull, reason: 'lab-bots never sent bots');
 
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         var stepCalls = 0;
@@ -187,7 +187,7 @@ void main() {
     test('predicts locally and stays matched with the server', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         final input = room.input()!;
@@ -220,7 +220,7 @@ void main() {
     test('state and value agree while settled', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         final input = room.input()!;
@@ -242,7 +242,7 @@ void main() {
     test('pendingCount grows with injected latency', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         final input = room.input()!;
@@ -278,7 +278,7 @@ void main() {
     test('a misprediction triggers rollback replay', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         final input = room.input()!;
@@ -339,7 +339,7 @@ void main() {
     test('a matched prediction short-circuits without replaying', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         final input = room.input()!;
@@ -374,7 +374,7 @@ void main() {
     test('onReconcile reports the acked sequence', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         final input = room.input()!;
@@ -398,7 +398,7 @@ void main() {
     test('reset re-seeds from the server', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         final input = room.input()!;
@@ -428,7 +428,7 @@ void main() {
     test('memo freezes a value across replays', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         final input = room.input()!;
@@ -474,7 +474,7 @@ void main() {
     test('memoVec freezes a tuple under one key', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);
-        final predict = Predict.of(room);
+        final predict = Predict.get(room);
         addTearDown(predict.dispose);
 
         final input = room.input()!;

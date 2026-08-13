@@ -41,6 +41,7 @@ typedef enum {
     FLUTTER_EVENT_ITEM_REMOVE = 9,
     FLUTTER_EVENT_ROOM_DROP = 14,
     FLUTTER_EVENT_ROOM_RECONNECT = 15,
+    FLUTTER_EVENT_INSTANCE_CHANGE = 16,
 } flutter_event_type_t;
 
 // =============================================================================
@@ -585,21 +586,29 @@ FLUTTER_EXPORT void colyseus_flutter_callbacks_remove_handle(intptr_t callbacks_
  * @param callbacks_handle Callbacks manager handle
  * @param instance_handle Schema instance (0 for root state)
  * @param property Property name
+ * @param immediate If non-zero, replay the current value on registration
  * @return Callback handle for unsubscription, or -1 on failure
  */
-FLUTTER_EXPORT int colyseus_flutter_callbacks_listen(intptr_t callbacks_handle, intptr_t instance_handle, const char* property);
+FLUTTER_EXPORT int colyseus_flutter_callbacks_listen(intptr_t callbacks_handle, intptr_t instance_handle, const char* property, int immediate);
 
 /**
  * Listen to collection item additions
+ * @param immediate If non-zero, replay existing items on registration
  * @return Callback handle, or -1 on failure
  */
-FLUTTER_EXPORT int colyseus_flutter_callbacks_on_add(intptr_t callbacks_handle, intptr_t instance_handle, const char* property);
+FLUTTER_EXPORT int colyseus_flutter_callbacks_on_add(intptr_t callbacks_handle, intptr_t instance_handle, const char* property, int immediate);
 
 /**
  * Listen to collection item removals
  * @return Callback handle, or -1 on failure
  */
 FLUTTER_EXPORT int colyseus_flutter_callbacks_on_remove(intptr_t callbacks_handle, intptr_t instance_handle, const char* property);
+
+/**
+ * Listen to any property change on a schema instance
+ * @return Callback handle, or -1 on failure
+ */
+FLUTTER_EXPORT int colyseus_flutter_callbacks_on_change(intptr_t callbacks_handle, intptr_t instance_handle);
 
 // Schema event accessors (for PROPERTY_CHANGE, ITEM_ADD, ITEM_REMOVE events)
 

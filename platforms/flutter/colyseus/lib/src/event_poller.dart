@@ -5,6 +5,7 @@ import 'bindings/native_functions.dart';
 import 'colyseus.dart';
 import 'message.dart';
 import 'room.dart';
+import 'schema.dart';
 import 'types.dart';
 
 final _n = NativeFunctions.instance;
@@ -47,9 +48,10 @@ class ColyseusEventPoller {
 
   /// Register a room for event dispatch and return a Future that
   /// completes when the JOIN event arrives (or rejects on CLIENT_ERROR).
-  Future<ColyseusRoom> registerPendingJoin(int roomRef, ColyseusRoom room) {
+  Future<ColyseusRoom<T>> registerPendingJoin<T extends SchemaInstance>(
+      int roomRef, ColyseusRoom<T> room) {
     _rooms[roomRef] = room;
-    final completer = Completer<ColyseusRoom>();
+    final completer = Completer<ColyseusRoom<T>>();
     _pendingJoins[roomRef] = completer;
     _ensureRunning();
     return completer.future;
@@ -177,6 +179,10 @@ class ColyseusEventPoller {
             _n.eventGetValueNumber(),
             _n.eventGetValueString().toDartString(),
           );
+          break;
+
+        case ColyseusEventType.instanceChange:
+          room?.handleInstanceChange(_n.eventGetCallbackHandle());
           break;
 
         case ColyseusEventType.none:

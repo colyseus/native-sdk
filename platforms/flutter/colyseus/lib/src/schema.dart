@@ -1,9 +1,27 @@
+import 'dart:ffi' show nullptr;
+
 import 'package:ffi/ffi.dart';
 
 import 'bindings/native_functions.dart';
 import 'types.dart';
 
 final _n = NativeFunctions.instance;
+
+/// Converts a value cell from the O(1) collection_get path into a Dart value.
+dynamic _unboxCell(int cell, int childType) {
+  if (childType < 0) {
+    // Schema child (-2) or unknown: the cell is the instance handle itself.
+    return cell != 0 ? SchemaInstance(cell) : null;
+  }
+  switch (SchemaFieldType.fromValue(childType)) {
+    case SchemaFieldType.string:
+      return _n.collectionValueString(cell).toDartString();
+    case SchemaFieldType.boolean:
+      return _n.collectionValueNumber(cell, childType) > 0.5;
+    default:
+      return _n.collectionValueNumber(cell, childType);
+  }
+}
 
 /// Reads a field by name, dispatching on its declared type.
 ///
@@ -137,6 +155,7 @@ class SchemaInstance {
 /// for schema children and plain Dart values for primitive children.
 class SchemaMap {
   final int _handle;
+  int? _childType;
 
   SchemaMap(this._handle);
 
@@ -150,16 +169,17 @@ class SchemaMap {
   bool get isNotEmpty => length != 0;
 
   /// The value stored under [key], or null when absent.
+  ///
+  /// A direct hash lookup — O(1), no snapshot, no per-entry allocation.
   dynamic operator [](String key) {
-    // Snapshot rather than a direct hash lookup: primitive children carry no
-    // type tag of their own, and unboxing needs the collection's declared one.
-    final count = _n.collectionSnapshot(_handle, 1);
-    for (var i = 0; i < count; i++) {
-      if (_n.collectionEntryKey(i).toDartString() == key) {
-        return _snapshotEntry(i);
-      }
+    final keyPtr = key.toNativeUtf8();
+    try {
+      final cell = _n.collectionGet(_handle, 1, keyPtr, 0);
+      if (cell == 0) return null;
+      return _unboxCell(cell, _childType ??= _n.collectionChildType(_handle, 1));
+    } finally {
+      malloc.free(keyPtr);
     }
-    return null;
   }
 
   /// Whether [key] is present.
@@ -215,6 +235,7 @@ class SchemaMap {
 /// the server sees, not the order the list happens to hold.
 class SchemaArray {
   final int _handle;
+  int? _childType;
 
   SchemaArray(this._handle);
 
@@ -229,11 +250,9 @@ class SchemaArray {
 
   /// The item at [index], or null when out of range.
   dynamic operator [](int index) {
-    final count = _n.collectionSnapshot(_handle, 0);
-    for (var i = 0; i < count; i++) {
-      if (_n.collectionEntryIndex(i) == index) return _snapshotEntry(i);
-    }
-    return null;
+    final cell = _n.collectionGet(_handle, 0, nullptr, index);
+    if (cell == 0) return null;
+    return _unboxCell(cell, _childType ??= _n.collectionChildType(_handle, 0));
   }
 
   /// The items, in index order.

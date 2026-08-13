@@ -1,7 +1,7 @@
 @Tags(['integration'])
 library;
 
-import 'package:colyseus_flutter/colyseus_flutter.dart';
+import 'package:colyseus/colyseus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'harness.dart';
@@ -22,7 +22,7 @@ void main() {
       final puck = await waitForValue(() => room.state?.getRef('puck'));
       expect(puck, isNotNull, reason: 'lab-hockey never sent a puck');
 
-      final predict = Predict.of(room);
+      final predict = Predict.get(room);
       final input = room.input()!;
 
       var steps = 0;
@@ -85,7 +85,7 @@ void main() {
       final me = await waitForOwnEntry(room);
       final puck = await waitForValue(() => room.state?.getRef('puck'));
 
-      final predict = Predict.of(room);
+      final predict = Predict.get(room);
       final input = room.input()!;
 
       final sim = predict.sim(
@@ -123,7 +123,7 @@ void main() {
       final me = await waitForOwnEntry(room);
       final puck = await waitForValue(() => room.state?.getRef('puck'));
 
-      final predict = Predict.of(room);
+      final predict = Predict.get(room);
       final input = room.input()!;
       final ghost = _Ghost(10, 20);
 
@@ -168,7 +168,7 @@ void main() {
   test('a world with no bound parts requires an adopt callback', () async {
     await withRoom(playground, 'lab-hockey', (client, room) async {
       await waitForOwnEntry(room);
-      final predict = Predict.of(room);
+      final predict = Predict.get(room);
       final input = room.input()!;
 
       expect(

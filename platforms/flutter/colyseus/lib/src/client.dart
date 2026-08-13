@@ -8,18 +8,22 @@ import 'bindings/native_functions.dart';
 import 'event_poller.dart';
 import 'http.dart';
 import 'room.dart';
+import 'schema.dart';
 
 final _n = NativeFunctions.instance;
 
 /// A Colyseus multiplayer client.
 ///
+/// Passing a generated schema class as `stateType:` types the returned room —
+/// the Dart spelling of C#'s `JoinOrCreate<MyRoomState>("my_room")`:
+///
 /// ```dart
 /// final client = ColyseusClient('ws://localhost:2567');
-/// final room = await client.joinOrCreate('my_room', {'name': 'Player1'});
+/// final room = await client.joinOrCreate('my_room',
+///     options: {'name': 'Player1'}, stateType: MyRoomState.new);
 ///
-/// room.onStateChange.listen((_) {
-///   print('State changed!');
-/// });
+/// final state = await room.onStateChange.first;   // MyRoomState
+/// print(state.players.length);
 ///
 /// room.send('move', {'x': 10, 'y': 20});
 ///
@@ -28,6 +32,9 @@ final _n = NativeFunctions.instance;
 /// room.dispose();
 /// client.dispose();
 /// ```
+///
+/// Without `stateType:`, the room's state reads dynamically through
+/// [SchemaInstance].
 class ColyseusClient {
   int _handle;
   ColyseusHttp? _http;
@@ -45,53 +52,74 @@ class ColyseusClient {
   }
 
   /// Join or create a room.
-  /// [options] is an optional map that will be JSON-encoded and sent to the server.
-  /// Returns a [Future] that completes when the room is joined.
-  Future<ColyseusRoom> joinOrCreate(String roomName,
-      [Map<String, dynamic>? options]) {
+  ///
+  /// [options] is JSON-encoded and sent to the server. [stateType] is the
+  /// generated class for the room's schema root; it types the room's `state`
+  /// and `onStateChange`.
+  Future<ColyseusRoom<T>> joinOrCreate<T extends SchemaInstance>(
+    String roomName, {
+    Map<String, dynamic>? options,
+    T Function(int handle)? stateType,
+  }) {
     return _joinRoom(
       (clientHandle, namePtr, optsPtr) =>
           _n.clientJoinOrCreate(clientHandle, namePtr, optsPtr),
       roomName,
       options,
+      stateType,
     );
   }
 
   /// Create a new room.
-  Future<ColyseusRoom> create(String roomName,
-      [Map<String, dynamic>? options]) {
+  Future<ColyseusRoom<T>> create<T extends SchemaInstance>(
+    String roomName, {
+    Map<String, dynamic>? options,
+    T Function(int handle)? stateType,
+  }) {
     return _joinRoom(
       (clientHandle, namePtr, optsPtr) =>
           _n.clientCreateRoom(clientHandle, namePtr, optsPtr),
       roomName,
       options,
+      stateType,
     );
   }
 
   /// Join an existing room by name.
-  Future<ColyseusRoom> join(String roomName,
-      [Map<String, dynamic>? options]) {
+  Future<ColyseusRoom<T>> join<T extends SchemaInstance>(
+    String roomName, {
+    Map<String, dynamic>? options,
+    T Function(int handle)? stateType,
+  }) {
     return _joinRoom(
       (clientHandle, namePtr, optsPtr) =>
           _n.clientJoin(clientHandle, namePtr, optsPtr),
       roomName,
       options,
+      stateType,
     );
   }
 
   /// Join a specific room by ID.
-  Future<ColyseusRoom> joinById(String roomId,
-      [Map<String, dynamic>? options]) {
+  Future<ColyseusRoom<T>> joinById<T extends SchemaInstance>(
+    String roomId, {
+    Map<String, dynamic>? options,
+    T Function(int handle)? stateType,
+  }) {
     return _joinRoom(
       (clientHandle, namePtr, optsPtr) =>
           _n.clientJoinById(clientHandle, namePtr, optsPtr),
       roomId,
       options,
+      stateType,
     );
   }
 
   /// Reconnect to a room using a reconnection token.
-  Future<ColyseusRoom> reconnect(String reconnectionToken) {
+  Future<ColyseusRoom<T>> reconnect<T extends SchemaInstance>(
+    String reconnectionToken, {
+    T Function(int handle)? stateType,
+  }) {
     final tokenPtr = reconnectionToken.toNativeUtf8();
     final roomRef = _n.clientReconnect(_handle, tokenPtr);
     malloc.free(tokenPtr);
@@ -101,14 +129,15 @@ class ColyseusClient {
           StateError('Failed to start reconnection (no room slot available)'));
     }
 
-    final room = ColyseusRoom.create(roomRef);
+    final room = ColyseusRoom.create<T>(roomRef, stateType);
     return ColyseusEventPoller.instance.registerPendingJoin(roomRef, room);
   }
 
-  Future<ColyseusRoom> _joinRoom(
+  Future<ColyseusRoom<T>> _joinRoom<T extends SchemaInstance>(
     int Function(int, Pointer<Utf8>, Pointer<Utf8>) nativeCall,
     String nameOrId,
     Map<String, dynamic>? options,
+    T Function(int handle)? stateType,
   ) {
     final namePtr = nameOrId.toNativeUtf8();
     final optsJson = options != null ? jsonEncode(options) : '{}';
@@ -123,7 +152,7 @@ class ColyseusClient {
           StateError('Failed to start join (no room slot available)'));
     }
 
-    final room = ColyseusRoom.create(roomRef);
+    final room = ColyseusRoom.create<T>(roomRef, stateType);
     return ColyseusEventPoller.instance.registerPendingJoin(roomRef, room);
   }
 

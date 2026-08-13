@@ -378,7 +378,9 @@ FLUTTER_EXPORT const char* colyseus_flutter_collection_entry_string(int ordinal)
 
 /*
  * Direct key lookup — cheaper than a snapshot when the caller wants one item.
- * Schema children only; primitives need the snapshot path for their type tag.
+ * Returns an instance handle for schema children; for primitives it is the
+ * value cell, to be unboxed via collection_value_number / _string against
+ * collection_child_type.
  */
 FLUTTER_EXPORT intptr_t colyseus_flutter_collection_get(intptr_t collection, int is_map,
     const char* key, int index)
@@ -389,6 +391,39 @@ FLUTTER_EXPORT intptr_t colyseus_flutter_collection_get(intptr_t collection, int
         return (intptr_t)colyseus_map_schema_get((colyseus_map_schema_t*)collection, key);
     }
     return (intptr_t)colyseus_array_schema_get((colyseus_array_schema_t*)collection, index);
+}
+
+/*
+ * Child kind of a collection, without snapshotting: -2 = schema children,
+ * otherwise the colyseus_field_type_t of the primitive children.
+ */
+FLUTTER_EXPORT int colyseus_flutter_collection_child_type(intptr_t collection, int is_map) {
+    if (!collection) return -1;
+
+    bool has_schema_child;
+    const char* primitive;
+    if (is_map) {
+        colyseus_map_schema_t* map = (colyseus_map_schema_t*)collection;
+        has_schema_child = map->has_schema_child;
+        primitive = map->child_primitive_type;
+    } else {
+        colyseus_array_schema_t* arr = (colyseus_array_schema_t*)collection;
+        has_schema_child = arr->has_schema_child;
+        primitive = arr->child_primitive_type;
+    }
+
+    if (has_schema_child || !primitive) return -2;
+    return (int)colyseus_field_type_from_string(primitive);
+}
+
+/* Unbox a primitive value cell handed out by collection_get. */
+FLUTTER_EXPORT double colyseus_flutter_collection_value_number(intptr_t cell, int type) {
+    return primitive_as_number((void*)cell, type);
+}
+
+FLUTTER_EXPORT const char* colyseus_flutter_collection_value_string(intptr_t cell) {
+    const char* str = (const char*)cell;
+    return str ? str : "";
 }
 
 FLUTTER_EXPORT int colyseus_flutter_collection_count(intptr_t collection, int is_map) {

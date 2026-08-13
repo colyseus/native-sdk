@@ -1,8 +1,29 @@
-// The Android native library is built with Zig and placed in jniLibs.
-// This build.gradle configures the Flutter plugin to bundle the .so files.
+// The native library is built with Zig and staged into src/main/jniLibs by CI
+// (see platforms/flutter/build.sh); this module only bundles the .so files.
+group = 'io.colyseus.flutter'
+version = '0.18.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.1.0'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
 
 android {
-    namespace 'com.colyseus.flutter'
+    namespace 'io.colyseus.flutter'
     compileSdk 34
 
     defaultConfig {

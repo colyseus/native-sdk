@@ -1,5 +1,5 @@
 Pod::Spec.new do |s|
-  s.name             = 'colyseus_flutter'
+  s.name             = 'colyseus'
   s.version          = '0.18.0'
   s.summary          = 'Colyseus multiplayer client - native macOS library.'
   s.homepage         = 'https://colyseus.io'

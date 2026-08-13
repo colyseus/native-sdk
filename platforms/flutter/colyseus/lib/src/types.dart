@@ -11,7 +11,8 @@ enum ColyseusEventType {
   itemAdd(8),
   itemRemove(9),
   roomDrop(14),
-  roomReconnect(15);
+  roomReconnect(15),
+  instanceChange(16);
 
   final int value;
   const ColyseusEventType(this.value);

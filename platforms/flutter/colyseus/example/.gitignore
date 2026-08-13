@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# The generated schema ships with the example — the root .gitignore hides gen/.
+!lib/gen/
+!lib/gen/**
