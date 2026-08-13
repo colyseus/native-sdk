@@ -217,6 +217,43 @@ void main() {
       });
     });
 
+    test('tick() without a timestamp drives from the room clock', () async {
+      await withRoom(playground, 'lab-move', (client, room) async {
+        final me = await waitForOwnEntry(room);
+        final predict = Predict.get(room);
+        addTearDown(predict.dispose);
+
+        final input = room.input()!;
+        final recon = predict.reconciler(
+          me!,
+          input: input,
+          fields: const ['x', 'y', 'vx', 'vy'],
+          step: (ctx, state, cmd) => stepEntity(state, cmd, ctx.dt),
+        );
+
+        final startX = recon.value('x');
+        // driveFrames' loop, minus the timestamp. An omitted `now` has to come
+        // back on the room clock's axis, or the step budget never lines up with
+        // the server's cadence and the prediction drifts off it.
+        for (var i = 0; i < 90; i++) {
+          Colyseus.pump();
+          final steps = predict.tick();
+          for (var s = 0; s < steps; s++) {
+            input.data['moveX'] = 1;
+            input.send();
+          }
+          await settle(const Duration(milliseconds: 16));
+        }
+
+        expect(recon.value('x'), greaterThan(startX + 5),
+            reason: 'prediction never moved');
+        expect(recon.reconcileSeq, greaterThan(5),
+            reason: 'server acks never drove a reconcile');
+        expect(recon.drift.ema, lessThan(0.01),
+            reason: 'drift ${recon.drift} — the defaulted tick is off-axis');
+      });
+    });
+
     test('state and value agree while settled', () async {
       await withRoom(playground, 'lab-move', (client, room) async {
         final me = await waitForOwnEntry(room);

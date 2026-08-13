@@ -320,8 +320,11 @@ class Predict {
   /// cadence. Returns 0 until a reconciler advertises the step rate, and never
   /// more than 5 — a hitch drops the backlog instead of firing a burst.
   ///
-  /// [now] must come from [RoomClock.now], not `DateTime`.
-  int tick(double now) => core.colyseus_predict_tick(_handle, now);
+  /// [now] must come from [RoomClock.now], not `DateTime`. Omit it and the
+  /// room clock is read for you — the JS reference's `performance.now()`
+  /// default, and the shape every other SDK exposes.
+  int tick([double? now]) =>
+      core.colyseus_predict_tick(_handle, now ?? _room.clock.now);
 
   /// The value to draw [field] at, smoothed per its attach config.
   ///
