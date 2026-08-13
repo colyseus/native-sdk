@@ -175,3 +175,47 @@ func test_reconciler_predicts_and_absorbs_an_impulse():
 		OS.delay_msec(5)
 	assert_lt(recon.last_correction_mag, 0.05,
 		"corrections still %f after 4 s — not converging" % recon.last_correction_mag)
+
+func test_tick_without_a_timestamp_drives_from_the_room_clock():
+	assert_true(await _join_and_wait(), "should join lab-move (is pnpm dev --host 0.0.0.0 up?)")
+
+	var start = Time.get_ticks_msec()
+	var me = null
+	while me == null and (Time.get_ticks_msec() - start) < 5000:
+		Colyseus.poll()
+		me = _me()
+		OS.delay_msec(10)
+	assert_not_null(me, "own player should decode into state.players")
+	if me == null:
+		return
+
+	var input = room.input()
+	var predict = Colyseus.Predict.of(room)
+	var recon = predict.reconciler(me, {
+		"input": input,
+		"fields": ["x", "y", "vx", "vy"],
+		"smoothing": 15.0,
+		"step": _step,
+	})
+	assert_not_null(recon, "predict.reconciler should build over the decoded player")
+	if recon == null:
+		return
+
+	# The same drive loop, minus the timestamp. An omitted now_ms has to come
+	# back on the room clock's axis, or the step budget stops matching the
+	# server's cadence and the prediction drifts off it.
+	var start_x: float = recon.value("x")
+	start = Time.get_ticks_msec()
+	while (Time.get_ticks_msec() - start) < 2500:
+		Colyseus.poll()
+		var steps = predict.tick()
+		for i in steps:
+			input.data.moveX = 1
+			input.data.moveY = 0
+			input.send()
+		OS.delay_msec(5)
+
+	assert_gt(recon.reconcile_seq, 10, "acks should drive reconciles")
+	assert_gt(recon.value("x"), start_x + 5.0, "driving right must move the prediction")
+	assert_lt(recon.drift_ema, 0.01,
+		"drift ema %f — the defaulted tick is off-axis" % recon.drift_ema)

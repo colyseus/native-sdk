@@ -785,12 +785,14 @@ class Predict extends RefCounted:
 	const RAW := 4
 
 	var _native
+	var _room_native
 
 	## A FRESH Predict over the room (Predictor.ts's Predict.For) — several can
 	## coexist, each with its own smoothing curves.
 	static func of(room) -> Predict:
 		var p = Predict.new()
 		p._native = room._native.predict()
+		p._room_native = room._native
 		return p
 
 	## Per-field config: a bare mode constant, or a Dictionary with any of
@@ -830,7 +832,13 @@ class Predict extends RefCounted:
 
 	## Advance one render frame. RETURNS the fixed input steps due — send
 	## exactly one input per returned step to stay on the server's cadence.
-	func tick(now_ms: float) -> int:
+	##
+	## Leave `now_ms` off to read the SDK clock, which is what the JS reference
+	## does with its performance.now() default. Clock readings are never
+	## negative, so the sentinel cannot collide with a real timestamp.
+	func tick(now_ms: float = -1.0) -> int:
+		if now_ms < 0.0:
+			now_ms = _room_native.clock_now()
 		return _native.tick(now_ms)
 
 	func value(instance, field: String) -> float:
