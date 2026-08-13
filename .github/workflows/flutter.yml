@@ -1,0 +1,139 @@
+name: Flutter Package
+
+# Builds the native libraries for every supported platform and publishes the
+# `colyseus` package to pub.dev with them bundled, so consumers need no Zig.
+on:
+  push:
+    tags:
+      - 'flutter-v*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to pub.dev (off = build and validate only)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: flutter-publish
+  cancel-in-progress: false
+
+env:
+  ZIG_VERSION: '0.15.2'
+
+jobs:
+  # macOS and iOS need the Apple SDK headers, so they can only be built here.
+  apple:
+    name: Build macOS + iOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build
+        working-directory: platforms/flutter
+        run: |
+          set -eux
+          for t in aarch64-macos x86_64-macos \
+                   aarch64-ios aarch64-ios-simulator x86_64-ios-simulator; do
+            zig build -Dtarget="$t" -Doptimize=ReleaseFast -Dstrip=true
+          done
+          # Both macOS slices share one destination filename in the plugin, so
+          # they have to be fused rather than one overwriting the other.
+          mkdir -p zig-out/lib/macos/universal
+          lipo -create \
+            zig-out/lib/macos/arm64/libcolyseus_flutter.dylib \
+            zig-out/lib/macos/x64/libcolyseus_flutter.dylib \
+            -output zig-out/lib/macos/universal/libcolyseus_flutter.dylib
+          lipo -info zig-out/lib/macos/universal/libcolyseus_flutter.dylib
+          ./make-xcframework.sh zig-out/lib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libs-apple
+          path: |
+            platforms/flutter/zig-out/lib/macos/universal/
+            platforms/flutter/zig-out/lib/ios/colyseus_flutter.xcframework/
+          if-no-files-found: error
+
+  # Zig cross-compiles the rest from one host; Android additionally needs the NDK.
+  others:
+    name: Build Android + Linux + Windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build
+        working-directory: platforms/flutter
+        run: |
+          set -eux
+          # build.zig silently skips the NDK sysroot when this is unset, which
+          # produces an Android library linked against the wrong libc.
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          test -d "$ANDROID_NDK_HOME"
+          for t in aarch64-linux-android arm-linux-androideabi x86_64-linux-android \
+                   x86_64-linux-gnu x86_64-windows-gnu; do
+            zig build -Dtarget="$t" -Doptimize=ReleaseFast -Dstrip=true
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libs-others
+          path: |
+            platforms/flutter/zig-out/lib/android/
+            platforms/flutter/zig-out/lib/linux/
+            platforms/flutter/zig-out/lib/windows/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to pub.dev
+    needs: [apple, others]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # pub.dev authenticates the publish via this OIDC token
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: libs
+          merge-multiple: true
+
+      # Only here to provision the OIDC token; the publish runs through Flutter.
+      - uses: dart-lang/setup-dart@v1
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Stage package
+        run: platforms/flutter/stage-package.sh libs "$RUNNER_TEMP/pkg"
+
+      - name: Check pubspec version matches the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME#flutter-v}"
+          pkg="$(awk '/^version:/ {print $2; exit}' "$RUNNER_TEMP/pkg/pubspec.yaml")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag $GITHUB_REF_NAME does not match pubspec version $pkg" >&2
+            exit 1
+          fi
+
+      - name: Validate
+        working-directory: ${{ runner.temp }}/pkg
+        run: flutter pub publish --dry-run
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        working-directory: ${{ runner.temp }}/pkg
+        run: flutter pub publish --force

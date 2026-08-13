@@ -9,25 +9,39 @@ pub fn build(b: *std.Build) void {
     // Build for all Flutter supported platforms
     const build_all = b.option(bool, "all", "Build for all Flutter platforms") orelse false;
 
-    // Apple targets get an explicit deployment minimum: without one the dylib
-    // is stamped with the build machine's OS version and every consumer app
-    // warns that it links something newer than it targets.
+    // Adjust the requested query in place. Rebuilding it field by field drops
+    // whatever is not copied across, including -Dcpu.
     const target = blk: {
         const host = b.standardTargetOptions(.{});
-        if (host.query.os_version_min != null) break :blk host;
-        const min: std.SemanticVersion = switch (host.result.os.tag) {
-            .macos => macos_min,
-            .ios => ios_min,
-            else => break :blk host,
-        };
-        break :blk b.resolveTargetQuery(.{
-            .cpu_arch = host.result.cpu.arch,
-            .os_tag = host.result.os.tag,
-            .abi = host.query.abi,
-            .os_version_min = .{ .semver = min },
-        });
+        var query = host.query;
+
+        // Zig resolves the simulator ABI to a baseline CPU, and mbedtls's AES
+        // paths do not compile without the features a real core carries.
+        if (host.result.cpu.arch == .aarch64 and host.result.abi == .simulator) {
+            switch (query.cpu_model) {
+                .determined_by_arch_os => query.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 },
+                else => {},
+            }
+        }
+
+        // Apple targets get an explicit deployment minimum: without one the
+        // dylib is stamped with the build machine's OS version and every
+        // consumer app warns that it links something newer than it targets.
+        if (query.os_version_min == null) {
+            switch (host.result.os.tag) {
+                .macos => query.os_version_min = .{ .semver = macos_min },
+                .ios => query.os_version_min = .{ .semver = ios_min },
+                else => {},
+            }
+        }
+
+        break :blk b.resolveTargetQuery(query);
     };
     const optimize = b.standardOptimizeOption(.{});
+
+    // pub.dev ships every platform's library to every user, and debug info is
+    // most of the weight: an unstripped Linux .so is 12.8 MB.
+    const strip = b.option(bool, "strip", "Strip debug symbols from the library") orelse false;
 
     // Apple SDK path (auto-detected on macOS if not specified)
     const apple_sdk_path: ?[]const u8 = b.option([]const u8, "apple-sdk", "Path to Apple SDK") orelse blk: {
@@ -36,7 +50,9 @@ pub fn build(b: *std.Build) void {
             const sdk_name = switch (os) {
                 .macos => "macosx",
                 .tvos => "appletvos",
-                else => "iphoneos",
+                // The simulator is a different SDK, not a variant of the device
+                // one: its headers and stub libraries are built for the host.
+                else => if (target.result.abi == .simulator) "iphonesimulator" else "iphoneos",
             };
             const result = std.process.Child.run(.{
                 .allocator = b.allocator,
@@ -118,11 +134,11 @@ pub fn build(b: *std.Build) void {
         };
 
         for (targets) |build_target| {
-            buildFlutterLibrary(b, build_target, optimize, native_sdk_dep, apple_sdk_path);
+            buildFlutterLibrary(b, build_target, optimize, native_sdk_dep, apple_sdk_path, strip);
         }
     } else {
         // Build for native target only
-        buildFlutterLibrary(b, target, optimize, native_sdk_dep, apple_sdk_path);
+        buildFlutterLibrary(b, target, optimize, native_sdk_dep, apple_sdk_path, strip);
     }
 }
 
@@ -197,6 +213,7 @@ fn buildFlutterLibrary(
     optimize: std.builtin.OptimizeMode,
     native_sdk_dep: *std.Build.Dependency,
     apple_sdk_path: ?[]const u8,
+    strip: bool,
 ) void {
     const is_android = target.result.os.tag == .linux and
         (target.result.abi == .android or target.result.abi == .androideabi);
@@ -213,6 +230,7 @@ fn buildFlutterLibrary(
         .target = target,
         .optimize = optimize,
         .link_libc = !is_android,
+        .strip = strip,
     });
 
     const flutter_lib = b.addLibrary(.{
@@ -286,6 +304,32 @@ fn buildFlutterLibrary(
 
     // Install to platform-specific directory
     const install_path = getPlatformInstallPath(target.result);
+
+    if (is_ios) {
+        // linkLibrary only records a link-time dependency, which means nothing
+        // for an archive: the shipped .a would hold the three glue objects and
+        // none of the core. Dart resolves core symbols by name out of the host
+        // process, so every 0.18 binding would fail at runtime.
+        //
+        // The closure is deeper than glue + core: the core links http, wslay
+        // and mbedtls as their own archives, each of which is equally absent.
+        // Merge every static library the graph reaches rather than naming the
+        // few that are known today.
+        const merge = b.addSystemCommand(&.{ "libtool", "-static", "-o" });
+        const merged = merge.addOutputFileArg("libcolyseus_flutter.a");
+        for (flutter_lib.getCompileDependencies(false)) |dep| {
+            if (dep.isStaticLibrary()) merge.addArtifactArg(dep);
+        }
+
+        const install_merged = b.addInstallFileWithDir(
+            merged,
+            .{ .custom = install_path },
+            "libcolyseus_flutter.a",
+        );
+        b.getInstallStep().dependOn(&install_merged.step);
+        return;
+    }
+
     const install_step = b.addInstallArtifact(flutter_lib, .{
         .dest_dir = .{
             .override = .{
@@ -300,7 +344,13 @@ fn getPlatformInstallPath(target: std.Target) []const u8 {
     return switch (target.os.tag) {
         .windows => "lib/windows/x64",
         .macos => if (target.cpu.arch == .aarch64) "lib/macos/arm64" else "lib/macos/x64",
-        .ios => "lib/ios/arm64",
+        // Device and simulator are both arm64 but are not interchangeable, and
+        // lipo cannot hold two slices of one architecture. They stay apart here
+        // and are joined into an xcframework instead.
+        .ios => if (target.abi == .simulator)
+            (if (target.cpu.arch == .aarch64) "lib/ios/simulator-arm64" else "lib/ios/simulator-x64")
+        else
+            "lib/ios/device-arm64",
         .linux => {
             if (target.abi == .android or target.abi == .androideabi) {
                 return switch (target.cpu.arch) {
