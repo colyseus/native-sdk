@@ -87,8 +87,10 @@ fn makeHandle(unreliable: bool, stamp_render: bool, stamp_reckon: bool, render_d
 }
 
 fn destroyHandle(ctx: HandleCtx) void {
+    // The handle owns the bound instance (see colyseus_input_handle_free) —
+    // destroying it here too is a double free. Older allocators let that slide;
+    // macOS 15's hardened xzone malloc traps on it.
     c.colyseus_input_handle_free(ctx.handle);
-    c.move_input_vtable.destroy.?(@ptrCast(ctx.instance));
 }
 
 /// Seed a real clock into an exactly-scripted state: one sample at tNow=1000
