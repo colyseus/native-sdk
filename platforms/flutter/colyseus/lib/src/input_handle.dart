@@ -10,8 +10,8 @@ enum InputMode {
   /// because reconciliation replays the buffered inputs the server acked.
   reliable,
 
-  /// Fire-and-forget. Lower latency for inputs that are pure signal (aim
-  /// direction, cosmetic state) and worthless once superseded.
+  /// Fire-and-forget. Rejected for now — it needs a WebTransport datagram
+  /// channel, which this SDK does not have. [ColyseusRoom.input] throws.
   unreliable,
 }
 

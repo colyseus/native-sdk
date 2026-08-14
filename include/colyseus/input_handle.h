@@ -21,7 +21,7 @@ typedef struct colyseus_input_handle colyseus_input_handle_t;
 
 /* Options for colyseus_room_input(). Zero-initialize for defaults. */
 typedef struct {
-    bool unreliable;                        /* default: reliable */
+    bool unreliable;                        /* rejected for now (needs a datagram transport); colyseus_room_input() returns NULL */
     int history_size;                       /* unreliable ring size (default 3) */
     double render_delay;                    /* interpolation buffer (ms) */
     bool (*allow_rewind)(void* data, void* userdata); /* stamp gate (optional) */

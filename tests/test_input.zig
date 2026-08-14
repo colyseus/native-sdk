@@ -473,3 +473,21 @@ test "room_input_options_and_timed_routing" {
     c.colyseus_room_process_message(room, &heartbeat, heartbeat.len);
     try testing.expectEqual(@as(f64, 750), c.colyseus_room_clock_last_server_time(clock));
 }
+
+test "room_input_unreliable_mode_rejected" {
+    // No datagram transport in this SDK yet — unreliable input must fail
+    // loudly at construction rather than silently ride the reliable channel.
+    const room = c.colyseus_room_create("phase0", null).?;
+    c.colyseus_room_set_state_type(room, &c.p0_state_vtable);
+    defer c.colyseus_room_free(room);
+
+    const join = [_]u8{ 10, 6, 116, 111, 107, 49, 50, 51, 6, 115, 99, 104, 101, 109, 97, 49, 128, 1, 255, 1, 128, 0, 2, 255, 2, 128, 0, 130, 3, 255, 3, 128, 0, 4, 128, 1, 5, 255, 4, 128, 163, 109, 115, 103, 129, 166, 115, 116, 114, 105, 110, 103, 255, 5, 128, 161, 110, 129, 166, 110, 117, 109, 98, 101, 114, 1, 47, 128, 1, 255, 1, 128, 0, 2, 255, 2, 128, 0, 130, 3, 255, 3, 128, 0, 4, 128, 1, 5, 255, 4, 128, 161, 120, 129, 166, 110, 117, 109, 98, 101, 114, 255, 5, 128, 161, 121, 129, 166, 110, 117, 109, 98, 101, 114, 2, 4, 14, 20, 50, 2 };
+    c.colyseus_room_process_message(room, &join, join.len);
+
+    var opts = std.mem.zeroes(c.colyseus_input_options_t);
+    opts.unreliable = true;
+    try testing.expect(c.colyseus_room_input(room, null, &opts) == null);
+
+    // the same room accepts the default mode — the rejection was the mode, not the room
+    try testing.expect(c.colyseus_room_input(room, null, null) != null);
+}

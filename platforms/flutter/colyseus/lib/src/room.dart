@@ -183,6 +183,13 @@ class ColyseusRoom<TState extends SchemaInstance> {
   InputHandle? input([InputOptions options = const InputOptions()]) {
     if (_input != null) return _input;
 
+    if (options.mode == InputMode.unreliable) {
+      throw UnsupportedError(
+          'input(): InputMode.unreliable is not supported yet — it needs a '
+          'WebTransport datagram channel, and this SDK connects over WebSocket '
+          'only. Use InputMode.reliable.');
+    }
+
     final room = nativeRoom;
     if (room == nullptr) {
       throw StateError('Room is not connected yet — await the join first');

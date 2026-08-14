@@ -936,6 +936,12 @@ struct colyseus_input_handle* colyseus_room_input(
     if (!vtable) return NULL; /* no defineInput() on the server and no static vtable */
 
     const colyseus_input_options_t* opts = (const colyseus_input_options_t*)options;
+    if (opts && opts->unreliable) {
+        fprintf(stderr, "colyseus: colyseus_room_input(): unreliable input is not "
+            "supported yet — it needs a WebTransport datagram channel, and this SDK "
+            "connects over WebSocket only. Use reliable mode.\n");
+        return NULL;
+    }
     /* dynamic vtables have no base.create — they construct via their own path */
     colyseus_schema_t* instance = colyseus_vtable_is_dynamic(vtable)
         ? (colyseus_schema_t*)colyseus_dynamic_schema_create((const colyseus_dynamic_vtable_t*)vtable)
