@@ -297,7 +297,7 @@ static void gm_resolve_field_type(void* instance, const char* property, gm_callb
 // =============================================================================
 
 // Snapshot a value into the event struct based on field type
-static void gm_snapshot_value(int value_type, void* value,
+void gm_snapshot_value(int value_type, void* value,
     double* out_number, char* out_string, size_t out_string_size,
     double* out_instance)
 {
@@ -342,7 +342,8 @@ static void gm_snapshot_value(int value_type, void* value,
             *out_number = (double)*(uint64_t*)value;
             break;
         case COLYSEUS_FIELD_REF:
-            *out_instance = (double)(uintptr_t)value;
+            // previous-value snapshots pass NULL here — they have no instance slot
+            if (out_instance) *out_instance = (double)(uintptr_t)value;
             break;
         default:
             break;

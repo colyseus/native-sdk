@@ -855,6 +855,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_predict", .file = "tests/test_predict.zig", .description = "Run Predict layer tests (behavior fixtures)" },
         .{ .name = "test_netdelay", .file = "tests/test_netdelay.zig", .description = "Run network-delay injector tests (offline)" },
         .{ .name = "test_gamemaker_predict", .file = "tests/test_gamemaker_predict.zig", .description = "Run GameMaker predict-bridge tests (offline, drives the GML FFI surface)" },
+        .{ .name = "test_gamemaker_schema", .file = "tests/test_gamemaker_schema.zig", .description = "Run GameMaker schema-bridge tests (offline)" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
@@ -909,7 +910,7 @@ pub fn build(b: *std.Build) void {
 
         // The GM bridge isn't part of libcolyseus — compile it into its test
         // exe so the exact GML-facing FFI surface is what gets exercised.
-        if (std.mem.eql(u8, test_file.name, "test_gamemaker_predict")) {
+        if (std.mem.startsWith(u8, test_file.name, "test_gamemaker")) {
             test_exe.addCSourceFiles(.{
                 .root = b.path("."),
                 .files = &.{

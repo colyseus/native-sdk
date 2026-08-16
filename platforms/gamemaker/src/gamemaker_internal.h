@@ -100,6 +100,13 @@ typedef struct {
 void gm_event_queue_push(const gm_event_t* event);
 struct colyseus_room* gm_room_ref_get(int ref);
 
+// Flatten one decoded field into the GML-facing event slots. Every out-param is
+// optional — the previous-value snapshot has no instance slot to write into.
+// Reachable from GML only through a live room, so it carries its own test.
+void gm_snapshot_value(int value_type, void* value,
+    double* out_number, char* out_string, size_t out_string_size,
+    double* out_instance);
+
 // implemented in gamemaker_predict.c: free every predict-layer object bound
 // to this room ref (reconcilers, spawns, event channels, predicts). Runs
 // BEFORE colyseus_room_free — the objects deregister from room-owned layers.
