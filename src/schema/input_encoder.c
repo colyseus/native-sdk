@@ -2,8 +2,17 @@
 #include "colyseus/schema/dynamic_schema.h"
 #include "colyseus/schema/quantize.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+ * A field op packs as `operation | index`, so index 63 would emit 255 — the
+ * byte a decoder reads as SWITCH_TO_STRUCTURE. The server rejects the 64th
+ * field where the schema is defined; mirror it here, since this encoder
+ * assembles the op byte itself.
+ */
+#define MAX_FIELDS 63
 
 /*
  * Uniform field view: every flat primitive collapses to a double or a
@@ -141,6 +150,14 @@ colyseus_input_encoder_t* colyseus_input_encoder_create(
             encoder->fields[i].quantized = field->quantized;
             encoder->fields[i].name = field->name;
         }
+    }
+
+    for (int i = 0; i < encoder->field_count; i++) {
+        if (encoder->fields[i].index < MAX_FIELDS) continue;
+        fprintf(stderr, "colyseus: colyseus_input_encoder_create(): field '%s' is at index %d; "
+            "a Schema may only have %d fields.\n",
+            encoder->fields[i].name, encoder->fields[i].index, MAX_FIELDS);
+        goto unsupported;
     }
 
     /* wire order is FIELD-INDEX order — dynamic vtables don't guarantee it */
