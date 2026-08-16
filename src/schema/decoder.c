@@ -667,6 +667,36 @@ static void* decode_value(
  * Schema decode
  * ============================================================================ */
 
+/*
+ * Copy a field's outgoing value so a change record outlives the store that is
+ * about to free it. Rewrites *value to the copy and returns true when the
+ * caller now owns it; ref/array/map are ref_tracker-owned and stay put.
+ */
+static bool copy_previous_value(colyseus_field_type_t field_type, void** value) {
+    switch (field_type) {
+        case COLYSEUS_FIELD_STRING: {
+            char* copy = strdup((const char*)*value);
+            if (!copy) return false;
+            *value = copy;
+            return true;
+        }
+
+        case COLYSEUS_FIELD_REF:
+        case COLYSEUS_FIELD_ARRAY:
+        case COLYSEUS_FIELD_MAP:
+            return false;
+
+        default: {
+            /* every primitive fits in a double, and so does the dynamic union */
+            void* copy = malloc(sizeof(double));
+            if (!copy) return false;
+            memcpy(copy, *value, sizeof(double));
+            *value = copy;
+            return true;
+        }
+    }
+}
+
 static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, size_t length,
     colyseus_iterator_t* it, colyseus_schema_t* schema) {
 
@@ -715,16 +745,16 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
         ? get_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field)
         : get_schema_field(schema, field);
     void* value = NULL;
-    
-    /* For string fields being deleted, we need to duplicate previous_value before it gets freed.
-     * Otherwise the change record will point to freed memory when callbacks are triggered. */
-    // TODO: refactor this!
+
+    /* Storing into the field frees what previous_value points at, so the change
+     * record needs its own copy: a static string field frees the old string, and
+     * the dynamic store frees the whole entry a primitive points into. */
     void* previous_value_for_change = previous_value;
     bool owns_previous_value = false;
-    if (previous_value && field_type == COLYSEUS_FIELD_STRING && 
-        (operation & (uint8_t)COLYSEUS_OP_DELETE) == (uint8_t)COLYSEUS_OP_DELETE) {
-        previous_value_for_change = strdup((const char*)previous_value);
-        owns_previous_value = true;
+    if (previous_value != NULL &&
+        (operation & (uint8_t)COLYSEUS_OP_DELETE) == (uint8_t)COLYSEUS_OP_DELETE &&
+        (field_type == COLYSEUS_FIELD_STRING || is_dynamic)) {
+        owns_previous_value = copy_previous_value(field_type, &previous_value_for_change);
     }
 
     /* Handle DELETE operations */
@@ -816,28 +846,7 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
              * - The old dyn_value entry (where previous_value points into)
              * Save previous_value before, and re-fetch value after. */
             if (previous_value_for_change != NULL && !owns_previous_value) {
-                switch (field_type) {
-                    case COLYSEUS_FIELD_STRING: {
-                        previous_value_for_change = strdup((const char*)previous_value_for_change);
-                        owns_previous_value = true;
-                        break;
-                    }
-                    case COLYSEUS_FIELD_REF:
-                    case COLYSEUS_FIELD_ARRAY:
-                    case COLYSEUS_FIELD_MAP:
-                        /* Managed by ref_tracker, pointer stays valid */
-                        break;
-                    default: {
-                        /* Primitive: copy value (all fit in sizeof(double)) */
-                        void* copy = malloc(sizeof(double));
-                        if (copy) {
-                            memcpy(copy, previous_value_for_change, sizeof(double));
-                            previous_value_for_change = copy;
-                            owns_previous_value = true;
-                        }
-                        break;
-                    }
-                }
+                owns_previous_value = copy_previous_value(field_type, &previous_value_for_change);
             }
 
             set_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field, value);
