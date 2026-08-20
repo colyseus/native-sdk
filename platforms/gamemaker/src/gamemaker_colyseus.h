@@ -279,6 +279,19 @@ GM_EXPORT double colyseus_gm_http_patch(double client_handle, const char* path, 
  * @param client_handle Client handle
  * @param token Auth token string
  */
+/**
+ * Start an auth call. `op` is a gm_auth_op_t ordinal (see gamemaker_export.c),
+ * mirrored by the COLYSEUS_AUTH_* macros in scripts/Colyseus/Colyseus.gml.
+ * Answers on the same response/error events an HTTP call
+ * does, with a success body of {"user": {...}, "token": "..."} — the shape
+ * the server replied with. Empty strings mean "absent".
+ * @return request id, or 0 when the client has no auth module
+ */
+GM_EXPORT double colyseus_gm_auth_request(double client_handle, double op, const char* email, const char* password, const char* options_json);
+
+/** Drop the token locally and clear it from secure storage. No request. */
+GM_EXPORT void colyseus_gm_auth_signout(double client_handle);
+
 GM_EXPORT void colyseus_gm_auth_set_token(double client_handle, const char* token);
 
 /**
@@ -306,6 +319,29 @@ GM_EXPORT const char* colyseus_gm_event_get_http_body(void);
  * @return Endpoint URL (caller must NOT free)
  */
 GM_EXPORT const char* colyseus_gm_http_get_endpoint(double client_handle);
+
+/* ── Latency ───────────────────────────────────────────────────────────── */
+
+/**
+ * Measure latency to a single endpoint. Returns a request id immediately;
+ * a GM_EVENT_LATENCY_RESPONSE (success) or GM_EVENT_LATENCY_ERROR is queued.
+ * @param endpoint   ws:// or wss:// URL
+ * @param timeout_ms measurement timeout (0 = default 1500)
+ */
+GM_EXPORT double colyseus_gm_get_latency(double client_handle, const char* endpoint, double timeout_ms);
+
+/**
+ * Measure several endpoints and select the lowest-latency one. Returns a
+ * request id immediately; a GM_EVENT_LATENCY_SELECTED event is queued.
+ * @param endpoints_json JSON array of endpoint strings (GML: json_stringify)
+ * @param timeout_ms     per-endpoint timeout (0 = default 1500)
+ */
+GM_EXPORT double colyseus_gm_select_by_latency(double client_handle, const char* endpoints_json, double timeout_ms);
+
+/**
+ * Latency (ms) from the last polled latency event (best latency for SELECTED).
+ */
+GM_EXPORT double colyseus_gm_event_get_latency(void);
 
 #ifdef __cplusplus
 }

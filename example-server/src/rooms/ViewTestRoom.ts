@@ -1,5 +1,5 @@
 import { type Client, Room } from "@colyseus/core";
-import { schema, StateView } from "@colyseus/schema";
+import { schema, t, StateView } from "@colyseus/schema";
 
 /**
  * Minimal room to test StateView with view:true arrays.
@@ -8,21 +8,21 @@ import { schema, StateView } from "@colyseus/schema";
  */
 
 const Card = schema({
-  id: "string",
-  color: "string",
-  value: "number",
+  id: t.string(),
+  color: t.string(),
+  value: t.number(),
 });
 
 const Player = schema({
-  sessionId: "string",
-  hand: { array: Card, view: true },  // only visible to owning client
-  handCount: "number",                 // visible to all
+  sessionId: t.string(),
+  hand: t.array(Card).view(),  // only visible to owning client
+  handCount: t.number(),       // visible to all
 });
 
 const ViewTestState = schema({
-  players: { map: Player },
-  discardPile: { array: Card },  // visible to all (no view)
-  round: "number",
+  players: t.map(Player),
+  discardPile: t.array(Card),  // visible to all (no view)
+  round: t.number(),
 });
 
 type PlayerInstance = InstanceType<typeof Player>;

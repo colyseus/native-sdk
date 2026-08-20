@@ -130,6 +130,13 @@ void colyseus_schema_serializer_patch(colyseus_schema_serializer_t* serializer, 
 void colyseus_schema_serializer_teardown(colyseus_schema_serializer_t* serializer);
 void colyseus_schema_serializer_handshake(colyseus_schema_serializer_t* serializer, const uint8_t* bytes, size_t length, int offset);
 
+/*
+ * Decode a standalone reflection payload (e.g. the INPUT_REFLECTION
+ * handshake section) and build its root DYNAMIC vtable. Used by the room to
+ * synthesize the input schema when the app doesn't provide a static one.
+ */
+const colyseus_schema_vtable_t* colyseus_build_input_vtable_from_reflection(const uint8_t* bytes, size_t length, int offset);
+
 /* ============================================================================
  * Vtable Registry (for complex schema hierarchies)
  * ============================================================================ */

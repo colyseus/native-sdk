@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"ColyseusPredict",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"ColyseusPredict",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

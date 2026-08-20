@@ -7,7 +7,7 @@ This directory contains the build configuration for compiling the Colyseus Nativ
 ## Platform Support
 
 - ✅ **Native Platforms**: Windows, macOS, Linux (C implementation)
-- ✅ **HTML5/GX.Games**: Web browsers (JavaScript implementation using colyseus.js)
+- ✅ **HTML5/GX.Games**: Web browsers (the same C SDK compiled to WebAssembly)
 - 🚧 **Mobile**: iOS, Android (coming soon)
 
 ## Prerequisites
@@ -70,11 +70,9 @@ zig build -Doptimize=ReleaseSmall -Dall=true
 
 ### For HTML5/GX.Games
 
-HTML5 builds use a **JavaScript implementation** instead of native C code. See [HTML5_SETUP.md](HTML5_SETUP.md) for detailed setup instructions.
+HTML5 builds run the same C SDK compiled to WebAssembly (`colyseus_wasm.js`, already in the extension). See [HTML5_SETUP.md](HTML5_SETUP.md).
 
 **Quick setup:**
-1. Add `src/gamemaker_export_html5.js` to your extension (JavaScript file, HTML5 target only)
-2. Include colyseus.js in your HTML template: `<script src="https://unpkg.com/colyseus.js@^0.16.0"></script>`
 3. Your GML code works the same on all platforms!
 
 ### Directory Structure
@@ -108,7 +106,7 @@ The extension exposes the Colyseus client API through unified functions that wor
 
 **Implementation:**
 - Native platforms: C library compiled from this SDK
-- HTML5: JavaScript wrapper using colyseus.js client
+- HTML5: the same C code compiled to WebAssembly (wasm shim)
 
 ## Auth Tokens
 

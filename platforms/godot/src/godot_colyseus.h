@@ -259,11 +259,35 @@ void gdext_colyseus_client_get_endpoint_ptrcall(void* p_method_userdata, GDExten
 void gdext_colyseus_client_get_endpoint_call(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 
 // ColyseusClient HTTP methods (vararg call convention)
+/*
+ * Auth operations, addressed by ordinal through the single auth_request entry
+ * point rather than one binding per call. Mirrored by Colyseus.Auth._Op in
+ * addons/colyseus/colyseus.gd — the order is the ABI.
+ */
+typedef enum {
+    GDEXT_AUTH_GET_USER_DATA = 0,
+    GDEXT_AUTH_REGISTER = 1,
+    GDEXT_AUTH_SIGNIN = 2,
+    GDEXT_AUTH_SIGNIN_ANONYMOUS = 3,
+    GDEXT_AUTH_SEND_PASSWORD_RESET = 4,
+} gdext_auth_op_t;
+
+/* auth_request(op, email, password, options_json) -> request id, answered on
+ * the same _http_response / _http_error signals as an HTTP call. */
+void gdext_colyseus_client_auth_request(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+
+/* Drops the token locally and clears it from secure storage. No request. */
+void gdext_colyseus_client_auth_signout(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+
 void gdext_colyseus_client_http_get(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 void gdext_colyseus_client_http_post(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 void gdext_colyseus_client_http_put(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 void gdext_colyseus_client_http_delete(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 void gdext_colyseus_client_http_patch(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+
+// ColyseusClient latency methods (vararg call convention)
+void gdext_colyseus_client_get_latency(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
+void gdext_colyseus_client_select_by_latency(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 
 // ColyseusClient auth methods
 void gdext_colyseus_client_auth_set_token(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);

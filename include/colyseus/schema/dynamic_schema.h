@@ -115,6 +115,22 @@ struct colyseus_dynamic_schema {
 colyseus_dynamic_schema_t* colyseus_dynamic_schema_create(const colyseus_dynamic_vtable_t* vtable);
 void colyseus_dynamic_schema_free(colyseus_dynamic_schema_t* schema);
 
+/*
+ * As create, but WITHOUT the platform userdata shadow — for internal
+ * instances (predict mirrors, reckon scratches) whose field writes must not
+ * reach the host engine's object system.
+ */
+colyseus_dynamic_schema_t* colyseus_dynamic_schema_create_bare(const colyseus_dynamic_vtable_t* vtable);
+
+/*
+ * The value cell for `field_index`, created in place (with `type`) when the
+ * field has never been decoded or written. Does NOT notify the platform
+ * userdata — callers that mutate the returned cell own that consequence
+ * (the predict layer does so only on bare instances).
+ */
+colyseus_dynamic_value_t* colyseus_dynamic_schema_ensure(colyseus_dynamic_schema_t* schema,
+    int field_index, colyseus_field_type_t type);
+
 /* Set __refId and notify userdata (if callback is set) */
 void colyseus_dynamic_schema_set_ref_id(colyseus_dynamic_schema_t* schema, int ref_id);
 
@@ -147,6 +163,7 @@ struct colyseus_dynamic_field {
     char* type_str;                             /* Type string (owned) */
     const colyseus_dynamic_vtable_t* child_vtable;  /* For ref/array/map of schema */
     char* child_primitive_type;                 /* For array/map of primitives (owned) */
+    colyseus_quantized_descriptor_t* quantized; /* For COLYSEUS_FIELD_QUANTIZED (owned) */
 };
 
 /* Create/destroy dynamic field */

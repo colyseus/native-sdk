@@ -26,6 +26,21 @@
       "functions": [
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_is_ready",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_is_ready",
+          "help": "(internal) is ready",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_is_ready",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_client_create",
           "argCount": 1,
           "args": [
@@ -355,96 +370,6 @@
         },
         {
           "$GMExtensionFunction": "",
-          "%Name": "colyseus_poll_event",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_poll_event",
-          "help": "Poll for next event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_poll_event",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_room",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_room",
-          "help": "Get room handle from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_room",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_code",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_code",
-          "help": "Get error/leave code from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_code",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_message",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_message",
-          "help": "Get message/error/reason from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_message",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 1
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_data",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_data",
-          "help": "Get message data from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_data",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 3
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_data_length",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_data_length",
-          "help": "Get message data length from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_data_length",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
           "%Name": "__colyseus_room_get_state",
           "argCount": 1,
           "args": [
@@ -480,24 +405,6 @@
         },
         {
           "$GMExtensionFunction": "",
-          "%Name": "__colyseus_schema_get_number",
-          "argCount": 2,
-          "args": [
-            2,
-            1
-          ],
-          "documentation": "",
-          "externalName": "colyseus_gm_schema_get_number",
-          "help": "(internal) Get number/ref/collection handle from schema instance",
-          "hidden": true,
-          "kind": 1,
-          "name": "__colyseus_schema_get_number",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
           "%Name": "__colyseus_schema_get_field_type",
           "argCount": 2,
           "args": [
@@ -510,6 +417,24 @@
           "hidden": true,
           "kind": 1,
           "name": "__colyseus_schema_get_field_type",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_schema_get_number",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_schema_get_number",
+          "help": "(internal) Get number/ref/collection handle from schema instance",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_schema_get_number",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2
@@ -782,6 +707,96 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "colyseus_poll_event",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_poll_event",
+          "help": "Poll for next event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_poll_event",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_room",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_room",
+          "help": "Get room handle from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_room",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_code",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_code",
+          "help": "Get error/leave code from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_code",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_message",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_message",
+          "help": "Get message/error/reason from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_message",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 1
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_data",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_data",
+          "help": "Get message data from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_data",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_data_length",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_data_length",
+          "help": "Get message data length from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_data_length",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "colyseus_event_get_callback_handle",
           "argCount": 0,
           "args": [],
@@ -991,6 +1006,25 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "colyseus_room_send_message",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_send_message",
+          "help": "Send a message to the room (sends and frees the message)",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_room_send_message",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "colyseus_message_create_bool",
           "argCount": 1,
           "args": [
@@ -1053,25 +1087,6 @@
           "hidden": false,
           "kind": 1,
           "name": "colyseus_message_create_string",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_room_send_message",
-          "argCount": 3,
-          "args": [
-            2,
-            1,
-            2
-          ],
-          "documentation": "",
-          "externalName": "colyseus_gm_room_send_message",
-          "help": "Send a message to the room (sends and frees the message)",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_room_send_message",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2
@@ -1279,6 +1294,42 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_auth_request",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_auth_request",
+          "help": "(internal) start an auth call",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_auth_request",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_auth_signout",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_auth_signout",
+          "help": "(internal) drop the auth token",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_auth_signout",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_http_get",
           "argCount": 2,
           "args": [
@@ -1437,6 +1488,59 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_get_latency",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_get_latency",
+          "help": "(internal) Measure latency to an endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_get_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_select_by_latency",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_select_by_latency",
+          "help": "(internal) Select lowest-latency endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_select_by_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_latency",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_latency",
+          "help": "Get latency (ms) from the current latency event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_http_push_response",
           "argCount": 3,
           "args": [
@@ -1469,6 +1573,1413 @@
           "hidden": true,
           "kind": 1,
           "name": "__colyseus_gm_http_push_error",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_response",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_response",
+          "help": "(internal) Push latency success event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_response",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_error",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_error",
+          "help": "(internal) Push latency error event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_error",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_selected",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_selected",
+          "help": "(internal) Push latency selection event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_selected",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_http_get_endpoint",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_http_get_endpoint",
+          "help": "(internal) http get endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_http_get_endpoint",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 1
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_abi_version",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_abi_version",
+          "help": "(internal) predict abi version",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_abi_version",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_now",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_now",
+          "help": "(internal) now",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_now",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_clock_stat",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_clock_stat",
+          "help": "(internal) clock stat",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_clock_stat",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_reconnect_poll",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_reconnect_poll",
+          "help": "(internal) reconnect poll",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_reconnect_poll",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_init",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_init",
+          "help": "(internal) input init",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_init",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_set",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_set",
+          "help": "(internal) input set",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_set",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_get",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_get",
+          "help": "(internal) input get",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_get",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_send",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_send",
+          "help": "(internal) input send",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_send",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_stat",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_stat",
+          "help": "(internal) input stat",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_stat",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_set_render_delay",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_set_render_delay",
+          "help": "(internal) input set render delay",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_set_render_delay",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_reset",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_reset",
+          "help": "(internal) input reset",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_reset",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_set_rewind_field",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_set_rewind_field",
+          "help": "(internal) input set rewind field",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_set_rewind_field",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_create",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_create",
+          "help": "(internal) predict create",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_create",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_create_with",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_create_with",
+          "help": "(internal) predict create with",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_create_with",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_free",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_free",
+          "help": "(internal) predict free",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_free",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_tick",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_tick",
+          "help": "(internal) predict tick",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_tick",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_attach",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_attach",
+          "help": "(internal) predict attach",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_attach",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_attach_all",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_attach_all",
+          "help": "(internal) predict attach all",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_attach_all",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_attach_reckon",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_attach_reckon",
+          "help": "(internal) predict attach reckon",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_attach_reckon",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_attach_all_reckon",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_attach_all_reckon",
+          "help": "(internal) predict attach all reckon",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_attach_all_reckon",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_detach",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_detach",
+          "help": "(internal) predict detach",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_detach",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_value",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_value",
+          "help": "(internal) predict value",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_value",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_value_at",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_value_at",
+          "help": "(internal) predict value at",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_value_at",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_reconciler",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_reconciler",
+          "help": "(internal) predict reconciler",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_reconciler",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_sim_begin",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_sim_begin",
+          "help": "(internal) sim begin",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_sim_begin",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_sim_part",
+          "argCount": 2,
+          "args": [
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_sim_part",
+          "help": "(internal) sim part",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_sim_part",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_sim_create",
+          "argCount": 5,
+          "args": [
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_sim_create",
+          "help": "(internal) sim create",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_sim_create",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_sim_part_mirror",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_sim_part_mirror",
+          "help": "(internal) sim part mirror",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_sim_part_mirror",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_free",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_free",
+          "help": "(internal) recon free",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_free",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_pump_begin",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_pump_begin",
+          "help": "(internal) recon pump begin",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_pump_begin",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_pump_next",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_pump_next",
+          "help": "(internal) recon pump next",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_pump_next",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_pump_commit",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_pump_commit",
+          "help": "(internal) recon pump commit",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_pump_commit",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_pump_end",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_pump_end",
+          "help": "(internal) recon pump end",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_pump_end",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_ctx",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_ctx",
+          "help": "(internal) step ctx",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_ctx",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_cmd",
+          "argCount": 1,
+          "args": [
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_cmd",
+          "help": "(internal) step cmd",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_cmd",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_value",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_value",
+          "help": "(internal) recon value",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_value",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_state",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_state",
+          "help": "(internal) recon state",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_state",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_stat",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_stat",
+          "help": "(internal) recon stat",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_stat",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_last_correction",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_last_correction",
+          "help": "(internal) recon last correction",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_last_correction",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_reset",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_reset",
+          "help": "(internal) recon reset",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_reset",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_mirror_set",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_mirror_set",
+          "help": "(internal) mirror set",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_mirror_set",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_mirror_get",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_mirror_get",
+          "help": "(internal) mirror get",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_mirror_get",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_memo_peek",
+          "argCount": 1,
+          "args": [
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_memo_peek",
+          "help": "(internal) step memo peek",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_memo_peek",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_memo_store",
+          "argCount": 2,
+          "args": [
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_memo_store",
+          "help": "(internal) step memo store",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_memo_store",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_create",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_create",
+          "help": "(internal) events create",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_create",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_free",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_free",
+          "help": "(internal) events free",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_free",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_drive_events",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_drive_events",
+          "help": "(internal) predict drive events",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_drive_events",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_predict",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_predict",
+          "help": "(internal) events predict",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_predict",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_predict",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_predict",
+          "help": "(internal) step predict",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_predict",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_confirm",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_confirm",
+          "help": "(internal) events confirm",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_confirm",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_reject",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_reject",
+          "help": "(internal) events reject",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_reject",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_has",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_has",
+          "help": "(internal) events has",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_has",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_pending",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_pending",
+          "help": "(internal) events pending",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_pending",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_clear",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_clear",
+          "help": "(internal) events clear",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_clear",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_create",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_create",
+          "help": "(internal) spawns create",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_create",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_free",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_free",
+          "help": "(internal) spawns free",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_free",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_bind_spawns",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_bind_spawns",
+          "help": "(internal) predict bind spawns",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_bind_spawns",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_spawn_set",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_spawn_set",
+          "help": "(internal) spawns spawn set",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_spawn_set",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_spawn",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_spawn",
+          "help": "(internal) spawns spawn",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_spawn",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_cancel",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_cancel",
+          "help": "(internal) spawns cancel",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_cancel",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_accept",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_accept",
+          "help": "(internal) spawns accept",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_accept",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_size",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_size",
+          "help": "(internal) spawns size",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_size",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_alive",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_alive",
+          "help": "(internal) spawns alive",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_alive",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_handle_add",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_handle_add",
+          "help": "(internal) spawns handle add",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_handle_add",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_handle_remove",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_handle_remove",
+          "help": "(internal) spawns handle remove",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_handle_remove",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_tick",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_tick",
+          "help": "(internal) spawns tick",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_tick",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_iter_begin",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_iter_begin",
+          "help": "(internal) spawns iter begin",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_iter_begin",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_iter_next",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_iter_next",
+          "help": "(internal) spawns iter next",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_iter_next",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_entry_stat",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_entry_stat",
+          "help": "(internal) spawns entry stat",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_entry_stat",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_entry_value",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_entry_value",
+          "help": "(internal) spawns entry value",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_entry_value",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_seek",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_seek",
+          "help": "(internal) spawns seek",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_seek",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_netdelay_set",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_netdelay_set",
+          "help": "(internal) netdelay set",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_netdelay_set",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_netdelay_pump",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_netdelay_pump",
+          "help": "(internal) netdelay pump",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_netdelay_pump",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_netdelay_in_flight",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_netdelay_in_flight",
+          "help": "(internal) netdelay in flight",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_netdelay_in_flight",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_netdelay_drop",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_netdelay_drop",
+          "help": "(internal) netdelay drop",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_netdelay_drop",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2
@@ -1494,6 +3005,21 @@
       "functions": [
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_is_ready",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_is_ready",
+          "help": "(internal) is ready",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_is_ready",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_client_create",
           "argCount": 1,
           "args": [
@@ -1823,96 +3349,6 @@
         },
         {
           "$GMExtensionFunction": "",
-          "%Name": "colyseus_poll_event",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_poll_event",
-          "help": "Poll for next event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_poll_event",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_room",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_room",
-          "help": "Get room handle from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_room",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_code",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_code",
-          "help": "Get error/leave code from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_code",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_message",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_message",
-          "help": "Get message/error/reason from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_message",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 1
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_data",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_data",
-          "help": "Get message data from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_data",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 3
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_event_get_data_length",
-          "argCount": 0,
-          "args": [],
-          "documentation": "",
-          "externalName": "colyseus_gm_event_get_data_length",
-          "help": "Get message data length from last polled event",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_event_get_data_length",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
           "%Name": "__colyseus_room_get_state",
           "argCount": 1,
           "args": [
@@ -1948,24 +3384,6 @@
         },
         {
           "$GMExtensionFunction": "",
-          "%Name": "__colyseus_schema_get_number",
-          "argCount": 2,
-          "args": [
-            2,
-            1
-          ],
-          "documentation": "",
-          "externalName": "colyseus_gm_schema_get_number",
-          "help": "(internal) Get number/ref/collection handle from schema instance",
-          "hidden": true,
-          "kind": 1,
-          "name": "__colyseus_schema_get_number",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
           "%Name": "__colyseus_schema_get_field_type",
           "argCount": 2,
           "args": [
@@ -1978,6 +3396,24 @@
           "hidden": true,
           "kind": 1,
           "name": "__colyseus_schema_get_field_type",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_schema_get_number",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_schema_get_number",
+          "help": "(internal) Get number/ref/collection handle from schema instance",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_schema_get_number",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2
@@ -2250,6 +3686,96 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "colyseus_poll_event",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_poll_event",
+          "help": "Poll for next event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_poll_event",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_room",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_room",
+          "help": "Get room handle from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_room",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_code",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_code",
+          "help": "Get error/leave code from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_code",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_message",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_message",
+          "help": "Get message/error/reason from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_message",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 1
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_data",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_data",
+          "help": "Get message data from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_data",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_data_length",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_data_length",
+          "help": "Get message data length from last polled event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_data_length",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "colyseus_event_get_callback_handle",
           "argCount": 0,
           "args": [],
@@ -2459,6 +3985,25 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "colyseus_room_send_message",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_send_message",
+          "help": "Send a message to the room (sends and frees the message)",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_room_send_message",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "colyseus_message_create_bool",
           "argCount": 1,
           "args": [
@@ -2521,25 +4066,6 @@
           "hidden": false,
           "kind": 1,
           "name": "colyseus_message_create_string",
-          "resourceType": "GMExtensionFunction",
-          "resourceVersion": "2.0",
-          "returnType": 2
-        },
-        {
-          "$GMExtensionFunction": "",
-          "%Name": "colyseus_room_send_message",
-          "argCount": 3,
-          "args": [
-            2,
-            1,
-            2
-          ],
-          "documentation": "",
-          "externalName": "colyseus_gm_room_send_message",
-          "help": "Send a message to the room (sends and frees the message)",
-          "hidden": false,
-          "kind": 1,
-          "name": "colyseus_room_send_message",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2
@@ -2747,6 +4273,42 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_auth_request",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_auth_request",
+          "help": "(internal) start an auth call",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_auth_request",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_auth_signout",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_auth_signout",
+          "help": "(internal) drop the auth token",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_auth_signout",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_http_get",
           "argCount": 2,
           "args": [
@@ -2905,6 +4467,59 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_get_latency",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_get_latency",
+          "help": "(internal) Measure latency to an endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_get_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_select_by_latency",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_select_by_latency",
+          "help": "(internal) Select lowest-latency endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_select_by_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "colyseus_event_get_latency",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_event_get_latency",
+          "help": "Get latency (ms) from the current latency event",
+          "hidden": false,
+          "kind": 1,
+          "name": "colyseus_event_get_latency",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_http_push_response",
           "argCount": 3,
           "args": [
@@ -2937,6 +4552,1413 @@
           "hidden": true,
           "kind": 1,
           "name": "__colyseus_gm_http_push_error",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_response",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_response",
+          "help": "(internal) Push latency success event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_response",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_error",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_error",
+          "help": "(internal) Push latency error event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_error",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_latency_push_selected",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_latency_push_selected",
+          "help": "(internal) Push latency selection event into queue (for testing/WASM)",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_latency_push_selected",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_http_get_endpoint",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_http_get_endpoint",
+          "help": "(internal) http get endpoint",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_http_get_endpoint",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 1
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_abi_version",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_abi_version",
+          "help": "(internal) predict abi version",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_abi_version",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_now",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_now",
+          "help": "(internal) now",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_now",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_clock_stat",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_clock_stat",
+          "help": "(internal) clock stat",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_clock_stat",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_reconnect_poll",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_reconnect_poll",
+          "help": "(internal) reconnect poll",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_reconnect_poll",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_init",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_init",
+          "help": "(internal) input init",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_init",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_set",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_set",
+          "help": "(internal) input set",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_set",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_get",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_get",
+          "help": "(internal) input get",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_get",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_send",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_send",
+          "help": "(internal) input send",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_send",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_stat",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_stat",
+          "help": "(internal) input stat",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_stat",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_set_render_delay",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_set_render_delay",
+          "help": "(internal) input set render delay",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_set_render_delay",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_reset",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_reset",
+          "help": "(internal) input reset",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_reset",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_set_rewind_field",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_set_rewind_field",
+          "help": "(internal) input set rewind field",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_set_rewind_field",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_create",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_create",
+          "help": "(internal) predict create",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_create",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_create_with",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_create_with",
+          "help": "(internal) predict create with",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_create_with",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_free",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_free",
+          "help": "(internal) predict free",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_free",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_tick",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_tick",
+          "help": "(internal) predict tick",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_tick",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_attach",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_attach",
+          "help": "(internal) predict attach",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_attach",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_attach_all",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_attach_all",
+          "help": "(internal) predict attach all",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_attach_all",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_attach_reckon",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_attach_reckon",
+          "help": "(internal) predict attach reckon",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_attach_reckon",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_attach_all_reckon",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_attach_all_reckon",
+          "help": "(internal) predict attach all reckon",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_attach_all_reckon",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_detach",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_detach",
+          "help": "(internal) predict detach",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_detach",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_value",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_value",
+          "help": "(internal) predict value",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_value",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_value_at",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_value_at",
+          "help": "(internal) predict value at",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_value_at",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_reconciler",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_reconciler",
+          "help": "(internal) predict reconciler",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_reconciler",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_sim_begin",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_sim_begin",
+          "help": "(internal) sim begin",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_sim_begin",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_sim_part",
+          "argCount": 2,
+          "args": [
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_sim_part",
+          "help": "(internal) sim part",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_sim_part",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_sim_create",
+          "argCount": 5,
+          "args": [
+            2,
+            2,
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_sim_create",
+          "help": "(internal) sim create",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_sim_create",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_sim_part_mirror",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_sim_part_mirror",
+          "help": "(internal) sim part mirror",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_sim_part_mirror",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_free",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_free",
+          "help": "(internal) recon free",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_free",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_pump_begin",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_pump_begin",
+          "help": "(internal) recon pump begin",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_pump_begin",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_pump_next",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_pump_next",
+          "help": "(internal) recon pump next",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_pump_next",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_pump_commit",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_pump_commit",
+          "help": "(internal) recon pump commit",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_pump_commit",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_pump_end",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_pump_end",
+          "help": "(internal) recon pump end",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_pump_end",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_ctx",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_ctx",
+          "help": "(internal) step ctx",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_ctx",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_cmd",
+          "argCount": 1,
+          "args": [
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_cmd",
+          "help": "(internal) step cmd",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_cmd",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_value",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_value",
+          "help": "(internal) recon value",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_value",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_state",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_state",
+          "help": "(internal) recon state",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_state",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_stat",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_stat",
+          "help": "(internal) recon stat",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_stat",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_last_correction",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_last_correction",
+          "help": "(internal) recon last correction",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_last_correction",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_recon_reset",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_recon_reset",
+          "help": "(internal) recon reset",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_recon_reset",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_mirror_set",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_mirror_set",
+          "help": "(internal) mirror set",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_mirror_set",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_mirror_get",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_mirror_get",
+          "help": "(internal) mirror get",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_mirror_get",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_memo_peek",
+          "argCount": 1,
+          "args": [
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_memo_peek",
+          "help": "(internal) step memo peek",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_memo_peek",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_memo_store",
+          "argCount": 2,
+          "args": [
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_memo_store",
+          "help": "(internal) step memo store",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_memo_store",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_create",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_create",
+          "help": "(internal) events create",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_create",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_free",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_free",
+          "help": "(internal) events free",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_free",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_drive_events",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_drive_events",
+          "help": "(internal) predict drive events",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_drive_events",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_predict",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_predict",
+          "help": "(internal) events predict",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_predict",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_step_predict",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_step_predict",
+          "help": "(internal) step predict",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_step_predict",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_confirm",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_confirm",
+          "help": "(internal) events confirm",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_confirm",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_reject",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_reject",
+          "help": "(internal) events reject",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_reject",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_has",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_has",
+          "help": "(internal) events has",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_has",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_pending",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_pending",
+          "help": "(internal) events pending",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_pending",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_events_clear",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_events_clear",
+          "help": "(internal) events clear",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_events_clear",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_create",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_create",
+          "help": "(internal) spawns create",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_create",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_free",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_free",
+          "help": "(internal) spawns free",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_free",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_predict_bind_spawns",
+          "argCount": 4,
+          "args": [
+            2,
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_predict_bind_spawns",
+          "help": "(internal) predict bind spawns",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_predict_bind_spawns",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_spawn_set",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_spawn_set",
+          "help": "(internal) spawns spawn set",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_spawn_set",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_spawn",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_spawn",
+          "help": "(internal) spawns spawn",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_spawn",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_cancel",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_cancel",
+          "help": "(internal) spawns cancel",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_cancel",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_accept",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_accept",
+          "help": "(internal) spawns accept",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_accept",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_size",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_size",
+          "help": "(internal) spawns size",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_size",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_alive",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_alive",
+          "help": "(internal) spawns alive",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_alive",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_handle_add",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_handle_add",
+          "help": "(internal) spawns handle add",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_handle_add",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_handle_remove",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_handle_remove",
+          "help": "(internal) spawns handle remove",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_handle_remove",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_tick",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_tick",
+          "help": "(internal) spawns tick",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_tick",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_iter_begin",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_iter_begin",
+          "help": "(internal) spawns iter begin",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_iter_begin",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_iter_next",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_iter_next",
+          "help": "(internal) spawns iter next",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_iter_next",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_entry_stat",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_entry_stat",
+          "help": "(internal) spawns entry stat",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_entry_stat",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_entry_value",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_entry_value",
+          "help": "(internal) spawns entry value",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_entry_value",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_spawns_seek",
+          "argCount": 2,
+          "args": [
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_spawns_seek",
+          "help": "(internal) spawns seek",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_spawns_seek",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_netdelay_set",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_netdelay_set",
+          "help": "(internal) netdelay set",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_netdelay_set",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_netdelay_pump",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_netdelay_pump",
+          "help": "(internal) netdelay pump",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_netdelay_pump",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_netdelay_in_flight",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_netdelay_in_flight",
+          "help": "(internal) netdelay in flight",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_netdelay_in_flight",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_netdelay_drop",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_netdelay_drop",
+          "help": "(internal) netdelay drop",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_netdelay_drop",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2

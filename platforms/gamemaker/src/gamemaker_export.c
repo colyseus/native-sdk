@@ -6,6 +6,9 @@
 #include "../../../include/colyseus/schema/dynamic_schema.h"
 #include "../../../include/colyseus/schema/collections.h"
 #include "../../../include/colyseus/messages.h"
+#include "../../../include/colyseus/net_delay.h"
+#include "../../../include/colyseus/auth/auth.h"
+#include "cJSON.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -18,76 +21,13 @@
 #include <pthread.h>
 #endif
 
-// Export macro for GameMaker DLL functions
-#ifndef GM_EXPORT
-#ifdef __EMSCRIPTEN__
-#define GM_EXPORT EMSCRIPTEN_KEEPALIVE
-#elif defined(_WIN32)
-#define GM_EXPORT __declspec(dllexport)
-#else
-#define GM_EXPORT __attribute__((visibility("default")))
-#endif
-#endif
+#include "gamemaker_internal.h"
 
 // Maximum number of events in the queue
 #define MAX_EVENT_QUEUE_SIZE 1024
 
 // Maximum number of callback entries
 #define MAX_GM_CALLBACK_ENTRIES 256
-
-// Event types for GameMaker polling
-typedef enum {
-    GM_EVENT_NONE = 0,
-    GM_EVENT_ROOM_JOIN = 1,
-    GM_EVENT_ROOM_STATE_CHANGE = 2,
-    GM_EVENT_ROOM_MESSAGE = 3,
-    GM_EVENT_ROOM_ERROR = 4,
-    GM_EVENT_ROOM_LEAVE = 5,
-    GM_EVENT_CLIENT_ERROR = 6,
-    GM_EVENT_PROPERTY_CHANGE = 7,
-    GM_EVENT_ITEM_ADD = 8,
-    GM_EVENT_ITEM_REMOVE = 9,
-    GM_EVENT_HTTP_RESPONSE = 10,
-    GM_EVENT_HTTP_ERROR = 11,
-    GM_EVENT_INSTANCE_CHANGE = 12,
-    GM_EVENT_COLLECTION_CHANGE = 13,
-    GM_EVENT_ROOM_DROP = 14,
-    GM_EVENT_ROOM_RECONNECT = 15,
-} gm_event_type_t;
-
-// Event structure for the queue
-typedef struct {
-    gm_event_type_t type;
-    double room_handle;  // Room pointer as double (for GameMaker)
-    double callback_handle;  // Shared across schema & HTTP events
-    int code;
-    char message[1024];
-
-    union {
-        // Message events (type 3)
-        struct {
-            uint8_t data[8192];
-            size_t data_length;
-        } msg;
-
-        // Schema callback events (types 7, 8, 9)
-        struct {
-            double instance_handle;
-            int value_type;
-            double value_number;
-            double prev_value_number;
-            char value_string[1024];
-            char prev_value_string[1024];
-            char key_string[256];
-            int key_index;
-        } schema;
-
-        // HTTP response/error events (types 10, 11)
-        struct {
-            char* body;  // dynamically allocated, freed on next poll
-        } http;
-    };
-} gm_event_t;
 
 // Event queue (circular buffer, thread-safe)
 typedef struct {
@@ -115,7 +55,7 @@ typedef struct {
 } gm_callbacks_wrapper_t;
 
 // Room reference table — maps small integer refs to room pointers
-#define MAX_ROOM_REFS 16
+#define MAX_ROOM_REFS GM_MAX_ROOM_REFS
 #define MAX_CALLBACKS_PER_ROOM 4
 
 typedef struct {
@@ -174,7 +114,7 @@ static int gm_room_ref_alloc(void) {
     return 0;
 }
 
-static colyseus_room_t* gm_room_ref_get(int ref) {
+colyseus_room_t* gm_room_ref_get(int ref) {
     if (ref < 1 || ref > MAX_ROOM_REFS) return NULL;
     return g_room_refs[ref - 1].room;
 }
@@ -234,6 +174,10 @@ static void gm_room_ref_release(int ref) {
     if (ref >= 1 && ref <= MAX_ROOM_REFS) {
         gm_room_ref_t* entry = &g_room_refs[ref - 1];
 
+        // idempotent — colyseus_gm_room_free already ran it before the room
+        // died; this covers the on_client_error release path
+        gm_predict_room_released(ref);
+
         // Auto-free all callbacks associated with this room
         for (int i = 0; i < entry->callbacks_count; i++) {
             gm_callbacks_wrapper_free(entry->callbacks[i]);
@@ -270,7 +214,7 @@ static void event_queue_unlock(void) {
 #endif
 }
 
-static void event_queue_push(const gm_event_t* event) {
+void gm_event_queue_push(const gm_event_t* event) {
     event_queue_lock();
 
     if (g_event_queue.count >= MAX_EVENT_QUEUE_SIZE) {
@@ -353,7 +297,7 @@ static void gm_resolve_field_type(void* instance, const char* property, gm_callb
 // =============================================================================
 
 // Snapshot a value into the event struct based on field type
-static void gm_snapshot_value(int value_type, void* value,
+void gm_snapshot_value(int value_type, void* value,
     double* out_number, char* out_string, size_t out_string_size,
     double* out_instance)
 {
@@ -398,7 +342,8 @@ static void gm_snapshot_value(int value_type, void* value,
             *out_number = (double)*(uint64_t*)value;
             break;
         case COLYSEUS_FIELD_REF:
-            *out_instance = (double)(uintptr_t)value;
+            // previous-value snapshots pass NULL here — they have no instance slot
+            if (out_instance) *out_instance = (double)(uintptr_t)value;
             break;
         default:
             break;
@@ -423,7 +368,7 @@ static void gm_property_change_trampoline(void* value, void* previous_value, voi
         &event.schema.prev_value_number, event.schema.prev_value_string,
         sizeof(event.schema.prev_value_string), NULL);
 
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void gm_item_add_trampoline(void* value, void* key, void* userdata) {
@@ -451,7 +396,7 @@ static void gm_item_add_trampoline(void* value, void* key, void* userdata) {
         }
     }
 
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void gm_item_remove_trampoline(void* value, void* key, void* userdata) {
@@ -478,7 +423,7 @@ static void gm_item_remove_trampoline(void* value, void* key, void* userdata) {
         }
     }
 
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void gm_instance_change_trampoline(void* userdata) {
@@ -489,7 +434,7 @@ static void gm_instance_change_trampoline(void* userdata) {
     event.type = GM_EVENT_INSTANCE_CHANGE;
     event.room_handle = entry->room_handle;
     event.callback_handle = (double)entry->index;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void gm_collection_change_trampoline(void* key, void* value, void* userdata) {
@@ -516,7 +461,7 @@ static void gm_collection_change_trampoline(void* key, void* value, void* userda
         }
     }
 
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 // =============================================================================
@@ -528,7 +473,7 @@ static void on_room_join(void* userdata) {
     gm_event_t event = {0};
     event.type = GM_EVENT_ROOM_JOIN;
     event.room_handle = (double)ref;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_state_change(void* userdata) {
@@ -536,7 +481,7 @@ static void on_room_state_change(void* userdata) {
     gm_event_t event = {0};
     event.type = GM_EVENT_ROOM_STATE_CHANGE;
     event.room_handle = (double)ref;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_message_with_type_encoded(const char* type, const uint8_t* data, size_t length, void* userdata) {
@@ -547,7 +492,7 @@ static void on_room_message_with_type_encoded(const char* type, const uint8_t* d
     strncpy(event.message, type ? type : "", sizeof(event.message) - 1);
     event.msg.data_length = length < sizeof(event.msg.data) ? length : sizeof(event.msg.data);
     memcpy(event.msg.data, data, event.msg.data_length);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_error(int code, const char* message, void* userdata) {
@@ -557,7 +502,7 @@ static void on_room_error(int code, const char* message, void* userdata) {
     event.room_handle = (double)ref;
     event.code = code;
     strncpy(event.message, message ? message : "", sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_leave(int code, const char* reason, void* userdata) {
@@ -567,7 +512,7 @@ static void on_room_leave(int code, const char* reason, void* userdata) {
     event.room_handle = (double)ref;
     event.code = code;
     strncpy(event.message, reason ? reason : "", sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_drop(int code, const char* reason, void* userdata) {
@@ -577,20 +522,28 @@ static void on_room_drop(int code, const char* reason, void* userdata) {
     event.room_handle = (double)ref;
     event.code = code;
     strncpy(event.message, reason ? reason : "", sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_room_reconnect(void* userdata) {
     int ref = (int)(intptr_t)userdata;
+    // the reconnect built a FRESH transport — re-arm the serializing wrap
+    colyseus_room_t* room = gm_room_ref_get(ref);
+    if (room) colyseus_netdelay_wrap(room, true);
     gm_event_t event = {0};
     event.type = GM_EVENT_ROOM_RECONNECT;
     event.room_handle = (double)ref;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 static void on_client_room_success(colyseus_room_t* room, void* userdata) {
     int ref = (int)(intptr_t)userdata;
     gm_room_ref_set(ref, room);
+
+    // Serialize ALL inbound onto the GML thread from the very first packet:
+    // decode must never run concurrently with GML state reads. Delivery
+    // happens inside colyseus_process() via colyseus_gm_netdelay_pump().
+    colyseus_netdelay_wrap(room, true);
 
     // Set up room callbacks — pass ref as userdata
     void* ref_as_ptr = (void*)(intptr_t)ref;
@@ -610,7 +563,7 @@ static void on_client_error(int code, const char* message, void* userdata) {
     event.room_handle = (double)ref;
     event.code = code;
     strncpy(event.message, message ? message : "", sizeof(event.message) - 1);
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 
     // Release the room ref slot on error
     gm_room_ref_release(ref);
@@ -815,6 +768,11 @@ GM_EXPORT void colyseus_gm_room_leave(double room_handle) {
 
 GM_EXPORT void colyseus_gm_room_free(double room_handle) {
     colyseus_room_t* room = gm_room_ref_get((int)room_handle);
+    if (room && room->transport) {
+        colyseus_netdelay_unwrap(room->transport);
+    }
+    /* predict objects deregister from room-owned layers — free BEFORE the room */
+    gm_predict_room_released((int)room_handle);
     if (room) {
         colyseus_room_free(room);
     }
@@ -1375,18 +1333,25 @@ GM_EXPORT double colyseus_gm_poll_event(void) {
         g_current_http_body = NULL;
     }
 
-    if (event_queue_pop(&g_current_event)) {
-        // Save HTTP body pointer for accessor (valid until next poll)
-        if ((g_current_event.type == GM_EVENT_HTTP_RESPONSE ||
-             g_current_event.type == GM_EVENT_HTTP_ERROR) &&
-            g_current_event.http.body) {
-            g_current_http_body = g_current_event.http.body;
+    if (!event_queue_pop(&g_current_event)) {
+        // Queue drained — deliver anything already RECEIVED (sitting in the
+        // serializing netdelay queue) within this same poll loop, so the
+        // wrap's thread serialization never delays a packet that has landed
+        // (JOIN and its state arrive in the same colyseus_process() call).
+        colyseus_netdelay_pump();
+        if (!event_queue_pop(&g_current_event)) {
+            memset(&g_current_event, 0, sizeof(g_current_event));
+            return 0.0;
         }
-        return (double)g_current_event.type;
     }
 
-    memset(&g_current_event, 0, sizeof(g_current_event));
-    return 0.0;
+    // Save HTTP body pointer for accessor (valid until next poll)
+    if ((g_current_event.type == GM_EVENT_HTTP_RESPONSE ||
+         g_current_event.type == GM_EVENT_HTTP_ERROR) &&
+        g_current_event.http.body) {
+        g_current_http_body = g_current_event.http.body;
+    }
+    return (double)g_current_event.type;
 }
 
 GM_EXPORT double colyseus_gm_event_get_room(void) {
@@ -1719,7 +1684,7 @@ static void on_http_success(const colyseus_http_response_t* response, void* user
     event.callback_handle = args->request_id;
     event.code = response->status_code;
     event.http.body = response->body ? strdup(response->body) : NULL;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 // HTTP error trampoline — pushes GM_EVENT_HTTP_ERROR to event queue
@@ -1733,11 +1698,12 @@ static void on_http_error(const colyseus_http_error_t* error, void* userdata) {
         strncpy(event.message, error->message, sizeof(event.message) - 1);
     }
     event.http.body = NULL;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 // Thread function — runs the blocking HTTP call
-static void gm_http_thread_func(gm_http_thread_args_t* args) {
+static void gm_http_thread_func(void* userdata) {
+    gm_http_thread_args_t* args = (gm_http_thread_args_t*)userdata;
     switch (args->method) {
         case 0: colyseus_http_get(args->http, args->path, on_http_success, on_http_error, args); break;
         case 1: colyseus_http_post(args->http, args->path, args->body, on_http_success, on_http_error, args); break;
@@ -1750,21 +1716,58 @@ static void gm_http_thread_func(gm_http_thread_args_t* args) {
     free(args);
 }
 
+/*
+ * One detached thread per request. The core's http and auth calls BLOCK, and
+ * their result reaches GML through the polled event queue.
+ */
+typedef void (*gm_request_fn)(void*);
+
+typedef struct {
+    gm_request_fn run;
+    void* request;
+} gm_thread_arg_t;
+
 #ifndef __EMSCRIPTEN__
 #ifdef _WIN32
-static DWORD WINAPI gm_http_thread_wrapper(LPVOID arg) {
-    gm_http_thread_func((gm_http_thread_args_t*)arg);
+static DWORD WINAPI gm_request_thread(LPVOID arg) {
+    gm_thread_arg_t* a = (gm_thread_arg_t*)arg;
+    a->run(a->request);
+    free(a);
     return 0;
 }
 #else
-static void* gm_http_thread_wrapper(void* arg) {
-    gm_http_thread_func((gm_http_thread_args_t*)arg);
+static void* gm_request_thread(void* arg) {
+    gm_thread_arg_t* a = (gm_thread_arg_t*)arg;
+    a->run(a->request);
+    free(a);
     return NULL;
 }
 #endif
 #endif
 
-// Dispatch an HTTP request on a background thread, returns request_id
+static void gm_spawn_request(gm_request_fn run, void* request) {
+#ifdef __EMSCRIPTEN__
+    /* On WASM the JS shim overrides the exports; if reached, run inline. */
+    run(request);
+#else
+    gm_thread_arg_t* arg = (gm_thread_arg_t*)calloc(1, sizeof(*arg));
+    if (!arg) { run(request); return; }
+    arg->run = run;
+    arg->request = request;
+#ifdef _WIN32
+    HANDLE thread = CreateThread(NULL, 0, gm_request_thread, arg, 0, NULL);
+    if (thread) CloseHandle(thread);
+#else
+    pthread_t thread;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_create(&thread, &attr, gm_request_thread, arg);
+    pthread_attr_destroy(&attr);
+#endif
+#endif
+}
+
 static double gm_http_dispatch(colyseus_http_t* http, int method, const char* path, const char* body) {
     gm_http_thread_args_t* args = (gm_http_thread_args_t*)calloc(1, sizeof(gm_http_thread_args_t));
     if (!args) return 0.0;
@@ -1776,22 +1779,160 @@ static double gm_http_dispatch(colyseus_http_t* http, int method, const char* pa
     args->method = method;
     args->request_id = g_http_request_counter;
 
-#ifdef __EMSCRIPTEN__
-    // On WASM the JS shim overrides these; if reached, run synchronously
-    gm_http_thread_func(args);
-#elif defined(_WIN32)
-    HANDLE thread = CreateThread(NULL, 0, gm_http_thread_wrapper, args, 0, NULL);
-    if (thread) CloseHandle(thread);
-#else
-    pthread_t thread;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_create(&thread, &attr, gm_http_thread_wrapper, args);
-    pthread_attr_destroy(&attr);
-#endif
-
+    gm_spawn_request(gm_http_thread_func, args);
     return g_http_request_counter;
+}
+
+// =============================================================================
+// Auth — the same road as HTTP
+//
+// Every auth call IS a request to /auth/*, and the core keeps the reply's
+// {user, token} shape, so recomposing that object lets the result travel the
+// HTTP event queue and reach GML through the same response handler. No second
+// event type, and the callback receives exactly what the server sent.
+// =============================================================================
+
+/* Addressed by ordinal through one auth_request entry point rather than a
+ * binding per call. Mirrored by COLYSEUS_AUTH_* in Colyseus.gml — the order
+ * is the ABI. */
+typedef enum {
+    GM_AUTH_GET_USER_DATA = 0,
+    GM_AUTH_REGISTER = 1,
+    GM_AUTH_SIGNIN = 2,
+    GM_AUTH_SIGNIN_ANONYMOUS = 3,
+    GM_AUTH_SEND_PASSWORD_RESET = 4,
+} gm_auth_op_t;
+
+typedef struct {
+    colyseus_auth_t* auth;
+    int op;              // gm_auth_op_t
+    char* email;
+    char* password;
+    char* options_json;
+    double request_id;
+} gm_auth_thread_args_t;
+
+static void gm_auth_push(gm_auth_thread_args_t* args, int type, int code,
+                         char* body, const char* message) {
+    gm_event_t event = {0};
+    event.type = type;
+    event.callback_handle = args->request_id;
+    event.code = code;
+    event.http.body = body;
+    if (message) {
+        strncpy(event.message, message, sizeof(event.message) - 1);
+    }
+    gm_event_queue_push(&event);
+}
+
+static void on_auth_success(const colyseus_auth_data_t* data, void* userdata) {
+    gm_auth_thread_args_t* args = (gm_auth_thread_args_t*)userdata;
+
+    cJSON* root = cJSON_CreateObject();
+    if (data && data->user_json) {
+        cJSON* user = cJSON_Parse(data->user_json);
+        if (user) cJSON_AddItemToObject(root, "user", user);
+    }
+    if (data && data->token) cJSON_AddStringToObject(root, "token", data->token);
+    char* body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+
+    gm_auth_push(args, GM_EVENT_HTTP_RESPONSE, 200, body ? body : strdup("{}"), NULL);
+}
+
+/* The core's auth error callback carries a message but no status, so the code
+ * is 0 and the server's body is the message. */
+static void on_auth_error(const char* message, void* userdata) {
+    gm_auth_thread_args_t* args = (gm_auth_thread_args_t*)userdata;
+    gm_auth_push(args, GM_EVENT_HTTP_ERROR, 0, NULL,
+                 message ? message : "auth request failed");
+}
+
+static void gm_auth_thread_func(void* userdata) {
+    gm_auth_thread_args_t* args = (gm_auth_thread_args_t*)userdata;
+    switch ((gm_auth_op_t)args->op) {
+        case GM_AUTH_GET_USER_DATA:
+            colyseus_auth_get_user_data(args->auth, on_auth_success, on_auth_error, args);
+            break;
+        case GM_AUTH_REGISTER:
+            colyseus_auth_register_email_password(args->auth, args->email, args->password,
+                args->options_json, on_auth_success, on_auth_error, args);
+            break;
+        case GM_AUTH_SIGNIN:
+            colyseus_auth_signin_email_password(args->auth, args->email, args->password,
+                on_auth_success, on_auth_error, args);
+            break;
+        case GM_AUTH_SIGNIN_ANONYMOUS:
+            colyseus_auth_signin_anonymous(args->auth, args->options_json,
+                on_auth_success, on_auth_error, args);
+            break;
+        case GM_AUTH_SEND_PASSWORD_RESET:
+            colyseus_auth_send_password_reset(args->auth, args->email,
+                on_auth_success, on_auth_error, args);
+            break;
+    }
+    free(args->email);
+    free(args->password);
+    free(args->options_json);
+    free(args);
+}
+
+/* Empty reaches the core as NULL: GML has no null string, and an absent email
+ * is not the same as "". */
+static char* gm_auth_arg(const char* value) {
+    return (value && value[0]) ? strdup(value) : NULL;
+}
+
+static double gm_auth_dispatch(colyseus_auth_t* auth, int op, const char* email,
+                               const char* password, const char* options_json) {
+    gm_auth_thread_args_t* args = (gm_auth_thread_args_t*)calloc(1, sizeof(gm_auth_thread_args_t));
+    if (!args) return 0.0;
+
+    g_http_request_counter += 1.0;
+    args->auth = auth;
+    args->op = op;
+    args->email = gm_auth_arg(email);
+    args->password = gm_auth_arg(password);
+    args->options_json = gm_auth_arg(options_json);
+    args->request_id = g_http_request_counter;
+
+    gm_spawn_request(gm_auth_thread_func, args);
+    return g_http_request_counter;
+}
+
+/*
+ * The arguments arrive as ONE json object — {email, password, options} — because
+ * GameMaker rejects an extension function with more than four arguments unless
+ * they all share a type, and these do not.
+ */
+GM_EXPORT double colyseus_gm_auth_request(double client_handle, double op,
+    const char* payload_json) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !client->auth) return 0.0;
+
+    cJSON* root = (payload_json && payload_json[0]) ? cJSON_Parse(payload_json) : NULL;
+    const char* email = NULL;
+    const char* password = NULL;
+    char* options = NULL;
+    if (root) {
+        cJSON* item = cJSON_GetObjectItem(root, "email");
+        if (cJSON_IsString(item)) email = item->valuestring;
+        item = cJSON_GetObjectItem(root, "password");
+        if (cJSON_IsString(item)) password = item->valuestring;
+        item = cJSON_GetObjectItem(root, "options");
+        if (item) options = cJSON_PrintUnformatted(item);
+    }
+
+    double request_id = gm_auth_dispatch(client->auth, (int)op, email, password, options);
+
+    free(options);
+    cJSON_Delete(root);
+    return request_id;
+}
+
+GM_EXPORT void colyseus_gm_auth_signout(double client_handle) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (client && client->auth) colyseus_auth_signout(client->auth);
 }
 
 // =============================================================================
@@ -1854,6 +1995,121 @@ GM_EXPORT const char* colyseus_gm_event_get_http_body(void) {
 }
 
 // =============================================================================
+// Latency — trampolines + exported functions
+// The C SDK runs its own worker threads; we just push results to the event
+// queue (mirrors the HTTP pattern). Results are read on the GML side via the
+// existing accessors (callback_handle = request id, message = endpoint/error,
+// code = error code) plus colyseus_gm_event_get_latency() and, for selection,
+// colyseus_gm_event_get_http_body() (the per-endpoint results JSON).
+// =============================================================================
+
+typedef struct { double request_id; } gm_latency_req_t;
+
+static void on_gm_get_latency(const colyseus_latency_result_t* r, void* userdata) {
+    gm_latency_req_t* req = (gm_latency_req_t*)userdata;
+    gm_event_t event = {0};
+    event.callback_handle = req->request_id;
+    event.latency_ms = r->latency_ms;
+    if (r->ok) {
+        event.type = GM_EVENT_LATENCY_RESPONSE;
+        if (r->endpoint) strncpy(event.message, r->endpoint, sizeof(event.message) - 1);
+    } else {
+        event.type = GM_EVENT_LATENCY_ERROR;
+        event.code = r->error_code;
+        if (r->error) strncpy(event.message, r->error, sizeof(event.message) - 1);
+    }
+    gm_event_queue_push(&event);
+    free(req);
+}
+
+static void on_gm_select_by_latency(const char* best_endpoint, double best_latency_ms, void* userdata) {
+    gm_latency_req_t* req = (gm_latency_req_t*)userdata;
+    gm_event_t event = {0};
+    event.type = GM_EVENT_LATENCY_SELECTED;
+    event.callback_handle = req->request_id;
+    if (best_endpoint && best_endpoint[0]) {
+        strncpy(event.message, best_endpoint, sizeof(event.message) - 1);
+        event.latency_ms = best_latency_ms;
+    } else {
+        event.latency_ms = -1.0;
+    }
+    gm_event_queue_push(&event);
+    free(req);
+}
+
+static void gm_latency_fill_tls(colyseus_client_t* client, colyseus_latency_options_t* opt) {
+    if (client && client->settings) {
+        opt->use_secure = client->settings->use_secure_protocol;
+        opt->tls_skip_verification = client->settings->tls_skip_verification;
+        opt->ca_pem_data = client->settings->ca_pem_data;
+        opt->ca_pem_len = client->settings->ca_pem_len;
+    }
+}
+
+GM_EXPORT double colyseus_gm_get_latency(double client_handle, const char* endpoint, double timeout_ms) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !endpoint) return 0.0;
+
+    g_http_request_counter += 1.0;
+    double rid = g_http_request_counter;
+    gm_latency_req_t* req = (gm_latency_req_t*)calloc(1, sizeof(*req));
+    if (!req) return 0.0;
+    req->request_id = rid;
+
+    colyseus_latency_options_t opt = {0};
+    if (timeout_ms > 0) opt.timeout_ms = (int)timeout_ms;
+    gm_latency_fill_tls(client, &opt);
+
+    colyseus_get_latency(endpoint, &opt, on_gm_get_latency, req);
+    return rid;
+}
+
+// endpoints_json: a JSON array of endpoint strings (GML: json_stringify(array))
+GM_EXPORT double colyseus_gm_select_by_latency(double client_handle, const char* endpoints_json, double timeout_ms) {
+    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    if (!client || !endpoints_json) return 0.0;
+
+    cJSON* arr = cJSON_Parse(endpoints_json);
+    if (!arr || !cJSON_IsArray(arr)) { cJSON_Delete(arr); return 0.0; }
+
+    int n = cJSON_GetArraySize(arr);
+    if (n <= 0) { cJSON_Delete(arr); return 0.0; }
+
+    const char** endpoints = (const char**)calloc((size_t)n, sizeof(char*));
+    int count = 0;
+    cJSON* item = NULL;
+    cJSON_ArrayForEach(item, arr) {
+        if (cJSON_IsString(item) && item->valuestring) endpoints[count++] = item->valuestring;
+    }
+
+    double rid = 0.0;
+    if (count > 0) {
+        g_http_request_counter += 1.0;
+        rid = g_http_request_counter;
+        gm_latency_req_t* req = (gm_latency_req_t*)calloc(1, sizeof(*req));
+        if (req) {
+            req->request_id = rid;
+            colyseus_latency_options_t opt = {0};
+            if (timeout_ms > 0) opt.timeout_ms = (int)timeout_ms;
+            gm_latency_fill_tls(client, &opt);
+            // select_by_latency strdups each endpoint synchronously, so freeing the
+            // cJSON tree right after the call returns is safe.
+            colyseus_select_by_latency(endpoints, (size_t)count, &opt, on_gm_select_by_latency, req);
+        } else {
+            rid = 0.0;
+        }
+    }
+
+    free(endpoints);
+    cJSON_Delete(arr);
+    return rid;
+}
+
+GM_EXPORT double colyseus_gm_event_get_latency(void) {
+    return g_current_event.latency_ms;
+}
+
+// =============================================================================
 // HTTP Push Helpers (for WASM shim — JS calls these to push HTTP events)
 // =============================================================================
 
@@ -1863,7 +2119,7 @@ GM_EXPORT void colyseus_gm_http_push_response(double request_id, double status_c
     event.callback_handle = request_id;
     event.code = (int)status_code;
     event.http.body = body ? strdup(body) : NULL;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
 }
 
 GM_EXPORT void colyseus_gm_http_push_error(double request_id, double code, const char* message) {
@@ -1875,7 +2131,36 @@ GM_EXPORT void colyseus_gm_http_push_error(double request_id, double code, const
         strncpy(event.message, message, sizeof(event.message) - 1);
     }
     event.http.body = NULL;
-    event_queue_push(&event);
+    gm_event_queue_push(&event);
+}
+
+// Latency push helpers (WASM shim + tests — synthesize latency events)
+GM_EXPORT void colyseus_gm_latency_push_response(double request_id, double latency_ms, const char* endpoint) {
+    gm_event_t event = {0};
+    event.type = GM_EVENT_LATENCY_RESPONSE;
+    event.callback_handle = request_id;
+    event.latency_ms = latency_ms;
+    if (endpoint) strncpy(event.message, endpoint, sizeof(event.message) - 1);
+    gm_event_queue_push(&event);
+}
+
+GM_EXPORT void colyseus_gm_latency_push_error(double request_id, double code, const char* message) {
+    gm_event_t event = {0};
+    event.type = GM_EVENT_LATENCY_ERROR;
+    event.callback_handle = request_id;
+    event.code = (int)code;
+    if (message) strncpy(event.message, message, sizeof(event.message) - 1);
+    gm_event_queue_push(&event);
+}
+
+GM_EXPORT void colyseus_gm_latency_push_selected(double request_id, const char* best_endpoint,
+                                                 double latency_ms) {
+    gm_event_t event = {0};
+    event.type = GM_EVENT_LATENCY_SELECTED;
+    event.callback_handle = request_id;
+    event.latency_ms = latency_ms;
+    if (best_endpoint) strncpy(event.message, best_endpoint, sizeof(event.message) - 1);
+    gm_event_queue_push(&event);
 }
 
 // Get HTTP base endpoint from client (used by WASM shim for URL construction)

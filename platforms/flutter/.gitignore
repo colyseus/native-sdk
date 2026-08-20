@@ -1,0 +1,24 @@
+# Zig build output
+zig-out/
+.zig-cache/
+
+# Dart / Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+
+# Native libraries staged by build.sh into the plugin's platform folders
+colyseus/android/src/main/jniLibs/
+colyseus/ios/Frameworks/
+colyseus/macos/Libraries/
+colyseus/linux/Libraries/
+colyseus/windows/Libraries/
+
+# CocoaPods
+**/Pods/
+**/.symlinks/
+**/Flutter/ephemeral/
+**/ephemeral/
+Podfile.lock

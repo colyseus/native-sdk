@@ -119,38 +119,46 @@ static colyseus_array_item_t* array_find_item(colyseus_array_schema_t* arr, int 
     return NULL;
 }
 
-static void array_remove_deleted_key(colyseus_array_schema_t* arr, int index) {
+/* Returns true when the key was present (the slot was a hole). */
+static bool array_remove_deleted_key(colyseus_array_schema_t* arr, int index) {
     for (int i = 0; i < arr->deleted_count; i++) {
         if (arr->deleted_keys[i] == index) {
             /* Shift remaining keys */
             memmove(&arr->deleted_keys[i], &arr->deleted_keys[i + 1],
                 (arr->deleted_count - i - 1) * sizeof(int));
             arr->deleted_count--;
-            return;
+            return true;
         }
     }
+    return false;
 }
 
 void colyseus_array_schema_set(colyseus_array_schema_t* arr, int index, void* value, uint8_t operation) {
     if (!arr) return;
 
-    array_remove_deleted_key(arr, index);
+    bool was_deleted = array_remove_deleted_key(arr, index); /* consult + clear */
 
     colyseus_array_item_t* item = array_find_item(arr, index);
 
-    if (index == 0 && operation == (uint8_t)COLYSEUS_OP_ADD && arr->count > 0) {
-        /* Handle unshift - insert at beginning */
+    /* strict ADD only: MOVE_AND_ADD/DELETE_AND_ADD/ADD_BY_REFID must not insert */
+    if (operation == (uint8_t)COLYSEUS_OP_ADD &&
+        item != NULL && item->value != NULL &&
+        !was_deleted) {
+        /* ADD at an occupied index = insert: shift existing items up. */
         colyseus_array_item_t* new_item = malloc(sizeof(colyseus_array_item_t));
         if (!new_item) return;
 
-        /* Shift all existing indices */
         colyseus_array_item_t* curr = arr->items;
         while (curr) {
-            curr->index++;
+            if (curr->index >= index) curr->index++;
             curr = curr->next;
         }
+        /* keep hole bookkeeping aligned with the shifted slots */
+        for (int i = 0; i < arr->deleted_count; i++) {
+            if (arr->deleted_keys[i] >= index) arr->deleted_keys[i]++;
+        }
 
-        new_item->index = 0;
+        new_item->index = index;
         new_item->value = value;
         new_item->next = arr->items;
         arr->items = new_item;
@@ -267,10 +275,16 @@ void colyseus_array_schema_reverse(colyseus_array_schema_t* arr) {
     }
 }
 
+static int array_item_index_cmp(const void* a, const void* b) {
+    const colyseus_array_item_t* ia = *(const colyseus_array_item_t* const*)a;
+    const colyseus_array_item_t* ib = *(const colyseus_array_item_t* const*)b;
+    return ia->index - ib->index;
+}
+
 void colyseus_array_schema_on_decode_end(colyseus_array_schema_t* arr) {
     if (!arr || arr->deleted_count == 0) return;
 
-    /* Remove items marked for deletion and compact indices */
+    /* Remove items marked for deletion */
     colyseus_array_item_t** curr = &arr->items;
     while (*curr) {
         bool should_delete = false;
@@ -292,6 +306,24 @@ void colyseus_array_schema_on_decode_end(colyseus_array_schema_t* arr) {
     }
 
     arr->deleted_count = 0;
+
+    /* Renumber survivors 0..n-1 preserving order — reference decoders compact
+     * holes at decode end, and later positional ops address the compacted
+     * layout. Without this, any delete leaves sparse indices and desyncs. */
+    if (arr->count > 0) {
+        colyseus_array_item_t** nodes = malloc((size_t)arr->count * sizeof(*nodes));
+        if (!nodes) return;
+
+        int n = 0;
+        for (colyseus_array_item_t* item = arr->items; item; item = item->next) {
+            nodes[n++] = item;
+        }
+        qsort(nodes, (size_t)n, sizeof(*nodes), array_item_index_cmp);
+        for (int i = 0; i < n; i++) {
+            nodes[i]->index = i;
+        }
+        free(nodes);
+    }
 }
 
 void colyseus_array_schema_foreach(colyseus_array_schema_t* arr, colyseus_array_foreach_fn callback, void* userdata) {

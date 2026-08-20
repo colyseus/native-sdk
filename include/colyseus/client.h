@@ -6,6 +6,7 @@
 #include "colyseus/protocol.h"
 #include "colyseus/http.h"
 #include "colyseus/room.h"
+#include "colyseus/latency.h"
 #include <stdbool.h>
 
 #include "auth/auth.h"
@@ -83,6 +84,18 @@ void colyseus_client_reconnect(
     const char* reconnection_token,
     colyseus_client_room_callback_t on_success,
     colyseus_client_error_callback_t on_error,
+    void* userdata
+);
+
+/**
+ * Measure the latency to this client's configured server endpoint. TLS settings
+ * are derived from the client; `options` (NULL for defaults) supplies
+ * ping_count/timeout_ms. The callback fires exactly once.
+ */
+void colyseus_client_get_latency(
+    colyseus_client_t* client,
+    const colyseus_latency_options_t* options,
+    colyseus_get_latency_cb_t cb,
     void* userdata
 );
 

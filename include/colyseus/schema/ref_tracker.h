@@ -62,6 +62,9 @@ colyseus_ref_entry_t* colyseus_ref_tracker_get_entry(colyseus_ref_tracker_t* tra
 /* Check if reference exists */
 bool colyseus_ref_tracker_has(colyseus_ref_tracker_t* tracker, int ref_id);
 
+/* Number of tracked references */
+size_t colyseus_ref_tracker_count(colyseus_ref_tracker_t* tracker);
+
 /* Remove a reference (decrements count, schedules for GC if count reaches 0) */
 bool colyseus_ref_tracker_remove(colyseus_ref_tracker_t* tracker, int ref_id);
 
@@ -70,6 +73,22 @@ void colyseus_ref_tracker_gc(colyseus_ref_tracker_t* tracker);
 
 /* Clear all references */
 void colyseus_ref_tracker_clear(colyseus_ref_tracker_t* tracker);
+
+/*
+ * Release every STATIC-schema ref the tracker holds, except `except_ref`
+ * (the caller's root, which it destroys itself).
+ *
+ * schema-codegen's generated `destroy` recurses into `t.ref()` children but
+ * NEVER into a map or array, and never frees `char*` fields. So the orphans are
+ * exactly: every collection structure, the schema entries it holds, and every
+ * string. That is what this releases; ref children are left to the root's own
+ * recursive destroy. Freed refs are NULLed, so a later clear() skips them.
+ */
+void colyseus_ref_tracker_destroy_static_refs(colyseus_ref_tracker_t* tracker, void* except_ref);
+
+/* Free the heap `char*` fields of a static schema instance (codegen's destroy
+ * doesn't). Safe on dynamic instances — it does nothing. */
+void colyseus_schema_free_string_fields(colyseus_schema_t* instance);
 
 #ifdef __cplusplus
 }

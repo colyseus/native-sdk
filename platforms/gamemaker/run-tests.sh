@@ -62,6 +62,19 @@ if [[ -z "$user_dir" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Servers — legacy suites drive example-server (:2567), predict suites drive
+# the prediction-tools playground (:5173). Started here when they are not
+# already running, and stopped again on exit.
+# ---------------------------------------------------------------------------
+source "$ROOT_DIR/../../tests/dev-servers.sh"
+trap servers_stop EXIT
+
+servers_ensure example-server 2567 "$ROOT_DIR/../../example-server" \
+    npx tsx src/index.ts || warn "legacy suites will fail without :2567"
+servers_ensure playground 5173 "$ROOT_DIR/../../../demos/prediction-tools" \
+    npx vite --port 5173 --strictPort --host 0.0.0.0 || warn "predict suites will fail without :5173"
+
+# ---------------------------------------------------------------------------
 # Build the native library
 # ---------------------------------------------------------------------------
 log "Building native library..."
@@ -89,8 +102,9 @@ mkdir -p "$CACHE_DIR" "$TEMP_DIR"
 log "Building and running tests..."
 echo ""
 
-OUTPUT_FILE=$(mktemp /tmp/colyseus_test_XXXXXX.log)
-TIMEOUT=90
+OUTPUT_FILE=$(mktemp /tmp/colyseus_test.XXXXXX)
+# the predict suites drive live rooms for many seconds each
+TIMEOUT=300
 
 # Igor "Run" compiles and launches the game, debug output goes to stdout.
 # Run in background so we can monitor for test completion.
@@ -154,11 +168,13 @@ else
   tail -30 "$OUTPUT_FILE"
   echo ""
   fail "Tests did not complete (no 'Tests Finished!' found in output)"
+  log "Full output kept at: $OUTPUT_FILE"
+  KEEP_OUTPUT=1
   EXIT_CODE=1
 fi
 
 # Cleanup
-rm -f "$OUTPUT_FILE"
+[[ -z "${KEEP_OUTPUT:-}" ]] && rm -f "$OUTPUT_FILE"
 rm -rf "$TEMP_DIR"
 
 exit $EXIT_CODE

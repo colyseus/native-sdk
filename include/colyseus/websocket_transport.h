@@ -9,6 +9,11 @@
 
 #ifndef __EMSCRIPTEN__
 #include <wslay/wslay.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
 #endif
 
 #ifdef __cplusplus
@@ -51,9 +56,21 @@ extern "C" {
         int url_port;
         int socket_fd;
 
+        /* Identity of the tick thread, valid while `tick_thread` is set. A
+         * close has to know whether IT is the tick thread — joining yourself
+         * deadlocks — and "a tick thread exists" is not the same question.
+         * Answering the second one defers a close that nobody will ever
+         * complete, and the caller then frees this struct out from under the
+         * still-running loop. */
+#ifdef _WIN32
+        unsigned long tick_thread_id;
+#else
+        pthread_t tick_thread_id;
+#endif
+        bool tick_thread_id_valid;
+
         /* 1-byte fields */
         bool running;
-        bool in_tick_thread;         /* True when executing inside tick thread */
         bool pending_close;          /* Close requested from within tick thread */
         int pending_close_code;      /* Close code for deferred close */
         char* pending_close_reason;  /* Close reason for deferred close (must free) */

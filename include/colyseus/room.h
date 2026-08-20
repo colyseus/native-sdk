@@ -91,6 +91,31 @@ typedef struct colyseus_pending_msg {
     struct colyseus_pending_msg* next;
 } colyseus_pending_msg_t;
 
+/*
+ * Reply outcome of colyseus_room_request(), collapsing the wire's
+ * ROOM_RESPONSE statuses:
+ *
+ *   OK        → ok=true,  reader = reply payload (NULL when empty), error=NULL
+ *   REJECTED  → ok=false, reader = the authored rejection reason,   error=NULL
+ *   ERROR     → ok=false, reader = {name, message, code?},          error="request faulted"
+ *   closed    → ok=false, reader = NULL, error="connection closed ..."
+ *
+ * `reader` is only valid for the duration of the callback.
+ */
+typedef void (*colyseus_room_on_response_fn)(bool ok, colyseus_message_reader_t* reader,
+    const char* error, void* userdata);
+
+/* Reply to a colyseus_room_ping() — round-trip time in whole milliseconds. */
+typedef void (*colyseus_room_on_ping_fn)(int rtt_ms, void* userdata);
+
+/* Pending request awaiting a ROOM_RESPONSE (hash by request id). */
+typedef struct colyseus_pending_request {
+    uint32_t request_id;
+    colyseus_room_on_response_fn callback;
+    void* userdata;
+    UT_hash_handle hh;
+} colyseus_pending_request_t;
+
 /* Reconnection runtime state. Internal — do not modify directly. */
 typedef struct {
     colyseus_reconnection_options_t options;
@@ -103,8 +128,9 @@ typedef struct {
     colyseus_pending_msg_t* queue_tail;
     int queue_count;
 
-    /* Worker thread + condvar. Defined opaquely to keep platform headers out
-     * of this public header. Implementation file allocates and casts. */
+    /* Scheduler state — worker thread + condvar, or the polled deadline
+     * machine on Emscripten/COLYSEUS_RECONNECT_POLLED builds. Defined
+     * opaquely to keep platform headers out of this public header. */
     void* worker;
 } colyseus_reconnection_state_t;
 
@@ -157,6 +183,30 @@ struct colyseus_room {
     /* Message handlers hash map */
     colyseus_message_handler_t* message_handlers;
 
+    /* request/response (ROOM_REQUEST / ROOM_RESPONSE) correlation state */
+    colyseus_pending_request_t* pending_requests;
+    uint32_t next_request_id;
+
+    /* room-level ping (PING echo) — single in-flight measurement */
+    colyseus_room_on_ping_fn ping_callback;
+    void* ping_userdata;
+    uint64_t ping_started_at_ms;
+
+    /* server-time + RTT estimator (TIMED prefix); always present */
+    struct colyseus_room_clock* clock;
+
+    /* lazily built decode-callback layer (colyseus_room_callbacks) */
+    struct colyseus_callbacks* callbacks;
+
+    /* input layer — populated from the JOIN_ROOM handshake sections */
+    struct colyseus_input_handle* input_handle;
+    const colyseus_schema_vtable_t* input_vtable_from_reflection; /* owned (dynamic) */
+    bool input_stamp_render;
+    bool input_stamp_reckon;
+    int input_tick_rate;   /* 0 = not advertised */
+    int input_patch_rate;
+    int input_sub_steps;
+
     /* Wildcard message handlers - default (msgpack reader) */
     colyseus_room_on_message_fn on_message_any;
     void* on_message_any_userdata;
@@ -208,6 +258,43 @@ void colyseus_room_set_session_id(colyseus_room_t* room, const char* session_id)
 const char* colyseus_room_get_name(const colyseus_room_t* room);
 bool colyseus_room_is_connected(const colyseus_room_t* room);
 
+/*
+ * Measure the round-trip time to the room over the LIVE connection (PING echo).
+ * The callback fires once with the RTT in whole milliseconds. No-op when the
+ * connection is not open; a new call replaces a still-pending measurement.
+ */
+void colyseus_room_ping(colyseus_room_t* room, colyseus_room_on_ping_fn callback, void* userdata);
+
+/*
+ * The room's schema-callbacks layer (see schema/callbacks.h), created on first
+ * use and owned by the room — the JS SDK's getStateCallbacks(room). Use this
+ * instead of reaching through room->serializer->decoder; several Predicts (a
+ * per-mode overlay comparison, say) can share the one layer.
+ */
+struct colyseus_callbacks* colyseus_room_callbacks(colyseus_room_t* room);
+
+/*
+ * The room's server-time + RTT estimator (see room_clock.h). Always present;
+ * a room whose server never calls defineInput() simply receives no TIMED
+ * samples (server_now() == now(), zeros elsewhere).
+ */
+struct colyseus_room_clock* colyseus_room_get_clock(colyseus_room_t* room);
+
+/*
+ * Lazily create (and thereafter return) the per-room input handle (see
+ * input_handle.h). Mutate the handle's data instance, then send.
+ *
+ * `input_vtable` may be a static vtable (schema-codegen output for the
+ * server's defineInput() schema) or NULL — NULL synthesizes the schema from
+ * the handshake's INPUT_REFLECTION section (dynamic vtable). Returns NULL
+ * when neither source yields a schema. Later calls return the same handle
+ * (options are ignored — first call wins).
+ */
+struct colyseus_input_handle* colyseus_room_input(
+    colyseus_room_t* room,
+    const colyseus_schema_vtable_t* input_vtable,
+    const void* options /* colyseus_input_options_t*, NULL = defaults */);
+
 const char* colyseus_room_get_reconnection_token(const colyseus_room_t* room);
 
 /* Event handlers */
@@ -223,6 +310,17 @@ void colyseus_room_on_reconnect(colyseus_room_t* room, colyseus_room_on_reconnec
 void colyseus_room_set_reconnection_options(colyseus_room_t* room, const colyseus_reconnection_options_t* options);
 void colyseus_room_get_reconnection_options(const colyseus_room_t* room, colyseus_reconnection_options_t* out_options);
 bool colyseus_room_is_reconnecting(const colyseus_room_t* room);
+
+/**
+ * Advance pending auto-reconnections (polled-scheduler builds).
+ *
+ * On Emscripten — and on native builds compiled with
+ * -DCOLYSEUS_RECONNECT_POLLED — reconnection is driven by this poll instead
+ * of a worker thread: call it once per frame, alongside the transport poll.
+ * On threaded-scheduler builds it is a no-op, so hosts may call it
+ * unconditionally.
+ */
+void colyseus_reconnect_poll(void);
 
 /* Message handlers - default (msgpack reader, auto-decoded) */
 void colyseus_room_on_message(colyseus_room_t* room, const char* type, colyseus_room_on_message_fn callback, void* userdata);
@@ -253,6 +351,31 @@ void colyseus_room_send_int_encoded(colyseus_room_t* room, int type, const uint8
 /* Send raw bytes (ROOM_DATA_BYTES protocol) */
 void colyseus_room_send_bytes(colyseus_room_t* room, const char* type, const uint8_t* data, size_t length);
 void colyseus_room_send_int_bytes(colyseus_room_t* room, int type, const uint8_t* data, size_t length);
+
+/*
+ * Send a message and await the server's reply — the value the server
+ * returns from its matching onMessage handler (ROOM_REQUEST/ROOM_RESPONSE).
+ *
+ * Returns the request id. The callback fires exactly once: on reply, or
+ * with an error when the connection closes first. The C core has no timer
+ * runtime, so there is NO automatic timeout — platforms wanting one should
+ * schedule colyseus_room_cancel_request() with their own timer.
+ */
+uint32_t colyseus_room_request(colyseus_room_t* room, const char* type, colyseus_message_t* payload,
+    colyseus_room_on_response_fn callback, void* userdata);
+
+/* Same, with a pre-encoded msgpack payload (NULL/0 for no payload). */
+uint32_t colyseus_room_request_encoded(colyseus_room_t* room, const char* type,
+    const uint8_t* payload, size_t payload_length,
+    colyseus_room_on_response_fn callback, void* userdata);
+
+/* Drop a pending request (timeout/cancel path). Idempotent; a late
+ * ROOM_RESPONSE for a cancelled id is silently ignored. */
+void colyseus_room_cancel_request(colyseus_room_t* room, uint32_t request_id);
+
+/* Feed one raw protocol frame through the room's dispatch — for custom
+ * transports and tests. Regular transports call this internally. */
+void colyseus_room_process_message(colyseus_room_t* room, const uint8_t* data, size_t length);
 
 #ifdef __cplusplus
 }
