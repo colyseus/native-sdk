@@ -563,7 +563,7 @@ static void gm_parse_field_options(const cJSON* it, colyseus_predict_field_optio
     const cJSON* v;
     if ((v = cJSON_GetObjectItem(it, "mode")) && cJSON_IsNumber(v)) o->mode = (colyseus_predict_mode_t)v->valueint;
     if ((v = cJSON_GetObjectItem(it, "delay")) && cJSON_IsNumber(v)) o->delay = v->valuedouble;
-    if ((v = cJSON_GetObjectItem(it, "damping")) && cJSON_IsNumber(v)) o->damping = v->valuedouble;
+    if ((v = cJSON_GetObjectItem(it, "smooth_ms")) && cJSON_IsNumber(v)) o->smooth_ms = v->valuedouble;
     if ((v = cJSON_GetObjectItem(it, "max_extrapolate")) && cJSON_IsNumber(v)) o->max_extrapolate = v->valuedouble;
     if ((v = cJSON_GetObjectItem(it, "tick_interval")) && cJSON_IsNumber(v)) o->tick_interval = v->valuedouble;
     if ((v = cJSON_GetObjectItem(it, "snap")) && cJSON_IsNumber(v)) o->snap = v->valuedouble;
@@ -687,7 +687,7 @@ GM_EXPORT double colyseus_gm_predict_attach_all(double predict_id, double state_
 }
 
 /* spec: {"fields":["x","y"],"step_id":1,"step_params":{...},
- *        "smoothing":n,"substep_ms":n,"snap":n} */
+ *        "smooth_ms":n,"substep_ms":n,"snap":n} */
 GM_EXPORT double colyseus_gm_predict_attach_reckon(double predict_id, double instance,
                                                    const char* spec_json) {
     gm_predict_entry_t* e = gm_predict_entry(predict_id);
@@ -705,7 +705,7 @@ GM_EXPORT double colyseus_gm_predict_attach_reckon(double predict_id, double ins
         gm_step_params_t* sp = gm_predict_own_params_spec(e, root);
         if (sp) rc = colyseus_predict_attach_reckon(e->predict, inst, inst->__vtable,
             fields, n, gm_builtin_reckon_step,
-            gm_spec_num(root, "smoothing", 0),
+            gm_spec_num(root, "smooth_ms", 0),
             gm_spec_num(root, "substep_ms", 0),
             gm_spec_num(root, "snap", 0), sp);
     }
@@ -735,7 +735,7 @@ GM_EXPORT double colyseus_gm_predict_attach_all_reckon(double predict_id,
         gm_step_params_t* sp = gm_predict_own_params_spec(e, root);
         if (sp) rc = colyseus_predict_attach_all_reckon(e->predict, state, collection,
             NULL, fields, n, gm_builtin_reckon_step,
-            gm_spec_num(root, "smoothing", 0),
+            gm_spec_num(root, "smooth_ms", 0),
             gm_spec_num(root, "substep_ms", 0),
             gm_spec_num(root, "snap", 0), sp);
     }
@@ -804,7 +804,7 @@ static int gm_split_csv(const char* csv, char storage[][GM_NAME_MAX],
 
 #define GM_RECON_MAX_FIELDS 32
 
-/* spec: {"fields":["x","y"]|"" (all numeric), "smoothing":n (-1 = default),
+/* spec: {"fields":["x","y"]|"" (all numeric), "smooth_ms":n (-1 = default),
  *        "snap":n, "step_ms":n, "sub_steps":n} */
 GM_EXPORT double colyseus_gm_predict_reconciler(double predict_id, double truth_instance,
     double input_h, const char* spec_json) {
@@ -823,7 +823,7 @@ GM_EXPORT double colyseus_gm_predict_reconciler(double predict_id, double truth_
     int n = gm_split_csv(csv, storage, fields, GM_RECON_MAX_FIELDS);
 
     colyseus_reconciler_options_t opts = {0};
-    opts.smoothing = gm_spec_num(root, "smoothing", -1);
+    opts.smooth_ms = gm_spec_num(root, "smooth_ms", -1);
     opts.snap = gm_spec_num(root, "snap", 0);
     opts.step_ms = gm_spec_num(root, "step_ms", 0);
     opts.sub_steps = (int)gm_spec_num(root, "sub_steps", 0);
@@ -864,7 +864,7 @@ GM_EXPORT double colyseus_gm_sim_part(const char* name, double instance) {
     return (double)g_sim_stage.part_count;
 }
 
-GM_EXPORT double colyseus_gm_sim_create(double input_h, double smoothing, double snap,
+GM_EXPORT double colyseus_gm_sim_create(double input_h, double smooth_ms, double snap,
                                         double step_ms, double sub_steps) {
     gm_predict_entry_t* e = gm_predict_entry((double)g_sim_stage.predict_id);
     if (!e || g_sim_stage.part_count == 0) return 0;
@@ -874,7 +874,7 @@ GM_EXPORT double colyseus_gm_sim_create(double input_h, double smoothing, double
     colyseus_sim_reconciler_options_t opts = {0};
     opts.parts = g_sim_stage.parts;
     opts.part_count = g_sim_stage.part_count;
-    opts.smoothing = smoothing;
+    opts.smooth_ms = smooth_ms;
     opts.snap = snap;
     opts.step_ms = step_ms;
     opts.sub_steps = (int)sub_steps;
@@ -1279,7 +1279,7 @@ GM_EXPORT void colyseus_gm_predict_bind_spawns(double predict_id, double spawns_
         reckon.fields = se->field_ptrs;
         reckon.field_count = se->field_count;
         reckon.step = gm_builtin_reckon_step;
-        reckon.smoothing = 0;              /* raw projection: exact for constant-step motion */
+        reckon.smooth_ms = 0;              /* raw projection: exact for constant-step motion */
         reckon.substep_ms = 0;             /* -> 16 */
         reckon.userdata = &se->step;
         colyseus_predict_bind_spawns(pe->predict, se->spawns, state, collection, &reckon);

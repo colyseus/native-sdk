@@ -192,7 +192,7 @@
     state = window.colyseus_gm_room_get_state(roomRef);
     me = window.colyseus_gm_map_get(state, "players", sid);
     rid = window.colyseus_gm_predict_reconciler(pid, me, 0,
-      JSON.stringify({ fields: "x,y,vx,vy", smoothing: 15, snap: 8 }));
+      JSON.stringify({ fields: "x,y,vx,vy", smooth_ms: 66.67, snap: 8 }));
     ok = rid > 0;
     var x0 = window.colyseus_gm_recon_value(rid, "x");
     moveX = 1; // drive right

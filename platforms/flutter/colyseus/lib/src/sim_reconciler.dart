@@ -96,8 +96,8 @@ class SimOptions {
   /// no part is bound, since otherwise a rollback has no restore point.
   final void Function(SimWorld world)? adopt;
 
-  /// Error-decay rate; negative takes the default, 0 snaps hard.
-  final double smoothing;
+  /// Error-decay time constant (ms); negative takes the default, 0 snaps hard.
+  final double smoothMs;
 
   /// Correction magnitude past which the result pops instead of decaying.
   final double snap;
@@ -112,7 +112,7 @@ class SimOptions {
   const SimOptions({
     required this.parts,
     this.adopt,
-    this.smoothing = -1,
+    this.smoothMs = -1,
     this.snap = 0,
     this.stepMs = 0,
     this.subSteps = 0,
@@ -250,7 +250,7 @@ Reconciler createSimReconciler({
     final opts = arena<colyseus_sim_reconciler_options_t>();
     opts.ref.parts = parts;
     opts.ref.part_count = options.parts.length;
-    opts.ref.smoothing = options.smoothing;
+    opts.ref.smooth_ms = options.smoothMs;
     opts.ref.snap = options.snap;
     opts.ref.step_ms = options.stepMs;
     opts.ref.sub_steps = options.subSteps;

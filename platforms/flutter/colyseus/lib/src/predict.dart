@@ -72,8 +72,14 @@ class FieldOptions {
   /// the player never saw.
   final double delay;
 
-  /// Spring constant (1/s) for damped and extrapolate (default 15).
-  final double damping;
+  /// Output-smoothing time constant in milliseconds — roughly the extra
+  /// display lag it adds: a steady mover trails its target by
+  /// speed × [smoothMs]. Damped chases the latest value with it, extrapolate
+  /// blends predict-then-smooth (default 50 for both), and lerp uses it as an
+  /// optional display-only output spring on the interpolated result (default
+  /// 0 — off, exact interpolation). Negative = explicit 0 (snap / raw
+  /// projection / exact interpolation).
+  final double smoothMs;
 
   /// Cap on how far extrapolation may run past the newest sample, in
   /// milliseconds (default 200).
@@ -92,7 +98,7 @@ class FieldOptions {
   const FieldOptions({
     this.mode = PredictMode.lerp,
     this.delay = 0,
-    this.damping = 0,
+    this.smoothMs = 0,
     this.maxExtrapolate = 0,
     this.tickInterval = 0,
     this.snap = 0,
@@ -104,7 +110,7 @@ class FieldOptions {
     assert(_assertModesMatchNative());
     out.ref.modeAsInt = mode.value;
     out.ref.delay = delay;
-    out.ref.damping = damping;
+    out.ref.smooth_ms = smoothMs;
     out.ref.max_extrapolate = maxExtrapolate;
     out.ref.tick_interval = tickInterval;
     out.ref.snap = snap;
@@ -239,12 +245,12 @@ class Predict {
   /// bots, projectiles): forward-simulating the last snapshot beats
   /// interpolating it, because the result is exact rather than delayed.
   ///
-  /// [smoothing] of 0 projects raw, which is right for deterministic motion.
+  /// [smoothMs] of 0 projects raw, which is right for deterministic motion.
   void attachAllReckon(
     String collection,
     List<String> fields,
     ReckonStep step, {
-    double smoothing = 0,
+    double smoothMs = 0,
     double substepMs = 0,
     double snap = 0,
   }) {
@@ -266,7 +272,7 @@ class Predict {
         fieldPtrs,
         fields.length,
         callable.nativeFunction,
-        smoothing,
+        smoothMs,
         substepMs,
         snap,
         nullptr,
@@ -279,7 +285,7 @@ class Predict {
     SchemaInstance instance,
     List<String> fields,
     ReckonStep step, {
-    double smoothing = 0,
+    double smoothMs = 0,
     double substepMs = 0,
     double snap = 0,
   }) {
@@ -298,7 +304,7 @@ class Predict {
         fieldPtrs,
         fields.length,
         callable.nativeFunction,
-        smoothing,
+        smoothMs,
         substepMs,
         snap,
         nullptr,
@@ -360,7 +366,7 @@ class Predict {
     required InputHandle input,
     required ReconcilerStep step,
     List<String>? fields,
-    double smoothing = -1,
+    double smoothMs = -1,
     double snap = 0,
     double stepMs = 0,
     int subSteps = 0,
@@ -372,7 +378,7 @@ class Predict {
       input: input,
       step: step,
       fields: fields,
-      smoothing: smoothing,
+      smoothMs: smoothMs,
       snap: snap,
       stepMs: stepMs,
       subSteps: subSteps,
@@ -439,7 +445,7 @@ class Predict {
         reckon.ref.step = callable.nativeFunction;
         // Raw projection: a deterministic constant-step projectile rebases
         // exactly, so smoothing would only add lag.
-        reckon.ref.smoothing = 0;
+        reckon.ref.smooth_ms = 0;
       }
 
       core.colyseus_predict_bind_spawns(

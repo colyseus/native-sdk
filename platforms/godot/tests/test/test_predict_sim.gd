@@ -191,7 +191,7 @@ func test_sim_predicts_the_puck_through_own_inputs():
 	var sim = predict.sim({
 		"input": input,
 		"world": { "paddle": me, "puck": puck, "bot": bot },
-		"smoothing": 15.0,
+		"smooth_ms": 66.67,
 		"step": _sim_step,
 	})
 	assert_not_null(sim, "predict.sim should build over paddle+puck+bot")

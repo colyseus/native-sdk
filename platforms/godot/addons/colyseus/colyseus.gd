@@ -796,11 +796,11 @@ class Predict extends RefCounted:
 		return p
 
 	## Per-field config: a bare mode constant, or a Dictionary with any of
-	## mode / delay / damping / max_extrapolate / snap / angle (0 = default).
+	## mode / delay / smooth_ms / max_extrapolate / snap / angle (0 = default).
 	func attach(instance, config: Dictionary) -> void:
 		for field in config:
 			var o = _opts(config[field])
-			_native.attach_field(instance, field, o.mode, o.delay, o.damping,
+			_native.attach_field(instance, field, o.mode, o.delay, o.smooth_ms,
 				o.max_extrapolate, o.snap, o.angle)
 
 	## Track EVERY entry of a state collection — present now or arriving later —
@@ -808,7 +808,7 @@ class Predict extends RefCounted:
 	func attach_all(collection: String, config: Dictionary, except_key := "") -> void:
 		for field in config:
 			var o = _opts(config[field])
-			_native.attach_all_field(collection, field, o.mode, o.delay, o.damping,
+			_native.attach_all_field(collection, field, o.mode, o.delay, o.smooth_ms,
 				o.max_extrapolate, o.snap, o.angle, except_key)
 
 	func detach(instance) -> void:
@@ -816,17 +816,17 @@ class Predict extends RefCounted:
 
 	## Dead-reckon `fields` of one instance through a step SHARED with the
 	## server: `step.call(state, dt, elapsed_ms)` forwards a scratch copy from
-	## the latest snapshot to the present. Opts: smoothing / substep_ms / snap.
+	## the latest snapshot to the present. Opts: smooth_ms / substep_ms / snap.
 	func attach_reckon(instance, fields: Array, step: Callable, opts: Dictionary = {}) -> void:
 		_native.attach_reckon(instance, fields, step,
-			float(opts.get("smoothing", 0.0)),
+			float(opts.get("smooth_ms", 0.0)),
 			float(opts.get("substep_ms", 0.0)),
 			float(opts.get("snap", 0.0)))
 
 	## As attach_all, but dead-reckons every entry through the shared step.
 	func attach_all_reckon(collection: String, fields: Array, step: Callable, opts: Dictionary = {}) -> void:
 		_native.attach_all_reckon(collection, fields, step,
-			float(opts.get("smoothing", 0.0)),
+			float(opts.get("smooth_ms", 0.0)),
 			float(opts.get("substep_ms", 0.0)),
 			float(opts.get("snap", 0.0)))
 
@@ -853,14 +853,14 @@ class Predict extends RefCounted:
 	## receives (ctx, state, cmd) where `state` is the predicted mirror
 	## (mutate it: `state.x += state.vx * ctx.dt`) and `cmd` the input being
 	## applied. Options: input (InputHandle), fields (Array[String]),
-	## smoothing (-1 = default), snap (0 = off), step (Callable).
+	## smooth_ms (-1 = default), snap (0 = off), step (Callable).
 	func reconciler(instance, opts: Dictionary) -> Reconciler:
 		var input = opts.get("input")
 		var native = _native.reconciler(
 			instance,
 			input._native if input != null else null,
 			opts.get("fields", []),
-			float(opts.get("smoothing", -1.0)),
+			float(opts.get("smooth_ms", -1.0)),
 			float(opts.get("snap", 0.0)),
 			opts.get("step"))
 		if native == null:
@@ -880,7 +880,7 @@ class Predict extends RefCounted:
 		var native = _native.sim(
 			opts.get("world", {}),
 			input._native if input != null else null,
-			float(opts.get("smoothing", -1.0)),
+			float(opts.get("smooth_ms", -1.0)),
 			float(opts.get("snap", 0.0)),
 			opts.get("step"))
 		if native == null:
@@ -935,7 +935,7 @@ class Predict extends RefCounted:
 	class _Opts:
 		var mode := 0
 		var delay := 0.0
-		var damping := 0.0
+		var smooth_ms := 0.0
 		var max_extrapolate := 0.0
 		var snap := 0.0
 		var angle := false
@@ -947,7 +947,7 @@ class Predict extends RefCounted:
 		elif entry is Dictionary:
 			o.mode = int(entry.get("mode", LERP))
 			o.delay = float(entry.get("delay", 0.0))
-			o.damping = float(entry.get("damping", 0.0))
+			o.smooth_ms = float(entry.get("smooth_ms", 0.0))
 			o.max_extrapolate = float(entry.get("max_extrapolate", 0.0))
 			o.snap = float(entry.get("snap", 0.0))
 			o.angle = bool(entry.get("angle", false))

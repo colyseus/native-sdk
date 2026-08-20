@@ -145,7 +145,7 @@ func test_events_fire_instantly_then_settle():
 	var recon = predict.reconciler(me, {
 		"input": input,
 		"fields": ["x", "y", "vx", "vy", "scoreTicks"],
-		"smoothing": 15.0,
+		"smooth_ms": 66.67,
 		"step": _goal_step,
 	})
 	assert_not_null(recon, "reconciler should build")

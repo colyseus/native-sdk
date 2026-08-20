@@ -194,7 +194,7 @@ suite(function() {
 
             var _recon = _predict.reconciler(_me, {
                 fields: ["x", "y", "vx", "vy"],
-                smoothing: 15,
+                smooth_ms: 66.67,
                 snap: 8,
                 step: predict_test_step_movement,
             });

@@ -35,11 +35,17 @@ typedef enum {
 } colyseus_predict_mode_t;
 
 /* Per-field smoothing options. Zero-init + set `mode`; 0/false members take
- * the reference defaults (delay 100, damping 15, max_extrapolate 200). */
+ * the reference defaults (delay 100, smooth_ms 50 on damped/extrapolate —
+ * 0 on lerp, where it is the output spring — max_extrapolate 200). */
 typedef struct {
     colyseus_predict_mode_t mode;
     double delay;            /* lerp render-time lag (ms) */
-    double damping;          /* damped/extrapolate spring (1/s); < 0 = 0 (raw projection) */
+    /* Output-smoothing time constant (ms) — roughly the extra display lag it
+     * adds: a steady mover trails its target by ≈ speed × smooth_ms. Damped
+     * chases the latest value with it, extrapolate blends predict-then-smooth,
+     * lerp springs its interpolated output (display-only). < 0 = explicit 0
+     * (snap / raw projection / exact interpolation). */
+    double smooth_ms;
     double max_extrapolate;  /* extrapolate overshoot cap (ms) */
     double tick_interval;    /* arrival-grid snap (ms); 0 off */
     double snap;             /* value-space teleport threshold; 0 off */
@@ -123,8 +129,8 @@ int colyseus_predict_track(
  * server: each read forwards a scratch copy from the latest snapshot by the
  * snapshot age (serverNow − lastServerTime) in `substep_ms` sub-steps, then
  * offset-decay smooths the result (steady-state exact; rebase discontinuities
- * decay out; `snap` pops teleports). `smoothing 0` = raw projection.
- * Static vtables only. Returns 0 on success.
+ * decay out; `snap` pops teleports). `smooth_ms` is the decay time constant
+ * in ms; 0 = raw projection. Static vtables only. Returns 0 on success.
  *
  * The reckon arm of the attach config. Named apart from
  * colyseus_predict_attach only because C cannot overload.
@@ -135,7 +141,7 @@ int colyseus_predict_attach_reckon(
     const colyseus_schema_vtable_t* vtable,
     const char* const* fields, int field_count,
     colyseus_predict_step_fn step,
-    double smoothing, double substep_ms, double snap,
+    double smooth_ms, double substep_ms, double snap,
     void* userdata);
 
 /* Stop tracking every field of `instance` (called automatically when the
@@ -196,7 +202,7 @@ int colyseus_predict_attach_all_reckon(
     const colyseus_schema_vtable_t* entry_vtable,
     const char* const* fields, int field_count,
     colyseus_predict_step_fn step,
-    double smoothing, double substep_ms, double snap,
+    double smooth_ms, double substep_ms, double snap,
     void* userdata);
 
 /**
@@ -223,9 +229,10 @@ typedef struct {
     /* The step, SHARED with the server — the same motion the store's `step`
      * integrates for pending locals, against a schema scratch. */
     colyseus_predict_step_fn step;
-    /* 0 = raw projection, the right default here: a deterministic constant-step
-     * projectile rebases exactly, so smoothing only adds lag. */
-    double smoothing;
+    /* Decay time constant (ms). 0 = raw projection, the right default here: a
+     * deterministic constant-step projectile rebases exactly, so smoothing
+     * only adds lag. */
+    double smooth_ms;
     double substep_ms;              /* 0 -> 16 */
     void* userdata;
 } colyseus_spawns_reckon_t;

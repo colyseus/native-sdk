@@ -610,8 +610,8 @@
         return _callN('colyseus_gm_sim_part', ['string', 'number'], [name, instance]);
     };
 
-    window.colyseus_gm_sim_create = function(input_h, smoothing, snap, step_ms, sub_steps) {
-        return _callN('colyseus_gm_sim_create', ['number', 'number', 'number', 'number', 'number'], [input_h, smoothing, snap, step_ms, sub_steps]);
+    window.colyseus_gm_sim_create = function(input_h, smooth_ms, snap, step_ms, sub_steps) {
+        return _callN('colyseus_gm_sim_create', ['number', 'number', 'number', 'number', 'number'], [input_h, smooth_ms, snap, step_ms, sub_steps]);
     };
 
     window.colyseus_gm_sim_part_mirror = function(recon_id, name) {

@@ -114,7 +114,7 @@ func _build_recon(predict, input, me):
 	return predict.reconciler(me, {
 		"input": input,
 		"fields": ["x", "y", "vx", "vy"],
-		"smoothing": 15.0,
+		"smooth_ms": 66.67,
 		"step": _step,
 	})
 

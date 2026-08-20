@@ -63,7 +63,7 @@ fn accelStep(ctx: [*c]const c.colyseus_step_ctx_t, state: ?*c.colyseus_schema_t,
     s.x += s.vx * ctx.*.dt;
 }
 
-fn makeCtx(smoothing: f64) Ctx {
+fn makeCtx(smooth_ms: f64) Ctx {
     c.colyseus_room_clock_now_provider = scriptedNow;
     const input_instance = c.accel_input_create().?;
     input_instance.*.__base.__vtable = &c.accel_input_vtable;
@@ -79,7 +79,7 @@ fn makeCtx(smoothing: f64) Ctx {
     truth.*.__base.__vtable = &c.recon_state_vtable;
 
     var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
-    ropts.smoothing = smoothing;
+    ropts.smooth_ms = smooth_ms;
     ropts.step_ms = 50;
     const recon = c.colyseus_reconciler_create(
         @ptrCast(truth), &c.recon_state_vtable, handle, null, accelStep, &ropts).?;
@@ -140,7 +140,7 @@ test "reconciler_core" {
     try testing.expectEqual(@as(f64, -100), c.colyseus_reconciler_last_correction(ctx.recon, "x"));
     try testing.expectEqual(@as(f64, 100), c.colyseus_reconciler_last_correction_mag(ctx.recon));
 
-    // value() with smoothing 0: equals state at clamped alpha
+    // value() with smooth_ms 0: equals state at clamped alpha
     try testing.expectEqual(@as(f64, 100.3), c.colyseus_reconciler_value(ctx.recon, "x"));
 }
 
@@ -198,7 +198,7 @@ test "reconciler_dynamic_truth" {
     defer c.colyseus_dynamic_schema_free(truth);
 
     var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
-    ropts.smoothing = 0;
+    ropts.smooth_ms = 0;
     ropts.step_ms = 50;
     const recon = c.colyseus_reconciler_create(
         @ptrCast(truth), &dvt.*.base, handle, null, accelStepDyn, &ropts).?;
@@ -287,7 +287,7 @@ test "reconciler_memo_epoch" {
     defer c.recon_state_vtable.destroy.?(@ptrCast(truth));
 
     var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
-    ropts.smoothing = 0;
+    ropts.smooth_ms = 0;
     ropts.step_ms = 50;
     const fields = [_][*c]const u8{"x"};
     ropts.fields = @ptrCast(&fields);
@@ -367,7 +367,7 @@ test "extrapolate_projects_snapshot_age_not_the_cap" {
 
     var ext_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
     ext_opts.mode = c.COLYSEUS_PREDICT_EXTRAPOLATE;
-    ext_opts.damping = -1; // raw projection, so the assertion is the geometry
+    ext_opts.smooth_ms = -1; // raw projection, so the assertion is the geometry
     ext_opts.max_extrapolate = 250;
     const cfg = [_]c.colyseus_attach_field_t{.{ .field = "c", .opts = &ext_opts }};
     _ = c.colyseus_predict_attach(p, ent, &cfg, cfg.len);
@@ -443,7 +443,7 @@ test "passive_smoothing" {
     damped_opts.mode = c.COLYSEUS_PREDICT_DAMPED;
     var ext_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
     ext_opts.mode = c.COLYSEUS_PREDICT_EXTRAPOLATE;
-    ext_opts.damping = -1; // raw projection (no output EMA)
+    ext_opts.smooth_ms = -1; // raw projection (no output EMA)
     var raw_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
     raw_opts.mode = c.COLYSEUS_PREDICT_RAW;
     var angle_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
@@ -553,6 +553,237 @@ test "lerp_attach_survives_the_clock_axis_handoff" {
     try testing.expectEqual(@as(f64, 30), c.colyseus_predict_value(p, ent, "a"));
 }
 
+// ─── lerp `smooth_ms` (output spring) ────────────────────────────────────────
+//
+// A display-only output spring on the lerp result (mirrors the reference's
+// predict-lerp-smoothing tests). Default 0 (off): the output stays the raw
+// interpolant, bit-identical to a spring-less lerp. Armed, it keeps rendered
+// velocity continuous, trailing the raw output by speed × smooth_ms during
+// motion — frame-rate independently (exact first-order-hold step).
+//
+// The reference's fields-array / constructor-defaults config spellings don't
+// exist on this port (the per-field attach array is the one surface), so those
+// cases collapse into the trail test; its mode-flip case maps to "damped with
+// smooth_ms unset uses its own 50 default".
+
+const LerpRig = struct {
+    decoder: *c.colyseus_decoder_t,
+    callbacks: *c.colyseus_callbacks_t,
+    p: *c.colyseus_predict_t,
+    ent: *c.colyseus_schema_t,
+
+    fn deinit(self: LerpRig) void {
+        c.colyseus_predict_free(self.p);
+        c.colyseus_callbacks_free(self.callbacks);
+        c.colyseus_decoder_free(self.decoder);
+    }
+};
+
+// No clock: samples and the render target share the scripted local axis.
+fn makeLerpRig() LerpRig {
+    const decoder = c.colyseus_decoder_create(&c.passive_ent_vtable).?;
+    const callbacks = c.colyseus_callbacks_create(decoder).?;
+    const p = c.colyseus_predict_create(callbacks, null).?;
+    const ent: *c.colyseus_schema_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
+    return .{ .decoder = decoder, .callbacks = callbacks, .p = p, .ent = ent };
+}
+
+fn lerpPatchA(rig: LerpRig, value: f64) void {
+    var bytes: [10]u8 = undefined;
+    bytes[0] = 128; // field "a"
+    bytes[1] = 0xcb; // float64
+    std.mem.writeInt(u64, bytes[2..10], @as(u64, @bitCast(value)), .little);
+    decodeBytes(rig.decoder, &bytes);
+}
+
+fn lerpAttachA(p: *c.colyseus_predict_t, ent: *c.colyseus_schema_t, opts: *const c.colyseus_predict_field_options_t) void {
+    const cfg = [_]c.colyseus_attach_field_t{.{ .field = "a", .opts = opts }};
+    _ = c.colyseus_predict_attach(p, ent, &cfg, cfg.len);
+}
+
+test "lerp_smooth_ms_omitted_is_bit_identical_to_explicit_off" {
+    // The GOTCHA this guards: 50 is the damped/extrapolate default — lerp
+    // must NOT silently spring with it.
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    NOW = 1000;
+    const rig = makeLerpRig();
+    defer rig.deinit();
+    const p0 = c.colyseus_predict_create(rig.callbacks, null).?;
+    defer c.colyseus_predict_free(p0);
+
+    lerpPatchA(rig, 10);
+    var lerp_default = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    lerp_default.mode = c.COLYSEUS_PREDICT_LERP;
+    var lerp_off = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    lerp_off.mode = c.COLYSEUS_PREDICT_LERP;
+    lerp_off.smooth_ms = -1; // explicit 0 via the sentinel
+    lerpAttachA(rig.p, rig.ent, &lerp_default);
+    lerpAttachA(p0, rig.ent, &lerp_off);
+
+    NOW = 1050;
+    lerpPatchA(rig, 20);
+    NOW = 1130; // target 1030 → u = 0.6
+    _ = c.colyseus_predict_tick(rig.p, NOW);
+    _ = c.colyseus_predict_tick(p0, NOW);
+    const v = c.colyseus_predict_value(rig.p, rig.ent, "a");
+    try testing.expectApproxEqAbs(@as(f64, 16), v, 1e-12); // mid-segment interpolant
+    try testing.expectEqual(c.colyseus_predict_value(p0, rig.ent, "a"), v);
+
+    NOW = 1145;
+    lerpPatchA(rig, 35);
+    NOW = 1170;
+    _ = c.colyseus_predict_tick(rig.p, NOW);
+    _ = c.colyseus_predict_tick(p0, NOW);
+    try testing.expectEqual(
+        c.colyseus_predict_value(p0, rig.ent, "a"),
+        c.colyseus_predict_value(rig.p, rig.ent, "a"));
+}
+
+test "lerp_smooth_ms_trails_the_raw_output_during_motion" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    NOW = 1000;
+    const rig = makeLerpRig();
+    defer rig.deinit();
+    const sm = c.colyseus_predict_create(rig.callbacks, null).?;
+    defer c.colyseus_predict_free(sm);
+
+    lerpPatchA(rig, 10);
+    var raw_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    raw_opts.mode = c.COLYSEUS_PREDICT_LERP;
+    var sm_opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    sm_opts.mode = c.COLYSEUS_PREDICT_LERP;
+    sm_opts.smooth_ms = 30;
+    lerpAttachA(rig.p, rig.ent, &raw_opts);
+    lerpAttachA(sm, rig.ent, &sm_opts);
+
+    NOW = 1050;
+    while (NOW <= 1400) : (NOW += 50) lerpPatchA(rig, 10 + (NOW - 1000) / 5);
+    NOW = 1000;
+    while (NOW <= 1400) : (NOW += 10) {
+        _ = c.colyseus_predict_tick(rig.p, NOW);
+        _ = c.colyseus_predict_tick(sm, NOW);
+        _ = c.colyseus_predict_value(rig.p, rig.ent, "a");
+        _ = c.colyseus_predict_value(sm, rig.ent, "a");
+    }
+    NOW -= 10;
+    const v_raw = c.colyseus_predict_value(rig.p, rig.ent, "a");
+    const v_sm = c.colyseus_predict_value(sm, rig.ent, "a");
+    try testing.expect(v_raw > 10); // raw is moving
+    try testing.expect(v_sm < v_raw); // spring trails the raw output
+    try testing.expect(v_sm > v_raw - 15); // by a bounded distance, not stuck
+}
+
+fn lerpSteadyTrail(tick_ms: f64) f64 {
+    NOW = 1000;
+    const rig = makeLerpRig();
+    defer rig.deinit();
+    lerpPatchA(rig, 10);
+    var opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    opts.mode = c.COLYSEUS_PREDICT_LERP;
+    opts.smooth_ms = 25;
+    lerpAttachA(rig.p, rig.ent, &opts);
+
+    var v: f64 = 10;
+    NOW = 1000 + tick_ms;
+    while (NOW <= 2500) : (NOW += tick_ms) {
+        if (@mod(NOW, 50) == 0) lerpPatchA(rig, 10 + (NOW - 1000) / 5);
+        _ = c.colyseus_predict_tick(rig.p, NOW);
+        v = c.colyseus_predict_value(rig.p, rig.ent, "a");
+    }
+    const raw_at_2500: f64 = 10 + (2500 - 100 - 1000) / 5; // target = now − delay(100)
+    return raw_at_2500 - v;
+}
+
+test "lerp_steady_mover_trails_by_speed_times_smooth_ms_at_any_frame_rate" {
+    // 200 u/s stream, smooth_ms 25 → trail = 200 × 0.025 = 5 u. The exact
+    // first-order-hold step makes it hold at ANY tick cadence.
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    try testing.expectApproxEqAbs(@as(f64, 5), lerpSteadyTrail(10), 1e-6);
+    try testing.expectApproxEqAbs(@as(f64, 5), lerpSteadyTrail(25), 1e-6);
+}
+
+test "lerp_snap_teleport_pops_the_spring" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    NOW = 1000;
+    const rig = makeLerpRig();
+    defer rig.deinit();
+    lerpPatchA(rig, 10);
+    var opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    opts.mode = c.COLYSEUS_PREDICT_LERP;
+    opts.snap = 4;
+    opts.smooth_ms = 30;
+    lerpAttachA(rig.p, rig.ent, &opts);
+
+    NOW = 1050;
+    lerpPatchA(rig, 10.2); // establish cadence
+    NOW = 3000;
+    lerpPatchA(rig, 60); // teleport
+    NOW = 3060;
+    _ = c.colyseus_predict_tick(rig.p, NOW);
+    // spring state popped with the ring
+    try testing.expectApproxEqAbs(@as(f64, 60), c.colyseus_predict_value(rig.p, rig.ent, "a"), 1e-9);
+}
+
+test "damped_unset_smooth_ms_keeps_its_own_default" {
+    // Lerp's 0 default must not leak into damped: unset smooth_ms on a damped
+    // field chases with the 50ms default, not frozen at 0.
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    NOW = 1000;
+    const rig = makeLerpRig();
+    defer rig.deinit();
+    lerpPatchA(rig, 10);
+    var opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    opts.mode = c.COLYSEUS_PREDICT_DAMPED;
+    lerpAttachA(rig.p, rig.ent, &opts);
+
+    NOW = 1050;
+    lerpPatchA(rig, 60);
+    NOW = 1110;
+    _ = c.colyseus_predict_tick(rig.p, NOW);
+    const v = c.colyseus_predict_value(rig.p, rig.ent, "a");
+    try testing.expect(v > 10); // chasing — smooth_ms 50 intact
+    try testing.expect(v < 60); // still mid-glide
+}
+
+test "damped_explicit_zero_snaps_to_the_latest_value" {
+    // The old rate-form k=0 froze the output — explicit 0 now means snap.
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    NOW = 1000;
+    const rig = makeLerpRig();
+    defer rig.deinit();
+    lerpPatchA(rig, 10);
+    var opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    opts.mode = c.COLYSEUS_PREDICT_DAMPED;
+    opts.smooth_ms = -1; // explicit 0 via the sentinel
+    lerpAttachA(rig.p, rig.ent, &opts);
+
+    NOW = 1050;
+    lerpPatchA(rig, 60);
+    NOW = 1110;
+    _ = c.colyseus_predict_tick(rig.p, NOW);
+    try testing.expectEqual(@as(f64, 60), c.colyseus_predict_value(rig.p, rig.ent, "a"));
+}
+
+test "lerp_same_frame_re_reads_return_the_same_value" {
+    c.colyseus_room_clock_now_provider = scriptedNow;
+    NOW = 1000;
+    const rig = makeLerpRig();
+    defer rig.deinit();
+    lerpPatchA(rig, 10);
+    var opts = std.mem.zeroes(c.colyseus_predict_field_options_t);
+    opts.mode = c.COLYSEUS_PREDICT_LERP;
+    opts.smooth_ms = 30;
+    lerpAttachA(rig.p, rig.ent, &opts);
+
+    NOW = 1050;
+    lerpPatchA(rig, 20);
+    NOW = 1130;
+    _ = c.colyseus_predict_tick(rig.p, NOW);
+    const v1 = c.colyseus_predict_value(rig.p, rig.ent, "a");
+    // spring advances once per frame
+    try testing.expectEqual(v1, c.colyseus_predict_value(rig.p, rig.ent, "a"));
+}
+
 // ─── reckon + valueAt (fixture scenario E) ──────────────────────────────────
 
 fn ballStep(state: ?*c.colyseus_schema_t, dt: f64, elapsed_ms: f64, userdata: ?*anyopaque) callconv(.c) void {
@@ -577,7 +808,7 @@ test "reckon_value_at" {
     const ball: *c.colyseus_schema_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
 
     const fields = [_][*c]const u8{"x"};
-    // smoothing 0 → raw projection (exp()-free); substep 10
+    // smooth_ms 0 → raw projection (exp()-free); substep 10
     try testing.expectEqual(@as(c_int, 0), c.colyseus_predict_attach_reckon(
         p, ball, &c.reckon_ball_vtable, @ptrCast(&fields), 1, ballStep, 0, 10, 0, null));
 
@@ -826,7 +1057,7 @@ test "sim_reconciler_bound" {
     var opts = std.mem.zeroes(c.colyseus_sim_reconciler_options_t);
     opts.parts = &parts;
     opts.part_count = 2;
-    opts.smoothing = 0;
+    opts.smooth_ms = 0;
     opts.step_ms = 50;
     const recon = c.colyseus_sim_reconciler_create(handle, null, simStep, &opts).?;
     defer c.colyseus_reconciler_free(recon);
@@ -913,7 +1144,7 @@ test "reconciler_pull_equals_callback" {
     defer c.recon_state_vtable.destroy.?(@ptrCast(truth));
 
     var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
-    ropts.smoothing = 15; // exercise the decay path, not just hard snaps
+    ropts.smooth_ms = 66.67; // exercise the decay path, not just hard snaps
     ropts.step_ms = 50;
     const auto = c.colyseus_reconciler_create(
         @ptrCast(truth), &c.recon_state_vtable, handle, null, accelStep, &ropts).?;
@@ -1035,7 +1266,7 @@ test "reconciler_pump_single_drain_cadence" {
     defer c.recon_state_vtable.destroy.?(@ptrCast(truth));
 
     var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
-    ropts.smoothing = 15;
+    ropts.smooth_ms = 66.67;
     ropts.step_ms = 50;
     const auto = c.colyseus_reconciler_create(
         @ptrCast(truth), &c.recon_state_vtable, handle, null, accelStep, &ropts).?;
@@ -1135,7 +1366,7 @@ test "sim_reconciler_pull_equals_callback" {
     var opts = std.mem.zeroes(c.colyseus_sim_reconciler_options_t);
     opts.parts = &parts;
     opts.part_count = 2;
-    opts.smoothing = 0;
+    opts.smooth_ms = 0;
     opts.step_ms = 50;
     const auto = c.colyseus_sim_reconciler_create(handle, null, simStep, &opts).?;
     defer c.colyseus_reconciler_free(auto);
@@ -1194,7 +1425,7 @@ test "predict_tick_paces_input" {
     defer c.colyseus_predict_free(p);
 
     var ropts = std.mem.zeroes(c.colyseus_reconciler_options_t);
-    ropts.smoothing = 0;
+    ropts.smooth_ms = 0;
     ropts.step_ms = 50;
     const truth = c.recon_state_create().?;
     truth.*.__base.__vtable = &c.recon_state_vtable;

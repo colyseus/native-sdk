@@ -63,7 +63,7 @@ typedef struct {
     int part_count;
 
     /* Same semantics as colyseus_reconciler_options_t. */
-    double smoothing;      /* negative = default; 0 = hard snap */
+    double smooth_ms;      /* error-decay τ (ms); negative = default; 0 = hard snap */
     double snap;
     double step_ms;
     double step_seconds;

@@ -63,7 +63,7 @@ func test_reckon_step_drives_the_scratch():
 	assert_true(await _join_and_wait(), "should join lab-bots (is pnpm dev --host 0.0.0.0 up?)")
 
 	var predict = Colyseus.Predict.of(room)
-	predict.attach_all_reckon("bots", ["x", "y"], _noop_step, { "smoothing": 0.0 })
+	predict.attach_all_reckon("bots", ["x", "y"], _noop_step, { "smooth_ms": 0.0 })
 
 	var input = room.input()   # inputs feed the clock (reckon horizon needs it)
 	assert_not_null(input, "lab-bots declares defineInput")

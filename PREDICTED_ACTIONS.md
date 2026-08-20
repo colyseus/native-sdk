@@ -799,7 +799,7 @@ typedef struct {
     colyseus_reconciler_step_fn step;
     const char* const*          fields;       /* numeric fields to reconcile + smooth */
     size_t                      field_count;
-    float                       smoothing;    /* correction-smoothing spring k        */
+    float                       smooth_ms;    /* correction-decay time constant (ms)  */
     void*                       userdata;
 } colyseus_reconciler_options_t;
 
@@ -925,7 +925,7 @@ move_input = colyseus_room_input(room, &in_opts);
 
 colyseus_reconciler_options_t r_opts = {
     .input = move_input, .step = step_player,
-    .fields = (const char*[]){ "x", "y" }, .field_count = 2, .smoothing = 20.0f,
+    .fields = (const char*[]){ "x", "y" }, .field_count = 2, .smooth_ms = 50.0f,
 };
 recon = colyseus_predict_reconciler(room, my_player, &r_opts);
 

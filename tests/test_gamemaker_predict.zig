@@ -52,7 +52,7 @@ extern fn colyseus_gm_predict_value_at(predict_id: f64, instance: f64, field: [*
 extern fn colyseus_gm_predict_reconciler(predict_id: f64, truth_instance: f64, input_h: f64, spec_json: [*c]const u8) f64;
 extern fn colyseus_gm_sim_begin(predict_id: f64) f64;
 extern fn colyseus_gm_sim_part(name: [*c]const u8, instance: f64) f64;
-extern fn colyseus_gm_sim_create(input_h: f64, smoothing: f64, snap: f64, step_ms: f64, sub_steps: f64) f64;
+extern fn colyseus_gm_sim_create(input_h: f64, smooth_ms: f64, snap: f64, step_ms: f64, sub_steps: f64) f64;
 extern fn colyseus_gm_sim_part_mirror(recon_id: f64, name: [*c]const u8) f64;
 extern fn colyseus_gm_recon_free(recon_id: f64) void;
 extern fn colyseus_gm_recon_pump_begin(recon_id: f64) f64;
@@ -181,7 +181,7 @@ test "gm_reconciler_core" {
     try testing.expect(pid > 0);
     defer colyseus_gm_predict_free(pid);
 
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smoothing\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(rid > 0);
 
     NOW = 0;
@@ -249,7 +249,7 @@ test "gm_reconciler_dynamic_truth" {
 
     const pid = colyseus_gm_predict_create_with(0, 0);
     defer colyseus_gm_predict_free(pid);
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smoothing\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(rid > 0);
 
     NOW = 0;
@@ -380,7 +380,7 @@ test "gm_predict_tick_paces" {
 
     const pid = colyseus_gm_predict_create_with(0, 0);
     defer colyseus_gm_predict_free(pid);
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smoothing\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(rid > 0);
 
     try testing.expectEqual(@as(f64, 0), colyseus_gm_predict_tick(pid, 0));
@@ -422,7 +422,7 @@ test "gm_passive_smoothing" {
     const ent: *c.colyseus_schema_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
 
     // modes as ints: 0 lerp, 1 extrapolate, 2 damped, 4 raw
-    const cfg = "{\"a\":0,\"b\":2,\"c\":{\"mode\":1,\"damping\":-1},\"d\":4,\"yaw\":{\"mode\":0,\"angle\":true}}";
+    const cfg = "{\"a\":0,\"b\":2,\"c\":{\"mode\":1,\"smooth_ms\":-1},\"d\":4,\"yaw\":{\"mode\":0,\"angle\":true}}";
     try testing.expectEqual(@as(f64, 0), colyseus_gm_predict_attach(pid, h(ent), cfg));
 
     NOW = 1000;
@@ -523,7 +523,7 @@ test "gm_memo_epoch" {
 
     const pid = colyseus_gm_predict_create_with(0, 0);
     defer colyseus_gm_predict_free(pid);
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"fields\":\"x\",\"smoothing\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"fields\":\"x\",\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(rid > 0);
     const mirror = colyseus_gm_recon_state(rid);
 
@@ -731,7 +731,7 @@ test "gm_value_nan_and_stale_handles" {
     truth.*.__base.__vtable = &c.recon_state_vtable;
     defer c.recon_state_vtable.destroy.?(@ptrCast(truth));
     const pid = colyseus_gm_predict_create_with(0, 0);
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smoothing\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(!std.math.isNan(colyseus_gm_recon_value(rid, "x")));
     colyseus_gm_recon_free(rid);
     try testing.expect(std.math.isNan(colyseus_gm_recon_value(rid, "x")));
@@ -754,7 +754,7 @@ test "gm_lifecycle_and_queue_isolation" {
     while (round < 20) : (round += 1) {
         const pid = colyseus_gm_predict_create_with(0, 0);
         try testing.expect(pid > 0);
-        const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smoothing\":0,\"step_ms\":50}");
+        const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
         try testing.expect(rid > 0);
         const cid = colyseus_gm_events_create(0, 0, 0, 0);
         try testing.expect(cid > 0);

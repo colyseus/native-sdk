@@ -101,7 +101,7 @@ struct colyseus_reconciler {
     int reconcile_seq;
     colyseus_drift_t drift;
 
-    double smoothing;
+    double smooth_ms;
     double snap_threshold;
     double step_ms;
 
@@ -280,7 +280,7 @@ static void consume_render_step(colyseus_reconciler_t* r) {
 }
 
 static void decay_error(colyseus_reconciler_t* r, double dt) {
-    double k = r->smoothing <= 0 ? 1 : 1 - exp(-r->smoothing * dt / 1000);
+    double k = r->smooth_ms <= 0 ? 1 : 1 - exp(-dt / r->smooth_ms);
     for (int i = 0; i < r->field_count; i++) {
         if (r->fields[i].numeric) r->error[i] -= r->error[i] * k;
     }
@@ -367,7 +367,7 @@ static void reconcile_adopt(colyseus_reconciler_t* r) {
 /* Post-replay half: re-base the error so the rendered pose is unchanged at
  * this instant, then snap/drift/memo bookkeeping. */
 static void reconcile_settle(colyseus_reconciler_t* r, int acked) {
-    bool hard = r->smoothing <= 0;
+    bool hard = r->smooth_ms <= 0;
     double mag = 0;
     for (int i = 0; i < r->field_count; i++) {
         if (!r->fields[i].numeric) { r->last_correction[i] = 0; continue; }
@@ -456,12 +456,13 @@ colyseus_reconciler_t* colyseus_reconciler_create(
     int sub_steps = options && options->sub_steps > 1 ? options->sub_steps : colyseus_input_handle_sub_steps(input);
     if (sub_steps < 1) sub_steps = 1;
 
-    /* smoothing default: the server's correction cadence, else 20 */
-    if (options && options->smoothing >= 0) {
-        r->smoothing = options->smoothing;
+    /* smooth_ms default: the server's correction cadence (one patch interval,
+     * so a correction fades before the next one lands), else 50 */
+    if (options && options->smooth_ms >= 0) {
+        r->smooth_ms = options->smooth_ms;
     } else {
         int patch_rate = colyseus_input_handle_patch_rate(input);
-        r->smoothing = patch_rate > 0 ? 1000.0 / patch_rate : 20;
+        r->smooth_ms = patch_rate > 0 ? (double)patch_rate : 50;
     }
     r->snap_threshold = options && options->snap > 0 ? options->snap : 0;
 
@@ -910,11 +911,11 @@ colyseus_reconciler_t* colyseus_sim_reconciler_create(
     int sub_steps = options->sub_steps > 1 ? options->sub_steps : colyseus_input_handle_sub_steps(input);
     if (sub_steps < 1) sub_steps = 1;
 
-    if (options->smoothing >= 0) {
-        r->smoothing = options->smoothing;
+    if (options->smooth_ms >= 0) {
+        r->smooth_ms = options->smooth_ms;
     } else {
         int patch_rate = colyseus_input_handle_patch_rate(input);
-        r->smoothing = patch_rate > 0 ? 1000.0 / patch_rate : 20;
+        r->smooth_ms = patch_rate > 0 ? (double)patch_rate : 50;
     }
     r->snap_threshold = options->snap > 0 ? options->snap : 0;
 

@@ -112,7 +112,7 @@ func test_reconciler_predicts_and_absorbs_an_impulse():
 	var recon = predict.reconciler(me, {
 		"input": input,
 		"fields": ["x", "y", "vx", "vy"],
-		"smoothing": 15.0,
+		"smooth_ms": 66.67,
 		"step": _step,
 	})
 	assert_not_null(recon, "predict.reconciler should build over the decoded player")
@@ -194,7 +194,7 @@ func test_tick_without_a_timestamp_drives_from_the_room_clock():
 	var recon = predict.reconciler(me, {
 		"input": input,
 		"fields": ["x", "y", "vx", "vy"],
-		"smoothing": 15.0,
+		"smooth_ms": 66.67,
 		"step": _step,
 	})
 	assert_not_null(recon, "predict.reconciler should build over the decoded player")

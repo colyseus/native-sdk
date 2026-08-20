@@ -204,7 +204,7 @@ function ColyseusReconciler(_predict, _spec) constructor {
             }
             id = __colyseus_gm_sim_create(
                 __colyseus_predict_opt(_s, "input", 0),
-                __colyseus_predict_opt(_s, "smoothing", -1),
+                __colyseus_predict_opt(_s, "smooth_ms", -1),
                 __colyseus_predict_opt(_s, "snap", 0),
                 __colyseus_predict_opt(_s, "step_ms", 0),
                 __colyseus_predict_opt(_s, "sub_steps", 0));
@@ -219,7 +219,7 @@ function ColyseusReconciler(_predict, _spec) constructor {
                 __colyseus_predict_opt(_s, "input", 0),
                 json_stringify({
                     fields: __colyseus_predict_csv(__colyseus_predict_opt(_s, "fields", "")),
-                    smoothing: __colyseus_predict_opt(_s, "smoothing", -1),
+                    smooth_ms: __colyseus_predict_opt(_s, "smooth_ms", -1),
                     snap: __colyseus_predict_opt(_s, "snap", 0),
                     step_ms: __colyseus_predict_opt(_s, "step_ms", 0),
                     sub_steps: __colyseus_predict_opt(_s, "sub_steps", 0),
@@ -412,21 +412,21 @@ function ColyseusPredict(_room_ref) constructor {
     };
     /// Dead-reckon an instance through a built-in C step.
     static attach_reckon = function(_instance, _fields, _step_id, _params = "",
-                                    _smoothing = 0, _substep_ms = 0, _snap = 0) {
+                                    _smooth_ms = 0, _substep_ms = 0, _snap = 0) {
         return __colyseus_gm_predict_attach_reckon(id,
             __colyseus_predict_handle(_instance), json_stringify({
                 fields: __colyseus_predict_csv(_fields),
                 step_id: _step_id, step_params: _params,
-                smoothing: _smoothing, substep_ms: _substep_ms, snap: _snap,
+                smooth_ms: _smooth_ms, substep_ms: _substep_ms, snap: _snap,
             }));
     };
     static attach_all_reckon = function(_collection, _fields, _step_id, _params = "",
-                                        _smoothing = 0, _substep_ms = 0, _snap = 0) {
+                                        _smooth_ms = 0, _substep_ms = 0, _snap = 0) {
         return __colyseus_gm_predict_attach_all_reckon(id, 0, json_stringify({
             collection: _collection,
             fields: __colyseus_predict_csv(_fields),
             step_id: _step_id, step_params: _params,
-            smoothing: _smoothing, substep_ms: _substep_ms, snap: _snap,
+            smooth_ms: _smooth_ms, substep_ms: _substep_ms, snap: _snap,
         }));
     };
     static detach = function(_instance) {
@@ -442,7 +442,7 @@ function ColyseusPredict(_room_ref) constructor {
         return __colyseus_gm_predict_value_at(id, __colyseus_predict_handle(_instance), _field, _time);
     };
 
-    /// Flat rollback: { truth-instance via arg, fields, step, smoothing, snap }.
+    /// Flat rollback: { truth-instance via arg, fields, step, smooth_ms, snap }.
     static reconciler = function(_truth, _opts) {
         _opts.truth = _truth;
         return new ColyseusReconciler(self, _opts);

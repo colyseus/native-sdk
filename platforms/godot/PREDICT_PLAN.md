@@ -71,7 +71,7 @@ predict.attach(bot, { "x": ..., "yaw": { "mode": ..., "angle": true } })
 # reckon arm — the config carries a step Callable instead of a mode
 predict.attach_all_reckon("bots", ["x", "y"],
     func(bot, dt, elapsed_ms): ...,        # SHARED with the server
-    { "smoothing": 25, "snap": 8 })
+    { "smooth_ms": 40, "snap": 8 })
 
 var steps = predict.tick(now)              # returns fixed steps due
 var x = predict.value(player, "x")         # THE read idiom
@@ -81,7 +81,7 @@ var bx = predict.value_at(bot, "x", ctx.reckon_time)
 var recon = predict.reconciler(me, {
     "input": input,
     "fields": ["x", "y", "vx", "vy"],
-    "smoothing": 15,
+    "smooth_ms": 66.67,
     "step": func(ctx, s, cmd):             # s = mirror wrapper, C storage
         # transliterated shared sim — same op order as the server
         s.x += s.vx * ctx.dt,

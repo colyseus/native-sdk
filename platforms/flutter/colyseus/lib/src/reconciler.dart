@@ -230,7 +230,7 @@ class Reconciler {
     required InputHandle input,
     required ReconcilerStep step,
     List<String>? fields,
-    double smoothing = -1,
+    double smoothMs = -1,
     double snap = 0,
     double stepMs = 0,
     int subSteps = 0,
@@ -287,7 +287,7 @@ class Reconciler {
 
     final handle = using((arena) {
       final options = arena<colyseus_reconciler_options_t>();
-      options.ref.smoothing = smoothing;
+      options.ref.smooth_ms = smoothMs;
       options.ref.snap = snap;
       options.ref.step_ms = stepMs;
       options.ref.sub_steps = subSteps;

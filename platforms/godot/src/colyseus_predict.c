@@ -87,7 +87,7 @@ static colyseus_predict_field_options_t pv_field_options(
     colyseus_predict_field_options_t opts = {0};
     opts.mode = (colyseus_predict_mode_t)(int64_t)pv_to_double(p_args[first]);
     opts.delay = pv_to_double(p_args[first + 1]);
-    opts.damping = pv_to_double(p_args[first + 2]);
+    opts.smooth_ms = pv_to_double(p_args[first + 2]);
     opts.max_extrapolate = pv_to_double(p_args[first + 3]);
     opts.snap = pv_to_double(p_args[first + 4]);
     opts.angle = pv_to_bool(p_args[first + 5]);

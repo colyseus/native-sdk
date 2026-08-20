@@ -83,10 +83,11 @@ typedef void (*colyseus_reconciler_step_fn)(
     const colyseus_schema_t* command, void* userdata);
 
 typedef struct {
-    /* Error-decay rate (spring 1/s; 0 = hard snap). Default: the server's
-     * correction cadence (1000/patchRate) when advertised, else 20. Pass a
-     * NEGATIVE value to take the default; 0 means hard snap. */
-    double smoothing;
+    /* Error-decay time constant in ms (the reconcile delta eases out ~63%
+     * per smooth_ms; 0 = hard snap). Default: the server's correction cadence
+     * (one patch interval) when advertised, else 50. Pass a NEGATIVE value to
+     * take the default; 0 means hard snap. */
+    double smooth_ms;
     /* Teleport threshold (world units): a reconcile whose max |correction|
      * exceeds it POPS instead of decaying. 0/negative = off. */
     double snap;

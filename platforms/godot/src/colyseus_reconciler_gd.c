@@ -282,7 +282,7 @@ static void recon_step_trampoline(const colyseus_step_ctx_t* ctx, colyseus_schem
     destructors.variant_destroy(&ret);
 }
 
-/* _ColyseusPredict.reconciler(target, input_handle, fields, smoothing, snap, step) */
+/* _ColyseusPredict.reconciler(target, input_handle, fields, smooth_ms, snap, step) */
 void gdext_colyseus_predict_reconciler_method(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
     (void)p_method_userdata;
     if (r_return) gdext_variant_new_nil((Variant*)r_return);
@@ -325,7 +325,7 @@ void gdext_colyseus_predict_reconciler_method(void* p_method_userdata, GDExtensi
     }
     destructors.array_destructor(&fields_arr);
 
-    double smoothing = rc_to_double(p_args[3]);
+    double smooth_ms = rc_to_double(p_args[3]);
     double snap = rc_to_double(p_args[4]);
 
     /* the reconciler object + its three view objects */
@@ -351,7 +351,7 @@ void gdext_colyseus_predict_reconciler_method(void* p_method_userdata, GDExtensi
 
     {
         colyseus_reconciler_options_t opts = {0};
-        opts.smoothing = smoothing;
+        opts.smooth_ms = smooth_ms;
         opts.snap = snap;
         opts.fields = (const char* const*)fields;
         opts.field_count = (int)field_count;
@@ -391,7 +391,7 @@ static void sim_step_trampoline(const colyseus_step_ctx_t* ctx, colyseus_sim_wor
     destructors.variant_destroy(&ret);
 }
 
-/* _ColyseusPredict.sim(world_dict, input_handle, smoothing, snap, step) */
+/* _ColyseusPredict.sim(world_dict, input_handle, smooth_ms, snap, step) */
 void gdext_colyseus_predict_sim_method(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
     (void)p_method_userdata;
     if (r_return) gdext_variant_new_nil((Variant*)r_return);
@@ -485,7 +485,7 @@ void gdext_colyseus_predict_sim_method(void* p_method_userdata, GDExtensionClass
         colyseus_sim_reconciler_options_t opts = {0};
         opts.parts = parts;
         opts.part_count = (int)part_count;
-        opts.smoothing = rc_to_double(p_args[2]);
+        opts.smooth_ms = rc_to_double(p_args[2]);
         opts.snap = rc_to_double(p_args[3]);
         opts.userdata = w;
         w->native = colyseus_predict_sim_reconciler(pw->native, input_w->native,
@@ -1020,7 +1020,7 @@ void gdext_colyseus_predict_spawns_method(void* p_method_userdata, GDExtensionCl
                 reckon.fields = (const char* const*)rfields;
                 reckon.field_count = rcount;
                 reckon.step = reckon_step_trampoline;
-                reckon.smoothing = 0;         /* raw projection — deterministic
+                reckon.smooth_ms = 0;         /* raw projection — deterministic
                                                * constant-step motion rebases
                                                * exactly; smoothing only lags */
                 reckon.substep_ms = 0;

@@ -43,8 +43,8 @@ void gdext_colyseus_room_predict_method(void* p_method_userdata, GDExtensionClas
 void gdext_colyseus_predict_tick(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 
 /* Vararg (call convention) methods:
- *   attach_field(target, field, mode, delay, damping, max_extrapolate, snap, angle)
- *   attach_all_field(collection, field, mode, delay, damping, max_extrapolate, snap, angle, except_key)
+ *   attach_field(target, field, mode, delay, smooth_ms, max_extrapolate, snap, angle)
+ *   attach_all_field(collection, field, mode, delay, smooth_ms, max_extrapolate, snap, angle, except_key)
  *   detach(target)
  *   value(target, field) -> float
  *   value_at(target, field, time_ms) -> float

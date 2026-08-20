@@ -82,10 +82,10 @@ GDExtensionObjectPtr gdext_colyseus_sim_world_constructor(void* p_class_userdata
 void gdext_colyseus_sim_world_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance);
 GDExtensionBool gdext_colyseus_sim_world_get(GDExtensionClassInstancePtr p_instance, GDExtensionConstStringNamePtr p_name, GDExtensionVariantPtr r_ret);
 
-/* _ColyseusPredict.reconciler(target, input_handle, fields, smoothing, snap, step) — vararg */
+/* _ColyseusPredict.reconciler(target, input_handle, fields, smooth_ms, snap, step) — vararg */
 void gdext_colyseus_predict_reconciler_method(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 
-/* _ColyseusPredict.sim(world_dict, input_handle, smoothing, snap, step) — vararg.
+/* _ColyseusPredict.sim(world_dict, input_handle, smooth_ms, snap, step) — vararg.
  * World values are decoded instances (bound parts); mirrors are read back as
  * `w.<name>.<field>` in the step and via predict.value(instance, field). */
 void gdext_colyseus_predict_sim_method(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
@@ -156,8 +156,8 @@ void gdext_colyseus_spawns_size(void* p_method_userdata, GDExtensionClassInstanc
 void gdext_colyseus_spawns_clear(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);  /* ptrcall */
 
 /* Dead reckoning with a GDScript step — Callable(state_view, dt, elapsed_ms):
- *   _ColyseusPredict.attach_reckon(target, fields, step, smoothing, substep_ms, snap)
- *   _ColyseusPredict.attach_all_reckon(collection, fields, step, smoothing, substep_ms, snap)
+ *   _ColyseusPredict.attach_reckon(target, fields, step, smooth_ms, substep_ms, snap)
+ *   _ColyseusPredict.attach_all_reckon(collection, fields, step, smooth_ms, substep_ms, snap)
  */
 void gdext_colyseus_predict_attach_reckon_method(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 void gdext_colyseus_predict_attach_all_reckon_method(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);

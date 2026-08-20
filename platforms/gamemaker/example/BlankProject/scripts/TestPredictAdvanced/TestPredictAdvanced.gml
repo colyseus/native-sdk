@@ -41,7 +41,7 @@ suite(function() {
             // world step: my paddle → puck flight → contact (server order)
             var _sim = _predict.sim({
                 world: { me: _me, puck: _puck },
-                smoothing: 0,
+                smooth_ms: 0,
                 step: function(_ctx, _world, _cmd) {
                     predict_test_step_movement(_ctx, _world.me, _cmd);
                     predict_test_step_puck(_world.puck, _ctx.dt);
@@ -134,7 +134,7 @@ suite(function() {
             // the scoring gate inside the reconciled step (src/shared/goal.ts)
             var _recon = _predict.reconciler(_me, {
                 fields: ["x", "y", "vx", "vy", "scoreTicks"],
-                smoothing: 15,
+                smooth_ms: 66.67,
                 step: method({ goals: _goals }, function(_ctx, _s, _cmd) {
                     predict_test_step_movement(_ctx, _s, _cmd);
                     var _ticks = _s.get("scoreTicks");

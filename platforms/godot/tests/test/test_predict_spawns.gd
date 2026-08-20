@@ -114,7 +114,7 @@ func test_optimistic_spawn_hands_off_to_the_server():
 	var recon = predict.reconciler(me, {
 		"input": input,
 		"fields": ["x", "y", "vx", "vy"],
-		"smoothing": 15.0,
+		"smooth_ms": 66.67,
 		"step": _move_step,
 	})
 	assert_not_null(recon, "reconciler should build")

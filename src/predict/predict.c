@@ -33,8 +33,9 @@ typedef struct predict_slot {
     colyseus_predict_field_options_t opts;
 
     double v1;                      /* latest sample (raw mirror) */
-    double aux_v;                   /* damped / extrapolate smoothing state */
+    double aux_v;                   /* damped / extrapolate / lerp-spring output state */
     double aux_t;
+    double lerp_prev;               /* previous frame's RAW lerp output — the spring's FOH slope source */
     bool aux_seeded;
 
     /* snapshot ring: (t, v) pairs, overwrite-oldest */
@@ -65,7 +66,7 @@ typedef struct predict_sim {
     colyseus_schema_t* scratch;     /* owned; refilled per advance */
     colyseus_predict_step_fn step;
     void* userdata;
-    double smoothing;
+    double smooth_ms;
     double substep_ms;
     double snap;
 
@@ -126,7 +127,7 @@ typedef struct spawns_bind_ctx {
     char** fields;
     int field_count;
     colyseus_predict_step_fn step;
-    double smoothing, substep_ms;
+    double smooth_ms, substep_ms;
     void* userdata;
 } spawns_bind_ctx_t;
 
@@ -140,7 +141,7 @@ typedef struct attach_all_ctx {
     /* reckon variant */
     const colyseus_schema_vtable_t* entry_vtable;
     colyseus_predict_step_fn step;
-    double smoothing, substep_ms, snap;
+    double smooth_ms, substep_ms, snap;
     void* userdata;
     /* The room owns the callbacks layer, so these MUST be removed when the
      * Predict dies or a later patch calls back into freed state. */
@@ -227,6 +228,7 @@ static void on_sample(void* current_value, void* previous_value, void* userdata)
         head = 0;
         count = 0;
         slot->aux_v = current;
+        slot->lerp_prev = current;   /* lerp's output spring pops too */
     }
 
     double last_t1 = count == 0
@@ -243,6 +245,7 @@ static void on_sample(void* current_value, void* previous_value, void* userdata)
         count = 0;
         last_t1 = -INFINITY;
         slot->aux_v = current;
+        slot->lerp_prev = current;
     }
 
     /* tick-snap arrival times onto a regular grid */
@@ -311,17 +314,18 @@ static double compute_raw(const predict_slot_t* slot) {
 
 static double compute_damped(colyseus_predict_t* p, predict_slot_t* slot) {
     double now = p->render_time;
-    double damping = slot->opts.damping;
+    double tau = slot->opts.smooth_ms;
     double dt_frame = now - slot->aux_t;
     slot->aux_t = now;
     if (dt_frame > 0) {
-        double k = 1 - exp(-damping * dt_frame / 1000);
+        double k = tau > 0 ? 1 - exp(-dt_frame / tau) : 1;   /* 0 = snap */
         slot->aux_v += (slot->v1 - slot->aux_v) * k;
     }
     return slot->aux_v;
 }
 
-static double compute_lerp(colyseus_predict_t* p, const predict_slot_t* slot) {
+/* The undamped interpolant — compute_lerp minus the output spring. */
+static double compute_lerp_raw(colyseus_predict_t* p, const predict_slot_t* slot) {
     int count = slot->ring_count;
     if (count == 0) return slot->v1;
     int head = slot->ring_head;
@@ -353,6 +357,36 @@ static double compute_lerp(colyseus_predict_t* p, const predict_slot_t* slot) {
     if (span <= 0) return slot->ring_v[b];
     double u = (target - t_a) / span;
     return slot->ring_v[phys] + (slot->ring_v[b] - slot->ring_v[phys]) * u;
+}
+
+static double compute_lerp(colyseus_predict_t* p, predict_slot_t* slot) {
+    double raw = compute_lerp_raw(p, slot);
+    double tau = slot->opts.smooth_ms;
+    double now = p->render_time;
+    if (tau <= 0) {
+        /* Spring off (the default) — pin the state to the raw output so a
+         * later spring enable starts from here instead of gliding in from
+         * wherever the spring last rested. */
+        slot->aux_v = raw;
+        slot->lerp_prev = raw;
+        slot->aux_t = now;
+        return raw;
+    }
+    double dt = now - slot->aux_t;
+    if (dt <= 0) return slot->aux_v;   /* same-frame re-read */
+    /* Exact first-order-hold step for a linearly-varying target (τ = smooth_ms):
+     *   y(dt) = u1 − s·τ + (y0 − u0 + s·τ)·e^(−dt/τ),  s = (u1 − u0)/dt
+     * Frame-rate independent: a steady mover renders with a constant s·τ
+     * trail at any fps (a per-frame EMA's trail varies with frame rate). */
+    double u0 = slot->lerp_prev;
+    double y0 = slot->aux_v;
+    double kdt = dt / tau;
+    double trail = (raw - u0) / kdt;
+    double y = raw - trail + (y0 - u0 + trail) * exp(-kdt);
+    slot->aux_v = y;
+    slot->lerp_prev = raw;
+    slot->aux_t = now;
+    return y;
 }
 
 static double compute_extrapolate(colyseus_predict_t* p, predict_slot_t* slot) {
@@ -398,14 +432,14 @@ static double compute_extrapolate(colyseus_predict_t* p, predict_slot_t* slot) {
 
     double last_t = slot->aux_t;
     slot->aux_t = now;
-    double damping = slot->opts.damping;
-    if (damping <= 0) {
+    double tau = slot->opts.smooth_ms;
+    if (tau <= 0) {
         slot->aux_v = raw;
         return raw;
     }
     double dt_frame = now - last_t;
     if (dt_frame > 0) {
-        double k = 1 - exp(-damping * dt_frame / 1000);
+        double k = 1 - exp(-dt_frame / tau);
         slot->aux_v += (raw - slot->aux_v) * k;
     }
     return slot->aux_v;
@@ -444,7 +478,7 @@ static void sim_apply(colyseus_predict_t* p, predict_sim_t* sim) {
     forward += sim->lead_ms;
     sim_advance(sim, forward, sim->out, present);
 
-    if (sim->first_apply || sim->smoothing <= 0) {
+    if (sim->first_apply || sim->smooth_ms <= 0) {
         for (int k = 0; k < n; k++) { sim->offset[k] = 0; sim->smoothed[k] = sim->out[k]; }
     } else if (!isnan(base_t)) {
         double dt_ms = now - sim->last_apply_time;
@@ -460,14 +494,14 @@ static void sim_apply(colyseus_predict_t* p, predict_sim_t* sim) {
         } else if (dt_ms > 0) {
             for (int k = 0; k < n; k++) sim->frame_vel[k] = (sim->out[k] - sim->out_prev[k]) / dt_ms;
         }
-        double decay = exp(-sim->smoothing * dt_ms / 1000);
+        double decay = exp(-dt_ms / sim->smooth_ms);
         for (int k = 0; k < n; k++) { sim->offset[k] *= decay; sim->smoothed[k] = sim->out[k] + sim->offset[k]; }
     } else {
         /* no clock → no rebase signal: plain EMA chase */
         double dt_ms = now - sim->last_apply_time;
         if (dt_ms < 0) dt_ms = 0;
         if (dt_ms > 100) dt_ms = 100;
-        double k2 = 1 - exp(-sim->smoothing * dt_ms / 1000);
+        double k2 = 1 - exp(-dt_ms / sim->smooth_ms);
         for (int k = 0; k < n; k++) sim->smoothed[k] += (sim->out[k] - sim->smoothed[k]) * k2;
     }
     for (int k = 0; k < n; k++) sim->out_prev[k] = sim->out[k];
@@ -513,7 +547,7 @@ static void attach_all_on_add(void* value, void* key, void* userdata) {
         colyseus_predict_attach_reckon(a->p, instance,
             a->entry_vtable ? a->entry_vtable : instance->__vtable,
             (const char* const*)a->fields, a->field_count, a->step,
-            a->smoothing, a->substep_ms, a->snap, a->userdata);
+            a->smooth_ms, a->substep_ms, a->snap, a->userdata);
         return;
     }
     if (a->fields) {
@@ -600,7 +634,7 @@ int colyseus_predict_attach_all_reckon(
     const colyseus_schema_vtable_t* entry_vtable,
     const char* const* fields, int field_count,
     colyseus_predict_step_fn step,
-    double smoothing, double substep_ms, double snap,
+    double smooth_ms, double substep_ms, double snap,
     void* userdata) {
     /* entry_vtable may be NULL — resolved per entry at on_add (dynamic vtables). */
     if (!p || !state || !collection || !step || field_count <= 0) return -1;
@@ -609,7 +643,7 @@ int colyseus_predict_attach_all_reckon(
     a->p = p;
     a->entry_vtable = entry_vtable;
     a->step = step;
-    a->smoothing = smoothing;
+    a->smooth_ms = smooth_ms;
     a->substep_ms = substep_ms;
     a->snap = snap;
     a->userdata = userdata;
@@ -717,9 +751,12 @@ int colyseus_predict_track(
         p->lerp_delay = slot->opts.delay;
         predict_bind_render_delay_fwd(p);
     }
-    slot->opts.damping = options
-        ? (options->damping < 0 ? 0 : (options->damping > 0 ? options->damping : 15))
-        : 15;
+    /* Per-mode default resolved here (mode is known): 0 on lerp — the output
+     * spring stays off, exact interpolation — 50 elsewhere. */
+    double smooth_default = slot->opts.mode == COLYSEUS_PREDICT_LERP ? 0 : 50;
+    slot->opts.smooth_ms = options
+        ? (options->smooth_ms < 0 ? 0 : (options->smooth_ms > 0 ? options->smooth_ms : smooth_default))
+        : smooth_default;
     slot->opts.max_extrapolate = options && options->max_extrapolate > 0 ? options->max_extrapolate : 200;
     slot->opts.tick_interval = options && options->tick_interval > 0 ? options->tick_interval : 0;
     slot->opts.snap = options && options->snap > 0 ? options->snap : 0;
@@ -728,6 +765,7 @@ int colyseus_predict_track(
     double initial = predict_fread(instance, &slot->fref);
     slot->v1 = initial;
     slot->aux_v = initial;
+    slot->lerp_prev = initial;
     slot->aux_t = colyseus_room_clock_now(NULL);
 
     int ref_id = instance->__refId;
@@ -768,7 +806,7 @@ int colyseus_predict_attach_reckon(
     const colyseus_schema_vtable_t* vtable,
     const char* const* fields, int field_count,
     colyseus_predict_step_fn step,
-    double smoothing, double substep_ms, double snap,
+    double smooth_ms, double substep_ms, double snap,
     void* userdata) {
     if (!p || !instance || !vtable || !fields || field_count <= 0 || !step) return -1;
 
@@ -778,7 +816,7 @@ int colyseus_predict_attach_reckon(
     sim->vtable = vtable;
     sim->step = step;
     sim->userdata = userdata;
-    sim->smoothing = smoothing > 0 ? smoothing : 0;
+    sim->smooth_ms = smooth_ms > 0 ? smooth_ms : 0;
     sim->substep_ms = substep_ms > 0 ? substep_ms : 16;
     sim->snap = snap > 0 ? snap : 0;
     sim->last_base_t = NAN;
@@ -983,7 +1021,7 @@ static void predict_spawns_on_add(void* value, void* key, void* userdata) {
     if (colyseus_predict_attach_reckon(b->p, server,
             b->entry_vtable ? b->entry_vtable : server->__vtable,
             (const char* const*)b->fields, b->field_count, b->step,
-            b->smoothing, b->substep_ms, 0, b->userdata) != 0) return;
+            b->smooth_ms, b->substep_ms, 0, b->userdata) != 0) return;
     predict_sim_set_lead(b->p, server, lead);
 }
 
@@ -1009,7 +1047,7 @@ void colyseus_predict_bind_spawns(colyseus_predict_t* p, colyseus_spawns_t* spaw
         b->reckon = true;
         b->entry_vtable = reckon->entry_vtable;
         b->step = reckon->step;
-        b->smoothing = reckon->smoothing;
+        b->smooth_ms = reckon->smooth_ms;
         b->substep_ms = reckon->substep_ms;
         b->userdata = reckon->userdata;
         b->field_count = reckon->field_count;

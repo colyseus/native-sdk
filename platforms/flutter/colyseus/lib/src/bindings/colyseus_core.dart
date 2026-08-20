@@ -2154,7 +2154,7 @@ class ColyseusCore {
     ffi.Pointer<ffi.Pointer<ffi.Char>> fields,
     int field_count,
     colyseus_predict_step_fn step,
-    double smoothing,
+    double smooth_ms,
     double substep_ms,
     double snap,
     ffi.Pointer<ffi.Void> userdata,
@@ -2166,7 +2166,7 @@ class ColyseusCore {
       fields,
       field_count,
       step,
-      smoothing,
+      smooth_ms,
       substep_ms,
       snap,
       userdata,
@@ -2323,7 +2323,7 @@ class ColyseusCore {
     ffi.Pointer<ffi.Pointer<ffi.Char>> fields,
     int field_count,
     colyseus_predict_step_fn step,
-    double smoothing,
+    double smooth_ms,
     double substep_ms,
     double snap,
     ffi.Pointer<ffi.Void> userdata,
@@ -2336,7 +2336,7 @@ class ColyseusCore {
       fields,
       field_count,
       step,
-      smoothing,
+      smooth_ms,
       substep_ms,
       snap,
       userdata,
@@ -4130,7 +4130,7 @@ typedef colyseus_step_ctx_t = colyseus_step_ctx;
 
 final class colyseus_reconciler_options_t extends ffi.Struct {
   @ffi.Double()
-  external double smoothing;
+  external double smooth_ms;
 
   @ffi.Double()
   external double snap;
@@ -4323,7 +4323,7 @@ final class colyseus_predict_field_options_t extends ffi.Struct {
   external double delay;
 
   @ffi.Double()
-  external double damping;
+  external double smooth_ms;
 
   @ffi.Double()
   external double max_extrapolate;
@@ -4378,7 +4378,7 @@ final class colyseus_spawns_reckon_t extends ffi.Struct {
   external colyseus_predict_step_fn step;
 
   @ffi.Double()
-  external double smoothing;
+  external double smooth_ms;
 
   @ffi.Double()
   external double substep_ms;
@@ -4409,7 +4409,7 @@ final class colyseus_sim_reconciler_options_t extends ffi.Struct {
   external int part_count;
 
   @ffi.Double()
-  external double smoothing;
+  external double smooth_ms;
 
   @ffi.Double()
   external double snap;
