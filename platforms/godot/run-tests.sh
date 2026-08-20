@@ -52,8 +52,16 @@ log "Build complete"
 # TLS fixtures for the wss:// test (test_wss.gd)
 #   - generate the self-signed CA/server cert (gitignored)
 #   - start a TLS proxy fronting example-server (2567) on wss://localhost:2568
-# The proxy is stopped on exit. example-server must already be running on 2567.
+# example-server is started here when it is not already running. Both it and
+# the proxy are stopped on exit.
 # ---------------------------------------------------------------------------
+source "$ROOT_DIR/../../tests/dev-servers.sh"
+servers_ensure example-server 2567 "$ROOT_DIR/../../example-server" \
+    npx tsx src/index.ts || warn "tests that need :2567 will fail"
+# the predict/input suites join the playground's lab rooms, not example-server
+servers_ensure playground 5173 "$ROOT_DIR/../../../demos/prediction-tools" \
+    npx vite --port 5173 --strictPort --host 0.0.0.0 || warn "predict suites will fail without :5173"
+
 TLS_DIR="$TEST_DIR/tls"
 if [[ ! -f "$TLS_DIR/server.pem" ]]; then
     log "Generating TLS test certificates..."
@@ -61,7 +69,10 @@ if [[ ! -f "$TLS_DIR/server.pem" ]]; then
 fi
 
 tls_proxy_pid=""
-cleanup() { [[ -n "$tls_proxy_pid" ]] && kill "$tls_proxy_pid" 2>/dev/null || true; }
+cleanup() {
+    [[ -n "$tls_proxy_pid" ]] && kill "$tls_proxy_pid" 2>/dev/null || true
+    servers_stop
+}
 trap cleanup EXIT
 
 if command -v node &>/dev/null; then

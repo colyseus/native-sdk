@@ -62,17 +62,17 @@ if [[ -z "$user_dir" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Server preflight — legacy suites use example-server (:2567); the predict
-# suites use the prediction-tools playground server (:5173).
+# Servers — legacy suites drive example-server (:2567), predict suites drive
+# the prediction-tools playground (:5173). Started here when they are not
+# already running, and stopped again on exit.
 # ---------------------------------------------------------------------------
-if ! curl -s -o /dev/null --max-time 2 http://127.0.0.1:2567; then
-  log "[WARN] example-server not reachable on :2567 — legacy suites will fail"
-  log "       (cd example-server && npx tsx src/index.ts)"
-fi
-if ! curl -s -o /dev/null --max-time 2 http://127.0.0.1:5173; then
-  log "[WARN] playground server not reachable on :5173 — predict suites will fail"
-  log "       (cd ../../../demos/prediction-tools && pnpm dev --host 0.0.0.0)"
-fi
+source "$ROOT_DIR/../../tests/dev-servers.sh"
+trap servers_stop EXIT
+
+servers_ensure example-server 2567 "$ROOT_DIR/../../example-server" \
+    npx tsx src/index.ts || warn "legacy suites will fail without :2567"
+servers_ensure playground 5173 "$ROOT_DIR/../../../demos/prediction-tools" \
+    npx vite --port 5173 --strictPort --host 0.0.0.0 || warn "predict suites will fail without :5173"
 
 # ---------------------------------------------------------------------------
 # Build the native library
@@ -102,7 +102,7 @@ mkdir -p "$CACHE_DIR" "$TEMP_DIR"
 log "Building and running tests..."
 echo ""
 
-OUTPUT_FILE=$(mktemp /tmp/colyseus_test_XXXXXX.log)
+OUTPUT_FILE=$(mktemp /tmp/colyseus_test.XXXXXX)
 # the predict suites drive live rooms for many seconds each
 TIMEOUT=300
 
