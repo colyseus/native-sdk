@@ -48,6 +48,7 @@ fn makeRoom() *c.colyseus_room_t {
     stub_transport.is_open = stubIsOpen;
 
     const room = c.colyseus_room_create("phase0", null).?;
+    c.colyseus_room_set_id(room, "r1");
     c.colyseus_room_set_state_type(room, &c.p0_state_vtable);
     room.*.transport = &stub_transport;
     return room;
@@ -78,7 +79,8 @@ test "join_room_full_handshake" {
     feed(room, &[_]u8{ 10, 6, 116, 111, 107, 49, 50, 51, 6, 115, 99, 104, 101, 109, 97, 49, 128, 1, 255, 1, 128, 0, 2, 255, 2, 128, 0, 130, 3, 255, 3, 128, 0, 4, 128, 1, 5, 255, 4, 128, 163, 109, 115, 103, 129, 166, 115, 116, 114, 105, 110, 103, 255, 5, 128, 161, 110, 129, 166, 110, 117, 109, 98, 101, 114, 1, 47, 128, 1, 255, 1, 128, 0, 2, 255, 2, 128, 0, 130, 3, 255, 3, 128, 0, 4, 128, 1, 5, 255, 4, 128, 161, 120, 129, 166, 110, 117, 109, 98, 101, 114, 255, 5, 128, 161, 121, 129, 166, 110, 117, 109, 98, 101, 114, 2, 4, 14, 20, 50, 2 });
 
     try testing.expect(room.*.has_joined);
-    try testing.expectEqualStrings("tok123", std.mem.span(room.*.reconnection_token));
+    // exposed as roomId:token — what client.reconnect() takes
+    try testing.expectEqualStrings("r1:tok123", std.mem.span(c.colyseus_room_get_reconnection_token(room)));
 
     // acknowledged with a single JOIN_ROOM byte
     try testing.expectEqual(@as(usize, 1), sent_count);
@@ -110,7 +112,7 @@ test "join_room_reconnect" {
     feed(room, &[_]u8{ 10, 4, 116, 111, 107, 66, 6, 115, 99, 104, 101, 109, 97, 0 });
     try testing.expect(room.*.has_joined);
     try testing.expectEqual(serializer_before, room.*.serializer);
-    try testing.expectEqualStrings("tokB", std.mem.span(room.*.reconnection_token));
+    try testing.expectEqualStrings("r1:tokB", std.mem.span(c.colyseus_room_get_reconnection_token(room)));
 }
 
 test "request_frame_encoding" {

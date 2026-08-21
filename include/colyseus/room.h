@@ -295,6 +295,7 @@ struct colyseus_input_handle* colyseus_room_input(
     const colyseus_schema_vtable_t* input_vtable,
     const void* options /* colyseus_input_options_t*, NULL = defaults */);
 
+/* "roomId:token", ready for colyseus_client_reconnect(). NULL until joined. */
 const char* colyseus_room_get_reconnection_token(const colyseus_room_t* room);
 
 /* Event handlers */

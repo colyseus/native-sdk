@@ -252,7 +252,14 @@ typedef struct {
     colyseus_client_room_callback_t on_success;
     colyseus_client_error_callback_t on_error;
     void* userdata;
+    char* reconnection_token; /* "reconnect" only; the server doesn't echo it */
 } colyseus_matchmake_context_t;
+
+static void matchmake_context_free(colyseus_matchmake_context_t* ctx) {
+    if (!ctx) return;
+    free(ctx->reconnection_token);
+    free(ctx);
+}
 
 /* Internal functions */
 static void client_create_matchmake_request(
@@ -260,6 +267,7 @@ static void client_create_matchmake_request(
     const char* method,
     const char* room_name,
     const char* options_json,
+    const char* reconnection_token,
     colyseus_client_room_callback_t on_success,
     colyseus_client_error_callback_t on_error,
     void* userdata
@@ -330,7 +338,7 @@ void colyseus_client_join_or_create(
     colyseus_client_error_callback_t on_error,
     void* userdata
 ) {
-    client_create_matchmake_request(client, "joinOrCreate", room_name, options_json, on_success, on_error, userdata);
+    client_create_matchmake_request(client, "joinOrCreate", room_name, options_json, NULL, on_success, on_error, userdata);
 }
 
 void colyseus_client_create_room(
@@ -341,7 +349,7 @@ void colyseus_client_create_room(
     colyseus_client_error_callback_t on_error,
     void* userdata
 ) {
-    client_create_matchmake_request(client, "create", room_name, options_json, on_success, on_error, userdata);
+    client_create_matchmake_request(client, "create", room_name, options_json, NULL, on_success, on_error, userdata);
 }
 
 void colyseus_client_join(
@@ -352,7 +360,7 @@ void colyseus_client_join(
     colyseus_client_error_callback_t on_error,
     void* userdata
 ) {
-    client_create_matchmake_request(client, "join", room_name, options_json, on_success, on_error, userdata);
+    client_create_matchmake_request(client, "join", room_name, options_json, NULL, on_success, on_error, userdata);
 }
 
 void colyseus_client_join_by_id(
@@ -363,7 +371,7 @@ void colyseus_client_join_by_id(
     colyseus_client_error_callback_t on_error,
     void* userdata
 ) {
-    client_create_matchmake_request(client, "joinById", room_id, options_json, on_success, on_error, userdata);
+    client_create_matchmake_request(client, "joinById", room_id, options_json, NULL, on_success, on_error, userdata);
 }
 
 void colyseus_client_reconnect(
@@ -395,7 +403,7 @@ void colyseus_client_reconnect(
     char* options_json = cJSON_PrintUnformatted(json);
     cJSON_Delete(json);
 
-    client_create_matchmake_request(client, "reconnect", room_id, options_json, on_success, on_error, userdata);
+    client_create_matchmake_request(client, "reconnect", room_id, options_json, token, on_success, on_error, userdata);
 
     free(options_json);
     free(token_copy);
@@ -407,6 +415,7 @@ static void client_create_matchmake_request(
     const char* method,
     const char* room_name,
     const char* options_json,
+    const char* reconnection_token,
     colyseus_client_room_callback_t on_success,
     colyseus_client_error_callback_t on_error,
     void* userdata
@@ -421,6 +430,7 @@ static void client_create_matchmake_request(
     ctx->on_success = on_success;
     ctx->on_error = on_error;
     ctx->userdata = userdata;
+    ctx->reconnection_token = reconnection_token ? strdup(reconnection_token) : NULL;
 
     /* Enqueue on the worker thread */
     http_task_t* task = malloc(sizeof(http_task_t));
@@ -446,7 +456,7 @@ static void client_on_matchmake_success(const colyseus_http_response_t* response
         if (ctx->on_error) {
             ctx->on_error(-1, "Failed to parse matchmaking response", ctx->userdata);
         }
-        free(ctx);
+        matchmake_context_free(ctx);
         return;
     }
 
@@ -461,6 +471,9 @@ static void client_on_matchmake_success(const colyseus_http_response_t* response
     cJSON* reconnection_token = cJSON_GetObjectItem(json, "reconnectionToken");
     if (reconnection_token && cJSON_IsString(reconnection_token)) {
         reservation.reconnection_token = strdup(reconnection_token->valuestring);
+    } else if (ctx->reconnection_token) {
+        reservation.reconnection_token = ctx->reconnection_token;
+        ctx->reconnection_token = NULL;
     }
 
     cJSON* dev_mode = cJSON_GetObjectItem(json, "devMode");
@@ -501,7 +514,7 @@ static void client_on_matchmake_success(const colyseus_http_response_t* response
 
     /* Cleanup */
     colyseus_seat_reservation_free(&reservation);
-    free(ctx);
+    matchmake_context_free(ctx);
 }
 
 static void client_on_matchmake_error(const colyseus_http_error_t* error, void* userdata) {
@@ -511,7 +524,7 @@ static void client_on_matchmake_error(const colyseus_http_error_t* error, void* 
         ctx->on_error(error->code, error->message, ctx->userdata);
     }
 
-    free(ctx);
+    matchmake_context_free(ctx);
 }
 
 static void client_consume_seat_reservation(

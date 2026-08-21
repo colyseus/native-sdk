@@ -299,3 +299,61 @@ test "reconnect: synchronous connect failure does not wedge the retry loop" {
 
     defer c.colyseus_room_free(room);
 }
+
+const ManualReconnect = struct {
+    var rejoined: bool = false;
+    var failed: bool = false;
+
+    fn reset() void {
+        rejoined = false;
+        failed = false;
+    }
+    fn onJoin(_: ?*anyopaque) callconv(.c) void { rejoined = true; }
+    fn onError(_: c_int, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void { failed = true; }
+    fn onSuccess(r: [*c]c.colyseus_room_t, _: ?*anyopaque) callconv(.c) void {
+        c.colyseus_room_on_join(r, onJoin, null);
+        c.colyseus_room_on_error(r, onError, null);
+    }
+    fn settled() bool { return rejoined or failed; }
+};
+
+// The token the room hands out must be accepted by client.reconnect() as-is,
+// the way `client.reconnect(room.reconnectionToken)` works in the TS SDK.
+test "reconnect: manual client.reconnect() with the room's token" {
+    ReconnectTest.reset();
+    ManualReconnect.reset();
+
+    const settings = c.colyseus_settings_create();
+    defer c.colyseus_settings_free(settings);
+    c.colyseus_settings_set_address(settings, TEST_SERVER);
+    c.colyseus_settings_set_port(settings, TEST_PORT);
+    const client = c.colyseus_client_create(settings);
+    defer c.colyseus_client_free(client);
+
+    c.colyseus_client_join_or_create(client, "test_room", "{}",
+        ReconnectTest.onMatchmakeSuccess, ReconnectTest.onMatchmakeFailure, null);
+    try testing.expect(pollUntil(joined, 10 * std.time.ns_per_s));
+    const room = ReconnectTest.room.?;
+    defer c.colyseus_room_free(room);
+
+    const token = c.colyseus_room_get_reconnection_token(room);
+    try testing.expect(token != null and token[0] != 0);
+
+    // take the automatic path out of the picture: the drop must end in on_leave
+    var opts: c.colyseus_reconnection_options_t = undefined;
+    c.colyseus_reconnection_options_init_defaults(&opts);
+    opts.enabled = false;
+    c.colyseus_room_set_reconnection_options(room, &opts);
+
+    const force = c.colyseus_message_map_create();
+    defer c.colyseus_message_free(force);
+    c.colyseus_room_send(room, "force_drop", force);
+    try testing.expect(pollUntil(struct {
+        fn f() bool { return ReconnectTest.on_leave_count >= 1; }
+    }.f, 5 * std.time.ns_per_s));
+
+    // server keeps the seat for 10s (allowReconnection)
+    c.colyseus_client_reconnect(client, token, ManualReconnect.onSuccess, ManualReconnect.onError, null);
+    try testing.expect(pollUntil(ManualReconnect.settled, 5 * std.time.ns_per_s));
+    try testing.expect(ManualReconnect.rejoined);
+}

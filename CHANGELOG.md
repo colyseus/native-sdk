@@ -51,6 +51,11 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   reported only `on_error`, so the worker waited for a close that never came.
   `is_reconnecting` stayed true and `on_leave` never fired. Such a retry now
   counts as a failed attempt. Reported by @zahmad12 in [#27](https://github.com/colyseus/native-sdk/issues/27).
+- `colyseus_client_reconnect()` never succeeded: the server rejected the
+  socket with "bad reconnection token" because the token wasn't forwarded to
+  the WebSocket URL. `colyseus_room_get_reconnection_token()` now returns the
+  `roomId:token` form `reconnect()` takes, matching the JS SDK, so the round
+  trip works as-is. [#26](https://github.com/colyseus/native-sdk/issues/26)
 - Auth's `stored_token` is a process-wide pointer that every response rewrites,
   with no lock. A host that runs HTTP on a worker thread (the Flutter binding
   does, because `colyseus_http_*` blocks) races it against a client being

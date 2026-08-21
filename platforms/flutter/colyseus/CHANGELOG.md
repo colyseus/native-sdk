@@ -114,6 +114,9 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
 ### Fixed
 
+- `client.reconnect(room.reconnectionToken)` now works: the token carries the
+  room id (`roomId:token`, as in the JS SDK) and is forwarded on the
+  WebSocket URL, which the server requires.
 - Automatic reconnection no longer stalls with `isReconnecting == true` and no
   `onLeave` when a retry fails at DNS time (typical after a mobile resume).
 - `MapSchema` and `ArraySchema` were handle-only shells. They now have
