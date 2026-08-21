@@ -115,7 +115,10 @@ class ColyseusClient {
     );
   }
 
-  /// Reconnect to a room using a reconnection token.
+  /// Re-takes a seat the server is holding via `allowReconnection()`.
+  ///
+  /// [reconnectionToken] is what [ColyseusRoom.reconnectionToken] returned on
+  /// the previous room; persist it to survive a process kill.
   Future<ColyseusRoom<T>> reconnect<T extends SchemaInstance>(
     String reconnectionToken, {
     T Function(int handle)? stateType,

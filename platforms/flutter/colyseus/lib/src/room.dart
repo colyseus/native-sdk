@@ -96,7 +96,8 @@ class ColyseusRoom<TState extends SchemaInstance> {
   /// The room name/type.
   String get name => _n.roomGetName(_roomRef).toDartString();
 
-  /// Token for reconnecting to this room.
+  /// Token for [ColyseusClient.reconnect], as `roomId:token`. Empty until
+  /// joined; refreshed on every (re)join.
   String get reconnectionToken =>
       _n.roomGetReconnectionToken(_roomRef).toDartString();
 

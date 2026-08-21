@@ -62,6 +62,34 @@ void main() {
     });
   });
 
+  test('reconnect with the room\'s token resumes the session', () async {
+    final client = ColyseusClient(exampleServer);
+    final room = await client.joinOrCreate('my_room');
+    final token = room.reconnectionToken;
+    final sessionId = room.sessionId;
+    expect(token, contains(':'), reason: 'reconnect() parses roomId:token');
+    // The server only holds a seat for a client whose JOIN ack it has seen;
+    // a drop before that is "not joined". The first state patch proves it.
+    await waitForOwnEntry(room);
+
+    // Take the automatic path out of the picture: the drop ends in onLeave.
+    room.setReconnectionOptions(enabled: false);
+    var left = false;
+    final sub = room.onLeave.listen((_) => left = true);
+    room.dropConnection();
+    expect(await waitFor(() => left), isTrue, reason: 'onLeave never fired');
+    await sub.cancel();
+    room.dispose();
+
+    // The server holds the seat for 10 s (allowReconnection).
+    final again = await client.reconnect(token);
+    expect(again.sessionId, sessionId);
+    expect(again.isConnected, isTrue);
+
+    await closeRoom(again);
+    client.dispose();
+  });
+
   test('leave closes the connection', () async {
     final client = ColyseusClient(exampleServer);
     final room = await client.joinOrCreate('my_room');
