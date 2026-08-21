@@ -502,7 +502,9 @@ static char* room_build_reconnect_url(const colyseus_room_t* room) {
 
     /* Append reconnectionToken + skipHandshake. */
     bool has_q = (strchr(out, '?') != NULL);
-    const char* token = room->reconnection_token ? room->reconnection_token : "";
+    const char* token = room->reconnection_token
+        ? strchr(room->reconnection_token, ':') + 1 /* drop the "roomId:" prefix */
+        : "";
     int written = snprintf(out + oi, out_cap - oi,
                            "%creconnectionToken=%s&skipHandshake=1",
                            has_q ? '&' : '?', token);
@@ -1160,11 +1162,14 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
                 offset++;
 
                 if (offset + token_len <= length) {
+                    /* "roomId:token" — the shape client.reconnect() takes */
+                    const char* room_id = room->room_id ? room->room_id : "";
+                    size_t cap = strlen(room_id) + 1 + token_len + 1;
                     free(room->reconnection_token);
-                    room->reconnection_token = malloc(token_len + 1);
+                    room->reconnection_token = malloc(cap);
                     if (room->reconnection_token) {
-                        memcpy(room->reconnection_token, data + offset, token_len);
-                        room->reconnection_token[token_len] = '\0';
+                        snprintf(room->reconnection_token, cap, "%s:%.*s",
+                                 room_id, (int)token_len, (const char*)(data + offset));
                     }
                     offset += token_len;
                 }

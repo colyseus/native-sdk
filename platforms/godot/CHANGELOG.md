@@ -9,6 +9,8 @@ All notable changes to the Colyseus Godot SDK will be documented in this file.
   no `left` signal after an Android background/resume: a retry that failed at
   DNS time never counted as an attempt. Reported by @zahmad12 in
   [#27](https://github.com/colyseus/native-sdk/issues/27).
+- `client.reconnect(token)` was rejected by the server with "bad reconnection
+  token" even with a valid token. [#26](https://github.com/colyseus/native-sdk/issues/26)
 
 ## 0.17.11
 

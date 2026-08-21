@@ -78,6 +78,8 @@ void colyseus_client_join_by_id(
     void* userdata
 );
 
+/* Re-take a seat the server is holding via allowReconnection(). The token is
+ * what colyseus_room_get_reconnection_token() returned on the previous room. */
 void colyseus_client_reconnect(
     colyseus_client_t* client,
     const char* reconnection_token,
