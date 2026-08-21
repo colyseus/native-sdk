@@ -26,6 +26,9 @@ All notable changes to the Colyseus Godot SDK will be documented in this file.
   - `select_by_latency(endpoints, timeout_ms = 0)` measures an array of endpoints in parallel and emits `_latency_selected(request_id, best_endpoint, best_latency_ms)` with the lowest-latency endpoint (`best_endpoint` is empty when every endpoint failed).
   - Each measurement always settles — on the pong, a connection error, a server-side close before the pong, or a timeout (default 1500 ms) — so one unreachable/blackholed endpoint can't stall the selection.
 - `test_latency.gd` covering the healthy, timeout, and selection paths against the test server.
+- `room.get_reconnection_token()`. Persist it and pass it to
+  `client.reconnect(token)` to re-take a seat after the process is killed.
+  Thanks @zahmad12! [#26](https://github.com/colyseus/native-sdk/issues/26)
 
 ### Fixed
 - Automatic reconnection could get stuck with `room.reconnecting == true` and

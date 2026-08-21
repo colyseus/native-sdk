@@ -138,3 +138,24 @@ func test_disabled_reconnection_routes_drop_to_left():
 	assert_true(left_ok, "Disabled reconnection should fire 'left' on drop")
 	assert_false(_dropped, "'dropped' must not fire when reconnection is disabled")
 	assert_false(_reconnected, "'reconnected' must not fire when reconnection is disabled")
+
+func test_manual_reconnect_with_room_token():
+	assert_true(await _join_and_wait(), "Should join test_room")
+	room.set_reconnection_options({"enabled": false})
+
+	var token := room.get_reconnection_token()
+	var session_id := room.get_session_id()
+	assert_true(token.contains(":"), "token should be roomId:token, got '%s'" % token)
+
+	room.send_message("force_drop")
+	assert_true(_poll_until(func(): return _left, 5000), "Should leave on drop")
+
+	# the server holds the seat for 10s (allowReconnection) — take it back
+	_joined = false
+	_left = false
+	room = client.reconnect(token)
+	assert_not_null(room, "reconnect() should return a room")
+	room.joined.connect(_on_joined)
+	room.left.connect(_on_left)
+	assert_true(_poll_until(func(): return _joined, 5000), "Should rejoin with the room's token")
+	assert_eq(room.get_session_id(), session_id, "Should resume the same session")
