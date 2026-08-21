@@ -4,6 +4,11 @@ All notable changes to the Colyseus Godot SDK will be documented in this file.
 
 ## 0.17.12
 
+### Added
+- `room.get_reconnection_token()`. Persist it and pass it to
+  `client.reconnect(token)` to re-take a seat after the process is killed.
+  Thanks @zahmad12! [#26](https://github.com/colyseus/native-sdk/issues/26)
+
 ### Fixed
 - Automatic reconnection could get stuck with `room.reconnecting == true` and
   no `left` signal after an Android background/resume: a retry that failed at

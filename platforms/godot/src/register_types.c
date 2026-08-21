@@ -1126,6 +1126,13 @@ static void register_colyseus_room(void) {
 
     bind_method_0_with_ret(
         "_ColyseusRoom",
+        "get_reconnection_token",
+        gdext_colyseus_room_get_reconnection_token,
+        GDEXTENSION_VARIANT_TYPE_STRING
+    );
+
+    bind_method_0_with_ret(
+        "_ColyseusRoom",
         "get_name",
         gdext_colyseus_room_get_name,
         GDEXTENSION_VARIANT_TYPE_STRING

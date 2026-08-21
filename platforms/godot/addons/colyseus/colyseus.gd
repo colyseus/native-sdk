@@ -562,7 +562,7 @@ class Client extends RefCounted:
 		var native_room = _native.join_by_id(room_id, JSON.stringify(options))
 		return Room.new(native_room) if native_room else null
 
-	## Reconnect to a room using a reconnection token
+	## Re-take a seat using the token from [method Room.get_reconnection_token]
 	func reconnect(reconnection_token: String):
 		var native_room = _native.reconnect(reconnection_token)
 		return Room.new(native_room) if native_room else null
@@ -607,6 +607,11 @@ class Room extends RefCounted:
 
 	func get_session_id() -> String:
 		return _native.get_session_id()
+
+	## Token for [method Client.reconnect]. Persist it to re-take this seat
+	## after the process is killed (the server must [code]allowReconnection()[/code]).
+	func get_reconnection_token() -> String:
+		return _native.get_reconnection_token()
 
 	func get_name() -> String:
 		return _native.get_name()

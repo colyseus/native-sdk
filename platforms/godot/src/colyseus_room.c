@@ -290,6 +290,17 @@ void gdext_colyseus_room_get_session_id(void* p_method_userdata, GDExtensionClas
     }
 }
 
+void gdext_colyseus_room_get_reconnection_token(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+    (void)p_method_userdata;
+    (void)p_args; // no arguments
+
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
+    if (wrapper && wrapper->native_room && r_ret) {
+        const char* token = colyseus_room_get_reconnection_token(wrapper->native_room);
+        string_from_c_str((String*)r_ret, token);
+    }
+}
+
 void gdext_colyseus_room_get_name(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata;
     (void)p_args; // no arguments
