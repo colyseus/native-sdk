@@ -78,6 +78,25 @@ zig build -Doptimize=ReleaseSmall -Dall=true
 HTML5/GX.Games needs nothing extra: the extension carries the same SDK
 compiled to WebAssembly. See [HTML5_SETUP.md](HTML5_SETUP.md).
 
+### Developing against a checkout
+
+A project that lives next to this repository can link the SDK instead of
+importing a package:
+
+```bash
+path/to/native-sdk/platforms/gamemaker/link-sdk.sh  <project-dir> <Project.yyp>
+path/to/native-sdk/platforms/gamemaker/link-sdk.sh --check <project-dir> <Project.yyp>
+```
+
+It symlinks `Colyseus.gml`, `ColyseusPredict.gml` and the built binaries
+into the project and generates `Colyseus_SDK.yy` from this checkout's copy,
+retargeted at the project. The `.gml` and the `.yy` are a matched pair (the
+`.yy` declares the bindings the `.gml` calls), so generating one from the
+other is what keeps a consumer from drifting; `--check` fails when anything
+is missing or behind the checkout. Gitignore the linked files; the demos'
+GameMaker clients (`demos/air-hockey`, `demos/prediction-tools`) are wired
+this way.
+
 ### Quick start
 
 ```gml
