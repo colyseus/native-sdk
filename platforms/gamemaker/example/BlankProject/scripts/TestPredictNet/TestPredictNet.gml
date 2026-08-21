@@ -131,4 +131,91 @@ suite(function() {
             _predict.free_native();
         });
     });
+
+    describe("Predict: netdelay_set then drop on a live composite sim", function() {
+
+        beforeEach(function() {
+            test_drain_events();
+            global.__ptn = predict_test_join("lab-hockey");
+        });
+        afterEach(function() {
+            colyseus_netdelay_set(global.__ptn.room, 0, 0);
+            predict_test_teardown(global.__ptn);
+            global.__ptn = undefined;
+        });
+
+        // The air-hockey demo's debug drop key: install the injector on an
+        // already-joined room, then drop in the same frame. This used to end
+        // the VM runner with no error (TODO/04).
+        test("set(0,0) + drop in one frame reconnects and the sim rebuilds", function() {
+            var _t = global.__ptn;
+            expect(_t.ok).toBeTruthy();
+            predict_test_settle(_t);
+            colyseus_send(_t.room, "bot", { on: false });
+            colyseus_room_set_reconnection_options(_t.room, 1, 10, 100, 1000, 500, 100, -1);
+
+            var _input = new ColyseusInput(_t.room);
+            var _predict = new ColyseusPredict(_t.room);
+            var _me = predict_test_me(_t);
+            var _puck = 0;
+            var _start = current_time;
+            while (current_time - _start < 4000 && _puck == 0) {
+                colyseus_process();
+                _puck = __colyseus_schema_get_number(_t.state, "puck");
+            }
+            expect(_me).toBeGreaterThan(0);
+            expect(_puck).toBeGreaterThan(0);
+
+            var _sim = _predict.sim({
+                world: { me: _me, puck: _puck },
+                smooth_ms: 0,
+                step: function(_ctx, _world, _cmd) {
+                    predict_test_step_movement(_ctx, _world.me, _cmd);
+                    predict_test_step_puck(_world.puck, _ctx.dt);
+                    predict_test_collide_paddle_puck(_world.me, _world.puck);
+                },
+            });
+            expect(_sim.id).toBeGreaterThan(0);
+            predict_test_drive(_predict, _input, _sim, 1500, function(_inp) {
+                _inp.set("moveX", 1); _inp.set("moveY", 0);
+            });
+
+            var _flags = { dropped: false, reconnected: false, left: false };
+            colyseus_on_drop(_t.room, method(_flags, function(_c, _r) { dropped = true; }));
+            colyseus_on_reconnect(_t.room, method(_flags, function() { reconnected = true; }));
+            colyseus_on_leave(_t.room, method(_flags, function(_c, _r) { left = true; }));
+
+            colyseus_process();
+            colyseus_netdelay_set(_t.room, 0, 0);
+            colyseus_netdelay_drop(_t.room);
+            show_debug_message("[netdelay test] survived set+drop");
+
+            _start = current_time;
+            while (current_time - _start < 15000 && !_flags.reconnected) {
+                colyseus_process();
+                var _steps = _predict.tick(colyseus_predict_now());
+                _sim.pump();
+                repeat (_steps) { _input.send(); _sim.pump(); }
+            }
+            expect(_flags.dropped).toBeTruthy();
+            expect(_flags.left).toBeFalsy();
+            expect(_flags.reconnected).toBeTruthy();
+
+            _t.state = __colyseus_room_get_state(_t.room);
+            var _me2 = predict_test_me(_t);
+            var _puck2 = __colyseus_schema_get_number(_t.state, "puck");
+            expect(_me2).toBeGreaterThan(0);
+            expect(_puck2).toBeGreaterThan(0);
+            _sim.rebuild({ me: _me2, puck: _puck2 });
+            expect(_sim.id).toBeGreaterThan(0);
+
+            predict_test_drive(_predict, _input, _sim, 2000, function(_inp) {
+                _inp.set("moveX", -1); _inp.set("moveY", 0);
+            });
+            expect(_sim.reconcile_seq()).toBeGreaterThan(5);
+
+            _sim.free_native();
+            _predict.free_native();
+        });
+    });
 });
