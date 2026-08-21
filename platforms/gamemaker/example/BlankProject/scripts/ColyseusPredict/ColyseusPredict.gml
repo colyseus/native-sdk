@@ -10,8 +10,7 @@
 // Per-Step contract (colyseus_process() already pumps netdelay + reconnect):
 //   colyseus_process();
 //   var _steps = predict.tick(colyseus_predict_now());
-//   recon.pump();   // drains a pending reconcile's replay burst — runs even
-//                   // when _steps == 0, or the rollback lands a frame late
+//   recon.pump();   // leading pump: replays a reconcile colyseus_process() queued
 //   repeat (_steps) { input.set("moveX", mx); input.send(); recon.pump(); }
 //   draw with predict.value(entity, "x") / recon.value("x")
 //
@@ -49,10 +48,12 @@ function colyseus_predict_now() {
     return __colyseus_gm_now();
 }
 
-/// @ignore instance argument → native handle (cached shadow struct or raw)
-function __colyseus_predict_handle(_x) {
-    if (is_struct(_x)) return _x.__handle;
-    return _x;
+/// @ignore instance argument → native handle (cached struct or raw).
+/// Used by both scripts, defined HERE: the HTML5 emitter writes a broken
+/// `function name{}` stub when a constructor's static method calls a function
+/// from another script, and the static methods below are the callers.
+function __colyseus_handle(_x) {
+    return is_struct(_x) ? _x.__handle : _x;
 }
 
 /// @ignore optional struct member with default
@@ -212,7 +213,7 @@ function ColyseusReconciler(_predict, _spec) constructor {
             array_sort(_names, true);   // deterministic part order — server-matched
             for (var _i = 0; _i < array_length(_names); _i++) {
                 __colyseus_gm_sim_part(_names[_i],
-                    __colyseus_predict_handle(variable_struct_get(_s.world, _names[_i])));
+                    __colyseus_handle(variable_struct_get(_s.world, _names[_i])));
             }
             id = __colyseus_gm_sim_create(
                 __colyseus_predict_opt(_s, "input", 0),
@@ -227,7 +228,7 @@ function ColyseusReconciler(_predict, _spec) constructor {
             }
         } else {
             id = __colyseus_gm_predict_reconciler(predict.id,
-                __colyseus_predict_handle(_s.truth),
+                __colyseus_handle(_s.truth),
                 __colyseus_predict_opt(_s, "input", 0),
                 json_stringify({
                     fields: __colyseus_predict_csv(__colyseus_predict_opt(_s, "fields", "")),
@@ -414,7 +415,7 @@ function ColyseusPredict(_room_ref) constructor {
     /// attach(instance, { x: COLYSEUS_PREDICT_DAMPED, y: { mode:..., delay:100 } })
     static attach = function(_instance, _config) {
         return __colyseus_gm_predict_attach(id,
-            __colyseus_predict_handle(_instance), json_stringify(_config));
+            __colyseus_handle(_instance), json_stringify(_config));
     };
     /// Track every entry of a collection, present and future. _except = own key.
     static attach_all = function(_collection, _config = undefined, _except = "") {
@@ -426,7 +427,7 @@ function ColyseusPredict(_room_ref) constructor {
     static attach_reckon = function(_instance, _fields, _step_id, _params = "",
                                     _smooth_ms = 0, _substep_ms = 0, _snap = 0) {
         return __colyseus_gm_predict_attach_reckon(id,
-            __colyseus_predict_handle(_instance), json_stringify({
+            __colyseus_handle(_instance), json_stringify({
                 fields: __colyseus_predict_csv(_fields),
                 step_id: _step_id, step_params: _params,
                 smooth_ms: _smooth_ms, substep_ms: _substep_ms, snap: _snap,
@@ -442,16 +443,16 @@ function ColyseusPredict(_room_ref) constructor {
         }));
     };
     static detach = function(_instance) {
-        __colyseus_gm_predict_detach(id, __colyseus_predict_handle(_instance));
+        __colyseus_gm_predict_detach(id, __colyseus_handle(_instance));
     };
 
     /// One read idiom: smoothed/reckoned/reconciled value of a tracked field,
     /// raw decoded fallback when untracked, NaN for unknown fields.
     static value = function(_instance, _field) {
-        return __colyseus_gm_predict_value(id, __colyseus_predict_handle(_instance), _field);
+        return __colyseus_gm_predict_value(id, __colyseus_handle(_instance), _field);
     };
     static value_at = function(_instance, _field, _time) {
-        return __colyseus_gm_predict_value_at(id, __colyseus_predict_handle(_instance), _field, _time);
+        return __colyseus_gm_predict_value_at(id, __colyseus_handle(_instance), _field, _time);
     };
 
     /// Flat rollback: { truth-instance via arg, fields, step, smooth_ms, snap }.

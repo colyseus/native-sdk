@@ -27,27 +27,10 @@ jobs:
       - name: Audit binding parity
         run: node platforms/gamemaker/gen-bindings.mjs --check
 
-      # The GML scripts are the API reference; any other doc that names a
-      # function must name one that exists.
-      - name: Docs name only functions the scripts define
+      # No binaries here: this checks that the wrapper scripts stage.
+      - name: Package scripts stage
         working-directory: platforms/gamemaker
-        run: |
-          defined=$( {
-            perl -ne 'print "$1\n" while /\bfunction\s+(colyseus_\w+)\s*\(/g' example/BlankProject/scripts/Colyseus/Colyseus.gml example/BlankProject/scripts/ColyseusPredict/ColyseusPredict.gml
-            perl -0777 -pe '1 while s/,(\s*[\]\}])/$1/g' example/BlankProject/extensions/Colyseus_SDK/Colyseus_SDK.yy | jq -r '.files[0].functions[] | .name, .externalName'
-          } | sort -u)
-          used=$(perl -ne 'print "$1\n" while /(?<![\w.])(colyseus_[a-z0-9_]+)\s*\(/g' *.md | sort -u)
-          missing=$(comm -23 <(echo "$used") <(echo "$defined"))
-          if [ -n "$missing" ]; then echo "docs reference undefined functions:"; echo "$missing"; exit 1; fi
-
-      # No binaries here — this checks the script staging: every .gml the
-      # wrapper needs ships, and nothing staged calls a function left behind.
-      - name: Package scripts stage + resolves
-        working-directory: platforms/gamemaker
-        run: |
-          ./package-yymps.sh
-          unzip -l package-out/colyseus-gamemaker-*.yymps | grep -q 'scripts/Colyseus/Colyseus.gml'
-          unzip -l package-out/colyseus-gamemaker-*.yymps | grep -q 'scripts/ColyseusPredict/ColyseusPredict.gml'
+        run: ./package-yymps.sh
 
   check-version:
     runs-on: ubuntu-latest

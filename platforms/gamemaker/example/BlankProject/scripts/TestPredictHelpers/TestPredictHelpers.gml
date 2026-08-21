@@ -10,14 +10,10 @@
 #macro PREDICT_TEST_ENDPOINT __predict_test_endpoint()
 
 /// Igor's `-- Mac Run` forwards no arguments, so the override rides an
-/// environment variable — lets the suites target a playground on another port.
+/// environment variable — lets the suites target a playground elsewhere.
 function __predict_test_endpoint() {
-    static _ep = undefined;
-    if (_ep == undefined) {
-        _ep = environment_get_variable("COLYSEUS_PLAYGROUND_ENDPOINT");
-        if (_ep == "") _ep = "http://127.0.0.1:5173";
-    }
-    return _ep;
+    var _ep = environment_get_variable("COLYSEUS_PLAYGROUND_ENDPOINT");
+    return _ep == "" ? "http://127.0.0.1:5173" : _ep;
 }
 
 // shared sim constants (src/shared/constants.ts, verbatim)
@@ -79,6 +75,20 @@ function predict_test_me(_ctx) {
         if (_me != 0) break;
     }
     return _me;
+}
+
+/// The raw decoded handle of a root REF field (lab-hockey's `puck`). Polls
+/// briefly — it can trail the first state patch like the players do.
+function predict_test_ref(_ctx, _field) {
+    var _start = current_time;
+    var _h = 0;
+    while (current_time - _start < 4000) {
+        colyseus_process();
+        _ctx.state = __colyseus_room_get_state(_ctx.room);
+        _h = __colyseus_schema_get_number(_ctx.state, _field);
+        if (_h != 0) break;
+    }
+    return _h;
 }
 
 /// Leave + free with a settle drain (mirrors the TestRoomApi teardown).
@@ -167,6 +177,14 @@ function predict_test_step_puck(_p, _dt) {
     if (_y < _min) { _y = _min; _vy = abs(_vy) * SIM_PUCK_RESTITUTION; }
     else if (_y > _max_y) { _y = _max_y; _vy = -abs(_vy) * SIM_PUCK_RESTITUTION; }
     _p.set("x", _x); _p.set("y", _y); _p.set("vx", _vx); _p.set("vy", _vy);
+}
+
+/// lab-hockey's world step for a { me, puck } composite: my paddle → puck
+/// flight → contact, the server's order.
+function predict_test_step_hockey(_ctx, _world, _cmd) {
+    predict_test_step_movement(_ctx, _world.me, _cmd);
+    predict_test_step_puck(_world.puck, _ctx.dt);
+    predict_test_collide_paddle_puck(_world.me, _world.puck);
 }
 
 /// collidePaddlePuck (src/shared/hockey.ts) — order-dependent, resolve in

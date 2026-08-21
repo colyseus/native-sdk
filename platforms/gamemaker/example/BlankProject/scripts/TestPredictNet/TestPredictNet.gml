@@ -139,7 +139,6 @@ suite(function() {
             global.__ptn = predict_test_join("lab-hockey");
         });
         afterEach(function() {
-            colyseus_netdelay_set(global.__ptn.room, 0, 0);
             predict_test_teardown(global.__ptn);
             global.__ptn = undefined;
         });
@@ -157,23 +156,14 @@ suite(function() {
             var _input = new ColyseusInput(_t.room);
             var _predict = new ColyseusPredict(_t.room);
             var _me = predict_test_me(_t);
-            var _puck = 0;
-            var _start = current_time;
-            while (current_time - _start < 4000 && _puck == 0) {
-                colyseus_process();
-                _puck = __colyseus_schema_get_number(_t.state, "puck");
-            }
+            var _puck = predict_test_ref(_t, "puck");
             expect(_me).toBeGreaterThan(0);
             expect(_puck).toBeGreaterThan(0);
 
             var _sim = _predict.sim({
                 world: { me: _me, puck: _puck },
                 smooth_ms: 0,
-                step: function(_ctx, _world, _cmd) {
-                    predict_test_step_movement(_ctx, _world.me, _cmd);
-                    predict_test_step_puck(_world.puck, _ctx.dt);
-                    predict_test_collide_paddle_puck(_world.me, _world.puck);
-                },
+                step: predict_test_step_hockey,
             });
             expect(_sim.id).toBeGreaterThan(0);
             predict_test_drive(_predict, _input, _sim, 1500, function(_inp) {
@@ -190,7 +180,7 @@ suite(function() {
             colyseus_netdelay_drop(_t.room);
             show_debug_message("[netdelay test] survived set+drop");
 
-            _start = current_time;
+            var _start = current_time;
             while (current_time - _start < 15000 && !_flags.reconnected) {
                 colyseus_process();
                 var _steps = _predict.tick(colyseus_predict_now());
@@ -201,9 +191,8 @@ suite(function() {
             expect(_flags.left).toBeFalsy();
             expect(_flags.reconnected).toBeTruthy();
 
-            _t.state = __colyseus_room_get_state(_t.room);
             var _me2 = predict_test_me(_t);
-            var _puck2 = __colyseus_schema_get_number(_t.state, "puck");
+            var _puck2 = predict_test_ref(_t, "puck");
             expect(_me2).toBeGreaterThan(0);
             expect(_puck2).toBeGreaterThan(0);
             _sim.rebuild({ me: _me2, puck: _puck2 });

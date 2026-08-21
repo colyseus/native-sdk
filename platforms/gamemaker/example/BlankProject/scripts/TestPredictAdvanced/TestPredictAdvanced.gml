@@ -29,24 +29,14 @@ suite(function() {
             var _input = new ColyseusInput(_t.room);
             var _predict = new ColyseusPredict(_t.room);
             var _me = predict_test_me(_t);
-            var _puck = 0;
-            var _start = current_time;
-            while (current_time - _start < 4000 && _puck == 0) {
-                colyseus_process();
-                _puck = __colyseus_schema_get_number(_t.state, "puck");
-            }
+            var _puck = predict_test_ref(_t, "puck");
             expect(_me).toBeGreaterThan(0);
             expect(_puck).toBeGreaterThan(0);
 
-            // world step: my paddle → puck flight → contact (server order)
             var _sim = _predict.sim({
                 world: { me: _me, puck: _puck },
                 smooth_ms: 0,
-                step: function(_ctx, _world, _cmd) {
-                    predict_test_step_movement(_ctx, _world.me, _cmd);
-                    predict_test_step_puck(_world.puck, _ctx.dt);
-                    predict_test_collide_paddle_puck(_world.me, _world.puck);
-                },
+                step: predict_test_step_hockey,
             });
             expect(_sim.id).toBeGreaterThan(0);
 

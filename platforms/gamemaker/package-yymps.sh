@@ -14,12 +14,13 @@
 # Prerequisites:
 #   - Built binaries in zig-out/lib/ (from `zig build -Dall`)
 #   - Built WASM in wasm-out/ (from ./build-wasm.sh)
-#   - jq, md5sum/md5
+#   - jq, node, md5sum/md5
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERSION=$(jq -r '.version' "$SCRIPT_DIR/version.json")
+GEN="$SCRIPT_DIR/gen-bindings.mjs"
 PACKAGE_DISPLAY_NAME="Colyseus SDK"
 PACKAGE_ID="Colyseus_SDK"
 # The .yyp filename MUST match the .yymps filename (without extension).
@@ -27,9 +28,10 @@ PACKAGE_ID="Colyseus_SDK"
 # filename during import — parent references in .yy files must use this name.
 PACKAGE_NAME="colyseus-gamemaker-${VERSION}"
 EXT_DIR="extensions/Colyseus_SDK"
-# Colyseus.gml calls into ColyseusPredict.gml by name, and GML has no soft
-# function references — the two ship together or the package doesn't compile.
-SCRIPT_RESOURCES=(Colyseus ColyseusPredict)
+# The wrapper scripts ship as a set (gen-bindings owns the list and verifies
+# every call in them resolves — a script left out would not compile).
+node "$GEN" --check
+SCRIPT_RESOURCES=($(node "$GEN" --list-scripts))
 
 # Output
 OUT_DIR="$SCRIPT_DIR/package-out"
@@ -99,27 +101,6 @@ for script in "${SCRIPT_RESOURCES[@]}"; do
     YYP_SCRIPT_RESOURCES+=",
     {\"id\":{\"name\":\"$script\",\"path\":\"scripts/$script/$script.yy\"}}"
 done
-
-# =========================================================================
-# 1b. Guard: every colyseus_* function the staged scripts call must be
-#     defined by a staged script or declared by the extension. A script
-#     missing from SCRIPT_RESOURCES would otherwise ship a package that
-#     fails to compile on an unknown function.
-# =========================================================================
-staged_gml=$(find "$STAGE/scripts" -name '*.gml')
-called=$(perl -ne 'print "$1\n" while /(?<![\w.])(__?colyseus_\w+)\s*\(/g' $staged_gml | sort -u)
-defined=$( {
-    perl -ne 'print "$1\n" while /\bfunction\s+(__?colyseus_\w+)\s*\(/g' $staged_gml
-    jq -r '.files[0].functions[].name' "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
-} | sort -u)
-missing=$(comm -23 <(echo "$called") <(echo "$defined"))
-if [ -n "$missing" ]; then
-    echo "ERROR: staged scripts call functions nothing in the package defines:" >&2
-    echo "$missing" | sed 's/^/  /' >&2
-    echo "Add the script that defines them to SCRIPT_RESOURCES." >&2
-    exit 1
-fi
-echo "Staged scripts: ${SCRIPT_RESOURCES[*]} ($(echo "$called" | wc -l | tr -d ' ') colyseus_* calls resolve)"
 
 # =========================================================================
 # 2. Copy built binaries

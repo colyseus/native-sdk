@@ -1078,25 +1078,12 @@ GM_EXPORT double colyseus_gm_schema_field_type_at(double instance_handle, double
 }
 
 // The collection behind a MAP/ARRAY field, or NULL when the field is absent
-// or of another type.
+// or of another type. get_number already hands collections back as handles.
 static void* gm_resolve_collection(double instance_handle, const char* field_name,
                                    colyseus_field_type_t want) {
-    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
-    if (!schema || !schema->__vtable || !field_name) return NULL;
-
-    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
-        colyseus_dynamic_schema_t* dyn = (colyseus_dynamic_schema_t*)schema;
-        colyseus_dynamic_value_t* val = colyseus_dynamic_schema_get_by_name(dyn, field_name);
-        if (!val || val->type != want) return NULL;
-        return want == COLYSEUS_FIELD_MAP ? (void*)val->data.map : (void*)val->data.array;
-    }
-    for (int i = 0; i < schema->__vtable->field_count; i++) {
-        const colyseus_field_t* f = &schema->__vtable->fields[i];
-        if (f->name && strcmp(f->name, field_name) == 0 && f->type == want) {
-            return *(void**)((char*)schema + f->offset);
-        }
-    }
-    return NULL;
+    if (!field_name) return NULL;
+    if ((int)colyseus_gm_schema_get_field_type(instance_handle, field_name) != (int)want) return NULL;
+    return (void*)(uintptr_t)colyseus_gm_schema_get_number(instance_handle, field_name);
 }
 
 GM_EXPORT double colyseus_gm_map_get(double instance_handle, const char* field_name, const char* key) {
@@ -1107,36 +1094,16 @@ GM_EXPORT double colyseus_gm_map_get(double instance_handle, const char* field_n
 }
 
 // A collection entry lands in the schema_get result slot exactly like a
-// field read: the return is the COLYSEUS_FIELD_* type (-1 when absent), the
-// value is a handle for schema children or the decoded primitive.
+// field read: the return is the COLYSEUS_FIELD_* type, the value is a handle
+// for schema children or the decoded primitive.
 static double gm_collection_item_result(void* item, bool has_schema_child,
                                         const char* child_primitive_type) {
+    int t = has_schema_child ? COLYSEUS_FIELD_REF
+                             : (int)colyseus_field_type_from_string(child_primitive_type);
     gm_schema_get_result.number = 0.0;
     gm_schema_get_result.string[0] = '\0';
-    if (!item) return -1.0;
-    if (has_schema_child) {
-        gm_schema_get_result.number = (double)(uintptr_t)item;
-        return (double)COLYSEUS_FIELD_REF;
-    }
-    colyseus_field_type_t t = colyseus_field_type_from_string(child_primitive_type);
-    switch (t) {
-        case COLYSEUS_FIELD_STRING:
-            strncpy(gm_schema_get_result.string, (const char*)item, sizeof(gm_schema_get_result.string) - 1);
-            break;
-        case COLYSEUS_FIELD_NUMBER:
-        case COLYSEUS_FIELD_FLOAT64: gm_schema_get_result.number = *(double*)item; break;
-        case COLYSEUS_FIELD_FLOAT32: gm_schema_get_result.number = (double)*(float*)item; break;
-        case COLYSEUS_FIELD_BOOLEAN: gm_schema_get_result.number = *(bool*)item ? 1.0 : 0.0; break;
-        case COLYSEUS_FIELD_INT8:    gm_schema_get_result.number = (double)*(int8_t*)item; break;
-        case COLYSEUS_FIELD_UINT8:   gm_schema_get_result.number = (double)*(uint8_t*)item; break;
-        case COLYSEUS_FIELD_INT16:   gm_schema_get_result.number = (double)*(int16_t*)item; break;
-        case COLYSEUS_FIELD_UINT16:  gm_schema_get_result.number = (double)*(uint16_t*)item; break;
-        case COLYSEUS_FIELD_INT32:   gm_schema_get_result.number = (double)*(int32_t*)item; break;
-        case COLYSEUS_FIELD_UINT32:  gm_schema_get_result.number = (double)*(uint32_t*)item; break;
-        case COLYSEUS_FIELD_INT64:   gm_schema_get_result.number = (double)*(int64_t*)item; break;
-        case COLYSEUS_FIELD_UINT64:  gm_schema_get_result.number = (double)*(uint64_t*)item; break;
-        default: return -1.0;
-    }
+    gm_snapshot_value(t, item, &gm_schema_get_result.number, gm_schema_get_result.string,
+                      sizeof(gm_schema_get_result.string), &gm_schema_get_result.number);
     return (double)t;
 }
 
@@ -1165,15 +1132,15 @@ GM_EXPORT const char* colyseus_gm_map_key_at(double instance_handle, const char*
 GM_EXPORT double colyseus_gm_map_value_at(double instance_handle, const char* field_name, double index) {
     colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
     colyseus_map_item_t* item = gm_map_item_at(map, (int)index);
-    if (!map || !item) return gm_collection_item_result(NULL, false, NULL);
+    if (!item) return -1.0;
     return gm_collection_item_result(item->value, map->has_schema_child, map->child_primitive_type);
 }
 
 GM_EXPORT double colyseus_gm_map_get_value(double instance_handle, const char* field_name, const char* key) {
     colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
-    if (!map || !key) return gm_collection_item_result(NULL, false, NULL);
-    return gm_collection_item_result(colyseus_map_schema_get(map, key),
-                                     map->has_schema_child, map->child_primitive_type);
+    void* item = (map && key) ? colyseus_map_schema_get(map, key) : NULL;
+    if (!item) return -1.0;
+    return gm_collection_item_result(item, map->has_schema_child, map->child_primitive_type);
 }
 
 GM_EXPORT double colyseus_gm_array_size(double instance_handle, const char* field_name) {
@@ -1183,9 +1150,9 @@ GM_EXPORT double colyseus_gm_array_size(double instance_handle, const char* fiel
 
 GM_EXPORT double colyseus_gm_array_value_at(double instance_handle, const char* field_name, double index) {
     colyseus_array_schema_t* arr = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_ARRAY);
-    if (!arr || index < 0 || index >= arr->count) return gm_collection_item_result(NULL, false, NULL);
-    return gm_collection_item_result(colyseus_array_schema_get(arr, (int)index),
-                                     arr->has_schema_child, arr->child_primitive_type);
+    void* item = (arr && index >= 0 && index < arr->count) ? colyseus_array_schema_get(arr, (int)index) : NULL;
+    if (!item) return -1.0;
+    return gm_collection_item_result(item, arr->has_schema_child, arr->child_primitive_type);
 }
 
 // =============================================================================

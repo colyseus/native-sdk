@@ -193,9 +193,9 @@
       mkeys.push(key);
       if (key === sid) idxOfMe = k;
     }
-    var vtype = idxOfMe >= 0 ? window.colyseus_gm_map_value_at(state, "players", idxOfMe) : -2;
+    var vtype = window.colyseus_gm_map_value_at(state, "players", idxOfMe);
     var vhandle = window.colyseus_gm_schema_get_result_number();
-    report("map_enum", msize >= 1 && idxOfMe >= 0 && vtype === 13 && vhandle === me &&
+    report("map_enum", msize >= 1 && idxOfMe >= 0 && vtype === 13 /* FIELD_REF */ && vhandle === me &&
       window.colyseus_gm_map_key_at(state, "players", msize) === "" &&
       window.colyseus_gm_map_value_at(state, "players", msize) === -1,
       "size=" + msize + " keys=" + JSON.stringify(mkeys) + " idxOfMe=" + idxOfMe +

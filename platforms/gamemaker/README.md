@@ -293,7 +293,9 @@ Tests are GML scripts in `example/BlankProject/scripts/` using the GMTL test fra
 - **TestPredictCore**, **TestPredictAdvanced**, **TestPredictNet**: the prediction layer, against the prediction-tools playground
 
 `COLYSEUS_TEST_FILTER=<substring>` runs only the matching `describe` blocks;
-`COLYSEUS_PLAYGROUND_PORT` relocates the playground server. The HTML5 build is
+`COLYSEUS_PLAYGROUND_PORT` is where the runner starts the playground when
+:5173 is taken, and `COLYSEUS_PLAYGROUND_ENDPOINT` points the suites at one
+already running elsewhere. The HTML5 build is
 covered separately by `tests-web/run-web-tests.sh`.
 
 ## Development

@@ -9,6 +9,11 @@
 //
 //   node gen-bindings.mjs           # regenerate the shim region + .yy entries
 //   node gen-bindings.mjs --check   # CI parity audit (no writes, exit 1 on drift)
+//   node gen-bindings.mjs --list-scripts
+//                                   # the wrapper scripts a consumer must ship
+//   node gen-bindings.mjs emit-yy <project-dir> <Project.yyp> <native-file>
+//                                   # write the extension .yy retargeted at a
+//                                   # project (+ the script .yy files if absent)
 //
 // Hand-written shim functions (JS fetch HTTP, is_ready) live outside the
 // generated region and are excluded from emission.
@@ -28,6 +33,17 @@ const YY = path.join(
   "example/BlankProject/extensions/Colyseus_SDK/Colyseus_SDK.yy"
 );
 const GML_DIR = path.join(ROOT, "example/BlankProject/scripts");
+const EXT_DIR = "extensions/Colyseus_SDK";
+
+// The GML API: Colyseus.gml calls into ColyseusPredict.gml by name and GML
+// has no soft function references, so a consumer ships both or neither.
+const WRAPPER_SCRIPTS = ["Colyseus", "ColyseusPredict"];
+const wrapperGml = (name) => path.join(GML_DIR, name, `${name}.gml`);
+
+// Docs that name functions; CHANGELOG is history and may name removed ones.
+const DOCS = ["README.md", "HTML5_SETUP.md", "PORTING_NOTES.md"].map((f) =>
+  path.join(ROOT, f)
+);
 
 // Implemented BY HAND in the shim (JS fetch / module-state) — never generated.
 const SHIM_HANDWRITTEN = new Set([
@@ -151,10 +167,13 @@ function makeYyEntry(exp) {
 
 // .yy files carry 64-bit target bitmasks (copyToTargets) that overflow
 // JS number precision — shield long integer literals through parse/stringify.
+// GameMaker also writes trailing commas, which JSON.parse rejects.
 const BIGINT_SENTINEL = "___yy_bigint___";
 function yyParse(text) {
   return JSON.parse(
-    text.replace(/:(\s*)(\d{16,})/g, `:$1"${BIGINT_SENTINEL}$2"`)
+    text
+      .replace(/,(\s*[\]}])/g, "$1")
+      .replace(/:(\s*)(\d{16,})/g, `:$1"${BIGINT_SENTINEL}$2"`)
   );
 }
 function yyStringify(data) {
@@ -199,6 +218,37 @@ function emitYy(exports) {
   }
   fs.writeFileSync(YY, yyStringify(data));
   return list;
+}
+
+// ── retarget for a consumer project ──────────────────────────────────────
+
+// files[0] must name the host binary: GameMaker loads only the FIRST kind:1
+// entry and ignores copyToTargets at runtime. Every entry carries the full
+// function list (an entry with an empty list binds nothing).
+function emitProjectYy(projectDir, yyp, nativeFile) {
+  const parent = { name: yyp.replace(/\.yyp$/, ""), path: yyp };
+  const ext = yyParse(fs.readFileSync(YY, "utf8"));
+  ext.parent = parent;
+  ext.files[0].filename = nativeFile;
+  ext.files[0].ProxyFiles = [];
+  for (const f of ext.files) {
+    if (!f.functions.length) f.functions = ext.files[0].functions;
+  }
+  const out = path.join(projectDir, EXT_DIR, "Colyseus_SDK.yy");
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, yyStringify(ext));
+
+  // the script .yy resources only carry the parent; projects commit them,
+  // so only a missing one is written
+  for (const name of WRAPPER_SCRIPTS) {
+    const dst = path.join(projectDir, "scripts", name, `${name}.yy`);
+    if (fs.existsSync(dst)) continue;
+    const yy = yyParse(fs.readFileSync(path.join(GML_DIR, name, `${name}.yy`), "utf8"));
+    yy.parent = parent;
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.writeFileSync(dst, yyStringify(yy));
+  }
+  return out;
 }
 
 // ── check mode ───────────────────────────────────────────────────────────
@@ -277,6 +327,34 @@ function check(exports) {
     }
   }
 
+  // The wrapper scripts are self-contained: every colyseus_* call in them
+  // resolves to a function they define or a binding the .yy declares —
+  // what a packaged/linked consumer gets, and nothing else.
+  const defined = new Set(yyNames);
+  const wrapperSrc = WRAPPER_SCRIPTS.map((n) => fs.readFileSync(wrapperGml(n), "utf8"));
+  for (const src of wrapperSrc) {
+    for (const m of src.matchAll(/\bfunction\s+((?:__)?colyseus_\w+)\s*\(/g)) defined.add(m[1]);
+  }
+  for (const [i, src] of wrapperSrc.entries()) {
+    for (const m of src.matchAll(/(?<![\w.])((?:__)?colyseus_\w+)\s*\(/g)) {
+      if (!defined.has(m[1]))
+        fail(`${WRAPPER_SCRIPTS[i]}.gml calls ${m[1]}, defined by no wrapper script or binding`);
+    }
+  }
+
+  // Docs name only functions that exist (the scripts are the reference).
+  // A token is `name` or `name()` alone inside backticks — file names like
+  // `colyseus_auth.dat` and prefixes like `__colyseus_gm_` don't qualify.
+  for (const f of yy.files[0].functions) defined.add(f.externalName);
+  for (const doc of DOCS) {
+    if (!fs.existsSync(doc)) continue;
+    const src = fs.readFileSync(doc, "utf8");
+    for (const m of src.matchAll(/`((?:__)?colyseus_\w*[a-z0-9])(?:\(\))?`/g)) {
+      if (!defined.has(m[1]))
+        fail(`${path.basename(doc)} names ${m[1]}, which no script defines`);
+    }
+  }
+
   if (failures) {
     console.error(`\n${failures} parity failure(s).`);
     process.exit(1);
@@ -289,7 +367,16 @@ function check(exports) {
 // ── main ─────────────────────────────────────────────────────────────────
 
 const exports_ = parseCExports();
-if (process.argv.includes("--check")) {
+const [cmd, ...rest] = process.argv.slice(2);
+if (cmd === "--list-scripts") {
+  console.log(WRAPPER_SCRIPTS.join(" "));
+} else if (cmd === "emit-yy") {
+  if (rest.length !== 3) {
+    console.error("usage: gen-bindings.mjs emit-yy <project-dir> <Project.yyp> <native-file>");
+    process.exit(64);
+  }
+  console.log(`wrote ${emitProjectYy(...rest)}`);
+} else if (cmd === "--check") {
   check(exports_);
 } else {
   emitShim(exports_);

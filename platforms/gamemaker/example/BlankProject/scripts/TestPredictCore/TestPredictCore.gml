@@ -204,10 +204,7 @@ suite(function() {
                 smooth_ms: 66.67, snap: 8,
                 step: function(_ctx, _s, _cmd) {
                     predict_test_step_movement(_ctx, _s, _cmd);
-                    if (global.__pt_pump.live == 0) {
-                        // inside the step the raw accessor is live: 20 Hz lab rooms
-                        global.__pt_pump.raw_dt = __colyseus_gm_step_ctx(0);
-                    }
+                    global.__pt_pump.raw_dt = __colyseus_gm_step_ctx(0);   // live inside a step
                     if (_ctx.is_replay) {
                         if (global.__pt_pump.frame_steps == 0) global.__pt_pump.replay_on_zero++;
                     } else {

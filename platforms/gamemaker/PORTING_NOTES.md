@@ -73,7 +73,9 @@ handle to `room` throws `Unexisting room number: N`, and a struct method named
 - The emitter writes a syntactically invalid stub (`function name{}`) for any
   function nothing references, and one such stub breaks the whole page. Keep
   every exported function reachable; a self-check function that references
-  each helper is the usual fix.
+  each helper is the usual fix. The same stub appears when a constructor's
+  `static` method calls a function defined in another script: define the
+  helper in the script that holds the constructor.
 - Bitwise operators lower to JavaScript int32, not int64, and `div` lowers to
   a rounded division rather than truncation. Integer literals above 2^31 emit
   as `new Long(...)`, and dividing by a `Long` is an integer division, so

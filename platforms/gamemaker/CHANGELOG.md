@@ -52,9 +52,9 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 - The `.yymps` package now ships `ColyseusPredict.gml` alongside `Colyseus.gml`.
   A package built from 0.18.0 sources without it failed to compile on
   `__colyseus_predict_dispatch`.
-- `colyseus_room_get_state()`, `colyseus_map_get()` and `colyseus_schema_get()`
-  refresh the struct they return (nested refs included) on every call. Dot
-  access used to stay frozen at join time for any field without a
+- The structs from `colyseus_room_get_state()`, `colyseus_map_get()` and
+  `colyseus_schema_get()` are refreshed (nested refs included) after every
+  patch. Dot access used to stay frozen at join time for any field without a
   `colyseus_listen()` callback, despite the docs saying otherwise.
 - `colyseus_client_reconnect()` was rejected by the server with "bad
   reconnection token" even with a valid token. [#26](https://github.com/colyseus/native-sdk/issues/26)

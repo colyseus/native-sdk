@@ -6,7 +6,7 @@
 //
 // Prerequisites:
 //   - wasm-out/colyseus_wasm.js built (./build-wasm.sh)
-//   - the prediction-tools playground server on :5173 (`pnpm dev --host 0.0.0.0`)
+//   - the prediction-tools playground server (run-web-tests.sh starts it)
 //   - puppeteer, resolved from the prediction-tools checkout's node_modules
 //     (or set PUPPETEER_DIR to any directory that has it installed)
 
@@ -19,8 +19,9 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GM_ROOT = path.dirname(HERE); // platforms/gamemaker
 const PORT = 8931;
-// COLYSEUS_PLAYGROUND_PORT relocates the playground server (default :5173)
-const PLAYGROUND = `ws://127.0.0.1:${process.env.COLYSEUS_PLAYGROUND_PORT || 5173}`;
+// COLYSEUS_PLAYGROUND_ENDPOINT relocates the playground (default :5173)
+const PLAYGROUND = (process.env.COLYSEUS_PLAYGROUND_ENDPOINT || "http://127.0.0.1:5173")
+  .replace(/^http/, "ws");
 
 function resolvePuppeteer() {
   const candidates = [

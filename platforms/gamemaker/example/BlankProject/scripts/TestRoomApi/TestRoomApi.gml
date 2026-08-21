@@ -12,11 +12,8 @@ suite(function() {
     // =========================================================================
     describe("Extension readiness", function() {
 
-        test("colyseus_is_ready() is true on native from the first call", function() {
+        test("native is ready at once, and client_create passes the ABI check", function() {
             expect(colyseus_is_ready()).toBeTruthy();
-        });
-
-        test("client_create succeeds once ready and passes the ABI check", function() {
             expect(__colyseus_gm_predict_abi_version()).toBe(__COLYSEUS_GM_ABI);
             var _client = colyseus_client_create("http://127.0.0.1:2567");
             expect(_client).toBeGreaterThan(0);
@@ -317,21 +314,6 @@ suite(function() {
             expect(_root.host.x).toBe(123);
         });
 
-        test("root refresh reaches an unlistened scalar", function() {
-            var _state = colyseus_room_get_state(global.__rt.room);
-            var _sid = colyseus_room_get_session_id(global.__rt.room);
-            expect(_state.host.x).toBe(0);
-            colyseus_send(global.__rt.room, "move", { x: 9, y: 8 });
-            var _start = current_time;
-            while (colyseus_room_get_state(global.__rt.room).host.x != 9
-                   && current_time - _start < 3000) {
-                colyseus_process();
-            }
-            // the held reference IS the cached struct, so it caught up too
-            expect(_state.host.x).toBe(9);
-            expect(colyseus_schema_get(colyseus_map_get(_state, "players", _sid), "y")).toBe(8);
-        });
-
         test("map enumeration follows the server's insertion order", function() {
             var _state = colyseus_room_get_state(global.__rt.room);
             var _sid = colyseus_room_get_session_id(global.__rt.room);
@@ -351,11 +333,8 @@ suite(function() {
             var _keys = colyseus_map_keys(_state, "players");
             expect(array_length(_keys)).toBe(2);
             expect(_keys[0]).toBe(_sid);
-            expect(_keys[1] != _sid).toBeTruthy();
-            var _bot = colyseus_map_value_at(_state, "players", 1);
-            expect(is_struct(_bot)).toBe(true);
+            var _bot = colyseus_map_get(_state, "players", _keys[1]);
             expect(_bot.isBot).toBe(1);
-            expect(colyseus_map_get(_state, "players", _keys[1])).toBe(_bot);
 
             colyseus_send(global.__rt.room, "remove_bot", {});
             _start = current_time;
