@@ -27,6 +27,15 @@ jobs:
       - name: Audit binding parity
         run: node platforms/gamemaker/gen-bindings.mjs --check
 
+      # No binaries here — this checks the script staging: every .gml the
+      # wrapper needs ships, and nothing staged calls a function left behind.
+      - name: Package scripts stage + resolves
+        working-directory: platforms/gamemaker
+        run: |
+          ./package-yymps.sh
+          unzip -l package-out/colyseus-gamemaker-*.yymps | grep -q 'scripts/Colyseus/Colyseus.gml'
+          unzip -l package-out/colyseus-gamemaker-*.yymps | grep -q 'scripts/ColyseusPredict/ColyseusPredict.gml'
+
   check-version:
     runs-on: ubuntu-latest
     outputs:

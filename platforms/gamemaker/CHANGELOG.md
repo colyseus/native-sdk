@@ -39,6 +39,9 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 ### Fixed
 - HTML5 exports no longer inject `<script src="colyseus_wasm.js">` at the page
   root, where it 404'd. The runner loads the extension's script itself.
+- The `.yymps` package now ships `ColyseusPredict.gml` alongside `Colyseus.gml`.
+  A package built from 0.18.0 sources without it failed to compile on
+  `__colyseus_predict_dispatch`.
 - `colyseus_client_reconnect()` was rejected by the server with "bad
   reconnection token" even with a valid token. [#26](https://github.com/colyseus/native-sdk/issues/26)
 - Automatic reconnection could stall with `colyseus_room_is_reconnecting()`

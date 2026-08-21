@@ -27,7 +27,9 @@ PACKAGE_ID="Colyseus_SDK"
 # filename during import — parent references in .yy files must use this name.
 PACKAGE_NAME="colyseus-gamemaker-${VERSION}"
 EXT_DIR="extensions/Colyseus_SDK"
-SCRIPT_RESOURCE_DIR="scripts/Colyseus"
+# Colyseus.gml calls into ColyseusPredict.gml by name, and GML has no soft
+# function references — the two ship together or the package doesn't compile.
+SCRIPT_RESOURCES=(Colyseus ColyseusPredict)
 
 # Output
 OUT_DIR="$SCRIPT_DIR/package-out"
@@ -37,7 +39,7 @@ echo "=== Packaging Colyseus GameMaker SDK v${VERSION} ==="
 
 # Clean staging area
 rm -rf "$STAGE"
-mkdir -p "$STAGE/$EXT_DIR" "$STAGE/$SCRIPT_RESOURCE_DIR"
+mkdir -p "$STAGE/$EXT_DIR"
 
 # =========================================================================
 # 1. Copy extension .yy and scripts from source of truth (example project)
@@ -83,12 +85,41 @@ fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   ]
 ' > "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
 
-# Copy Colyseus.gml + Colyseus.yy — fix parent references
-cp "$EXAMPLE/$SCRIPT_RESOURCE_DIR/Colyseus.gml" "$STAGE/$SCRIPT_RESOURCE_DIR/Colyseus.gml"
-fix_trailing_commas "$EXAMPLE/$SCRIPT_RESOURCE_DIR/Colyseus.yy" | jq \
-  --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" '
-  .parent = { "name": $name, "path": $path }
-' > "$STAGE/$SCRIPT_RESOURCE_DIR/Colyseus.yy"
+# Copy each script resource (.gml + .yy) — fix parent references
+YYP_SCRIPT_RESOURCES=""
+for script in "${SCRIPT_RESOURCES[@]}"; do
+    src_dir="$EXAMPLE/scripts/$script"
+    dst_dir="$STAGE/scripts/$script"
+    mkdir -p "$dst_dir"
+    cp "$src_dir/$script.gml" "$dst_dir/$script.gml"
+    fix_trailing_commas "$src_dir/$script.yy" | jq \
+      --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" '
+      .parent = { "name": $name, "path": $path }
+    ' > "$dst_dir/$script.yy"
+    YYP_SCRIPT_RESOURCES+=",
+    {\"id\":{\"name\":\"$script\",\"path\":\"scripts/$script/$script.yy\"}}"
+done
+
+# =========================================================================
+# 1b. Guard: every colyseus_* function the staged scripts call must be
+#     defined by a staged script or declared by the extension. A script
+#     missing from SCRIPT_RESOURCES would otherwise ship a package that
+#     fails to compile on an unknown function.
+# =========================================================================
+staged_gml=$(find "$STAGE/scripts" -name '*.gml')
+called=$(perl -ne 'print "$1\n" while /(?<![\w.])(__?colyseus_\w+)\s*\(/g' $staged_gml | sort -u)
+defined=$( {
+    perl -ne 'print "$1\n" while /\bfunction\s+(__?colyseus_\w+)\s*\(/g' $staged_gml
+    jq -r '.files[0].functions[].name' "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
+} | sort -u)
+missing=$(comm -23 <(echo "$called") <(echo "$defined"))
+if [ -n "$missing" ]; then
+    echo "ERROR: staged scripts call functions nothing in the package defines:" >&2
+    echo "$missing" | sed 's/^/  /' >&2
+    echo "Add the script that defines them to SCRIPT_RESOURCES." >&2
+    exit 1
+fi
+echo "Staged scripts: ${SCRIPT_RESOURCES[*]} ($(echo "$called" | wc -l | tr -d ' ') colyseus_* calls resolve)"
 
 # =========================================================================
 # 2. Copy built binaries
@@ -152,8 +183,7 @@ cat > "$STAGE/$PACKAGE_NAME.yyp" << EOFYYP
   },
   "name":"$PACKAGE_NAME",
   "resources":[
-    {"id":{"name":"${PACKAGE_ID}","path":"$EXT_DIR/Colyseus_SDK.yy"}},
-    {"id":{"name":"Colyseus","path":"$SCRIPT_RESOURCE_DIR/Colyseus.yy"}}
+    {"id":{"name":"${PACKAGE_ID}","path":"$EXT_DIR/Colyseus_SDK.yy"}}$YYP_SCRIPT_RESOURCES
   ],
   "resourceType":"GMProject",
   "resourceVersion":"2.0",
