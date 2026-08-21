@@ -2,6 +2,14 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.17.12
+
+### Fixed
+- Automatic reconnection could get stuck with `room.reconnecting == true` and
+  no `left` signal after an Android background/resume: a retry that failed at
+  DNS time never counted as an attempt. Reported by @zahmad12 in
+  [#27](https://github.com/colyseus/native-sdk/issues/27).
+
 ## 0.17.11
 
 ### Fixed
