@@ -8,6 +8,10 @@ function suite(_suite) {
 /// @param	{String}	name
 /// @param	{Function}	fn
 function describe(_name, _fn) {
+	// COLYSEUS_TEST_FILTER=<substring> runs only the matching describes —
+	// a full pass takes minutes and Igor forwards no arguments, so it rides env
+	var _filter = environment_get_variable("COLYSEUS_TEST_FILTER");
+	if (_filter != "" && string_pos(_filter, _name) == 0) return;
 	gmtl_indent_offset++;
 	gmtl_suite_continue = true;
 	gmtl_indent = 0;

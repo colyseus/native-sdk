@@ -7,7 +7,18 @@
 // INPUT_REFLECTION and run the shared deterministic sim at 20 Hz.
 // =============================================================================
 
-#macro PREDICT_TEST_ENDPOINT "http://127.0.0.1:5173"
+#macro PREDICT_TEST_ENDPOINT __predict_test_endpoint()
+
+/// Igor's `-- Mac Run` forwards no arguments, so the override rides an
+/// environment variable — lets the suites target a playground on another port.
+function __predict_test_endpoint() {
+    static _ep = undefined;
+    if (_ep == undefined) {
+        _ep = environment_get_variable("COLYSEUS_PLAYGROUND_ENDPOINT");
+        if (_ep == "") _ep = "http://127.0.0.1:5173";
+    }
+    return _ep;
+}
 
 // shared sim constants (src/shared/constants.ts, verbatim)
 #macro SIM_ARENA_W 100
