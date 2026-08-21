@@ -16,11 +16,14 @@ jobs:
   test:
     uses: ./.github/workflows/tests.yml
 
+  # A push releases when one of its commits bumps version.json. A manual run
+  # (workflow_dispatch) releases whatever version.json says — the way to
+  # re-cut a version whose push-triggered build failed.
   check-version:
     runs-on: ubuntu-latest
     outputs:
-      changed: ${{ steps.version-check.outputs.changed || 'true' }}
-      version: ${{ steps.version-check.outputs.version }}
+      changed: ${{ github.event_name == 'workflow_dispatch' || steps.version-check.outputs.changed || 'true' }}
+      version: ${{ steps.version-check.outputs.version || steps.manual.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,16 +31,22 @@ jobs:
           fetch-depth: 2
 
       - name: Check version changes
+        if: github.event_name != 'workflow_dispatch'
         uses: EndBug/version-check@v2
         id: version-check
         with:
           file-name: platforms/godot/addons/colyseus/version.json
           diff-search: true
 
+      - name: Read version (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        id: manual
+        run: echo "version=$(jq -r .version platforms/godot/addons/colyseus/version.json)" >> "$GITHUB_OUTPUT"
+
       - name: Log version info
         run: |
           echo "Version changed: ${{ steps.version-check.outputs.changed }}"
-          echo "Version: ${{ steps.version-check.outputs.version }}"
+          echo "Version: ${{ steps.version-check.outputs.version || steps.manual.outputs.version }}"
 
   build-macos:
     needs: test
