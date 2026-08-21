@@ -818,6 +818,15 @@ GM_EXPORT const char* colyseus_gm_room_get_session_id(double room_handle) {
     return "";
 }
 
+GM_EXPORT const char* colyseus_gm_room_get_reconnection_token(double room_handle) {
+    colyseus_room_t* room = gm_room_ref_get((int)room_handle);
+    if (room) {
+        const char* token = colyseus_room_get_reconnection_token(room);
+        return token ? token : "";
+    }
+    return "";
+}
+
 GM_EXPORT const char* colyseus_gm_room_get_name(double room_handle) {
     colyseus_room_t* room = gm_room_ref_get((int)room_handle);
     if (room) {

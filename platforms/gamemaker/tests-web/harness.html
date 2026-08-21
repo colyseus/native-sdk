@@ -154,6 +154,8 @@
     report("join", ok && state !== 0 && sid.length > 0,
       "joined=" + joined + " state=" + state + " sid=" + sid);
     if (!ok || !state) return finish();
+    var token = window.colyseus_gm_room_get_reconnection_token(roomRef);
+    report("token", token.indexOf(":") > 0, "expected roomId:token, got '" + token + "'");
 
     // T3: reflection walk (the previously-missing shim functions)
     var me = 0;
@@ -225,6 +227,20 @@
     ok = ok && (await waitFor(function () { return reconnected; }, 15000));
     report("drop_reconnect", ok, "dropped=" + dropped + " reconnected=" + reconnected +
       " left=" + left + " is_reconnecting=" + window.colyseus_gm_room_is_reconnecting(roomRef));
+
+    // T8: manual reconnect with the room's token — auto-reconnect off, so the
+    // drop ends in `left`; the server holds the seat for 10s.
+    token = window.colyseus_gm_room_get_reconnection_token(roomRef); // T7's rejoin issued a fresh one
+    window.colyseus_gm_room_set_reconnection_options(roomRef, 0, -1, -1, -1, -1, -1, -1);
+    window.colyseus_gm_netdelay_drop(roomRef);
+    ok = await waitFor(function () { return left; }, 5000);
+    window.colyseus_gm_room_free(roomRef);
+    joined = false;
+    roomRef = window.colyseus_gm_client_reconnect(client, token);
+    ok = ok && roomRef > 0 && (await waitFor(function () { return joined; }, 8000));
+    var sid2 = ok ? window.colyseus_gm_room_get_session_id(roomRef) : "";
+    report("manual_reconnect", ok && sid2 === sid,
+      "left=" + left + " roomRef=" + roomRef + " joined=" + joined + " sid=" + sid + " -> " + sid2);
 
     window.colyseus_gm_room_leave(roomRef);
     finish();

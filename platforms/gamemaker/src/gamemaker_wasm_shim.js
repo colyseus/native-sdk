@@ -206,6 +206,10 @@
         return _callS('colyseus_gm_room_get_session_id', ['number'], [room_handle]);
     };
 
+    window.colyseus_gm_room_get_reconnection_token = function(room_handle) {
+        return _callS('colyseus_gm_room_get_reconnection_token', ['number'], [room_handle]);
+    };
+
     window.colyseus_gm_room_get_name = function(room_handle) {
         return _callS('colyseus_gm_room_get_name', ['number'], [room_handle]);
     };

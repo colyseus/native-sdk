@@ -28,6 +28,16 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
   - Each measurement always settles — on the pong, a connection error, a server-side close before the pong, or a timeout (default 1500 ms) — so one unreachable/blackholed endpoint can't stall the selection.
   - Event types `COLYSEUS_EVENT_LATENCY_RESPONSE` (16), `COLYSEUS_EVENT_LATENCY_ERROR` (17) and `COLYSEUS_EVENT_LATENCY_SELECTED` (18), plus dispatch cases in `colyseus_process()`.
 - `TestLatencyApi` script covering latency event dispatch.
+- `colyseus_room_get_reconnection_token(room)`. Persist it and pass it to
+  `colyseus_client_reconnect(client, token)` to re-take a seat after the
+  process is killed. [#26](https://github.com/colyseus/native-sdk/issues/26)
+
+### Fixed
+- `colyseus_client_reconnect()` was rejected by the server with "bad
+  reconnection token" even with a valid token. [#26](https://github.com/colyseus/native-sdk/issues/26)
+- Automatic reconnection could stall with `colyseus_room_is_reconnecting()`
+  true and no `on_leave` when a retry failed at DNS time (typical after a
+  mobile resume). [#27](https://github.com/colyseus/native-sdk/issues/27)
 
 ## 0.17.23
 

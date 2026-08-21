@@ -140,6 +140,14 @@ function colyseus_client_join_by_id(_client, _room_id, _options) {
     return __colyseus_gm_client_join_by_id(_client, _room_id, __colyseus_options_to_json(_options));
 }
 
+/// Token for colyseus_client_reconnect(). Persist it to re-take this seat
+/// after the process is killed; the server must allowReconnection().
+/// @param {Real} _room_ref  Room reference
+/// @returns {String}  "roomId:token", empty until joined
+function colyseus_room_get_reconnection_token(_room_ref) {
+    return __colyseus_gm_room_get_reconnection_token(_room_ref);
+}
+
 // =============================================================================
 // Room event handler registration (keyed by room ref)
 // =============================================================================

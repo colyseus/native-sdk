@@ -148,6 +148,7 @@ GM_EXPORT const char* colyseus_gm_room_get_id(double room_handle);
  * @return Session ID (caller must NOT free)
  */
 GM_EXPORT const char* colyseus_gm_room_get_session_id(double room_handle);
+GM_EXPORT const char* colyseus_gm_room_get_reconnection_token(double room_handle);
 
 /**
  * Get room name

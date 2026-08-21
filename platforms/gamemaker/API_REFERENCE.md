@@ -204,7 +204,7 @@ room = external_call(global.colyseus_client_reconnect, client, reconnection_toke
 
 **Parameters:**
 - `client_handle` (real): Client handle
-- `reconnection_token` (string): Token from previous connection
+- `reconnection_token` (string): The value `colyseus_room_get_reconnection_token()` returned on the previous room. The server must have called `allowReconnection()` for that seat.
 
 **Returns:** Room handle (double) - via GM_EVENT_ROOM_JOIN event
 
@@ -296,6 +296,27 @@ session_id = external_call(global.colyseus_room_get_session_id, room);
 - `room_handle` (real): Room handle
 
 **Returns:** Session ID string
+
+---
+
+### colyseus_room_get_reconnection_token
+
+Token for `colyseus_client_reconnect()`. Persist it to re-take this seat after the process is killed.
+
+**Signature:**
+```c
+const char* colyseus_room_get_reconnection_token(double room_handle);
+```
+
+**GML Usage:**
+```gml
+token = colyseus_room_get_reconnection_token(room);
+```
+
+**Parameters:**
+- `room_handle` (real): Room handle
+
+**Returns:** `"roomId:token"` string, empty until the room has joined
 
 ---
 

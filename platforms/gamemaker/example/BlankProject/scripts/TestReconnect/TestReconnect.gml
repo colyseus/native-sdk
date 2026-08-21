@@ -169,5 +169,34 @@ suite(function() {
 
             global.__rc.room = -1;  // already gone
         });
+
+        test("manual colyseus_client_reconnect() with the room's token", function() {
+            var _token = colyseus_room_get_reconnection_token(global.__rc.room);
+            var _session_id = colyseus_room_get_session_id(global.__rc.room);
+            expect(string_pos(":", _token) > 0).toBeTruthy();  // roomId:token
+
+            // take the automatic path out of the picture: the drop ends in on_leave
+            colyseus_room_set_reconnection_options(global.__rc.room,
+                0, -1, -1, -1, -1, -1, -1);
+            colyseus_send(global.__rc.room, "force_drop", {});
+            var _left = _rc_poll_until(function() {
+                return global.__rc.left;
+            }, 5000);
+            expect(_left).toBeTruthy();
+            colyseus_room_free(global.__rc.room);
+
+            // the server holds the seat for 10s (allowReconnection) — take it back
+            global.__rc.joined = false;
+            global.__rc.room = colyseus_client_reconnect(global.__rc.client, _token);
+            expect(global.__rc.room).toBeGreaterThan(0);
+            colyseus_on_join(global.__rc.room, function(_room) {
+                global.__rc.joined = true;
+            });
+            var _rejoined = _rc_poll_until(function() {
+                return global.__rc.joined;
+            }, 5000);
+            expect(_rejoined).toBeTruthy();
+            expect(colyseus_room_get_session_id(global.__rc.room)).toBe(_session_id);
+        });
     });
 });
