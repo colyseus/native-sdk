@@ -23,10 +23,10 @@ target:
    `html5game/uph_colyseus_wasm.js` and lists it in the game's extension
    manifest, and the runner appends the `<script>` and waits for it before
    entering the main loop. (The extension carries no `HTML5CodeInjection`
-   for this reason — a `<script src>` of its own would 404 at the page root
+   for this reason: a `<script src>` of its own would 404 at the page root
    or instantiate the module twice.)
 4. The WASM module then instantiates **asynchronously**, and finishes after
-   the game has started running — see the gate below.
+   the game has started running. See the gate below.
 
 ## Using it in a project
 

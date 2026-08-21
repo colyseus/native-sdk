@@ -69,7 +69,7 @@ zig build -Doptimize=ReleaseSmall -Dall=true
    with `./package-yymps.sh`).
 2. In GameMaker: **Tools → Import Local Package**, select every resource,
    **Import**. You get the `Colyseus_SDK` extension plus two scripts,
-   `Colyseus` and `ColyseusPredict` — they ship together and both are
+   `Colyseus` and `ColyseusPredict`. They ship together and both are
    required.
 3. On macOS/Linux run `./build.sh` once: the package lists `colyseus.dll`
    first, and GameMaker loads only the first native entry (see the packaging
@@ -88,7 +88,7 @@ room = 0;
 // Step
 if (client == 0) {
     // HTML5 instantiates the WASM module after the game starts; native is
-    // ready at once — the same gate works everywhere
+    // ready at once, so the same gate works everywhere
     if (!colyseus_is_ready()) exit;
 
     client = colyseus_client_create("http://localhost:2567");
@@ -110,7 +110,7 @@ if (client == 0) {
         show_debug_message("left: " + _reason);
     });
 }
-colyseus_process();   // delivers every event + callback; call once per Step
+colyseus_process();   // delivers every event and callback; call once per Step
 
 // anywhere: send a message (structs, strings, numbers, booleans)
 colyseus_send(room, "move", { x: mouse_x, y: mouse_y });
@@ -150,7 +150,7 @@ zig-out/lib/
 ## Extension API
 
 The API is the two GML scripts, and their `///` doc comments are the
-reference — there is no hand-maintained copy to drift:
+reference (there is no hand-maintained copy to drift):
 
 | script | what it covers |
 |---|---|
@@ -268,10 +268,10 @@ The script will:
 
 Tests are GML scripts in `example/BlankProject/scripts/` using the GMTL test framework:
 
-- **TestRoomApi** — readiness, room connection, state access, structs and collections, schema callbacks, messages, leave
-- **TestViewCallbacks**, **TestReconnect**, **TestLatencyApi** — StateView callbacks, drop/reconnect, latency selection
-- **TestHttpApi**, **TestHttpHelpers**, **TestAuthApi** — HTTP and auth flows
-- **TestPredictCore**, **TestPredictAdvanced**, **TestPredictNet** — the prediction layer, against the prediction-tools playground
+- **TestRoomApi**: readiness, room connection, state access, structs and collections, schema callbacks, messages, leave
+- **TestViewCallbacks**, **TestReconnect**, **TestLatencyApi**: StateView callbacks, drop/reconnect, latency selection
+- **TestHttpApi**, **TestHttpHelpers**, **TestAuthApi**: HTTP and auth flows
+- **TestPredictCore**, **TestPredictAdvanced**, **TestPredictNet**: the prediction layer, against the prediction-tools playground
 
 `COLYSEUS_TEST_FILTER=<substring>` runs only the matching `describe` blocks;
 `COLYSEUS_PLAYGROUND_PORT` relocates the playground server. The HTML5 build is
@@ -285,8 +285,9 @@ To modify the build configuration, edit `build.zig`.
 
 ## Documentation
 
-- **[HTML5_SETUP.md](HTML5_SETUP.md)** — HTML5/GX.Games: how the WASM build loads and the `colyseus_is_ready()` gate
-- **[SUMMARY.md](SUMMARY.md)** — the build system (zig build, cross-compilation, output layout)
+- **[HTML5_SETUP.md](HTML5_SETUP.md)**: HTML5/GX.Games, how the WASM build loads and the `colyseus_is_ready()` gate
+- **[PORTING_NOTES.md](PORTING_NOTES.md)**: GML and GameMaker behaviours that bite a multiplayer port (closures, built-in names, HTML5 numeric and struct traps, Igor)
+- **[SUMMARY.md](SUMMARY.md)**: the build system (zig build, cross-compilation, output layout)
 - **[CHANGELOG.md](CHANGELOG.md)**
 
 ## License
