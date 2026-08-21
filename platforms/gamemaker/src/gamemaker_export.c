@@ -1077,33 +1077,115 @@ GM_EXPORT double colyseus_gm_schema_field_type_at(double instance_handle, double
     }
 }
 
-GM_EXPORT double colyseus_gm_map_get(double instance_handle, const char* field_name, const char* key) {
+// The collection behind a MAP/ARRAY field, or NULL when the field is absent
+// or of another type.
+static void* gm_resolve_collection(double instance_handle, const char* field_name,
+                                   colyseus_field_type_t want) {
     colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
-    if (!schema || !field_name || !key) return 0.0;
-
-    colyseus_map_schema_t* map = NULL;
+    if (!schema || !schema->__vtable || !field_name) return NULL;
 
     if (colyseus_vtable_is_dynamic(schema->__vtable)) {
         colyseus_dynamic_schema_t* dyn = (colyseus_dynamic_schema_t*)schema;
         colyseus_dynamic_value_t* val = colyseus_dynamic_schema_get_by_name(dyn, field_name);
-        if (val && val->type == COLYSEUS_FIELD_MAP) {
-            map = val->data.map;
-        }
-    } else {
-        for (int i = 0; i < schema->__vtable->field_count; i++) {
-            if (schema->__vtable->fields[i].name &&
-                strcmp(schema->__vtable->fields[i].name, field_name) == 0 &&
-                schema->__vtable->fields[i].type == COLYSEUS_FIELD_MAP) {
-                map = *(colyseus_map_schema_t**)((char*)schema +
-                       schema->__vtable->fields[i].offset);
-                break;
-            }
+        if (!val || val->type != want) return NULL;
+        return want == COLYSEUS_FIELD_MAP ? (void*)val->data.map : (void*)val->data.array;
+    }
+    for (int i = 0; i < schema->__vtable->field_count; i++) {
+        const colyseus_field_t* f = &schema->__vtable->fields[i];
+        if (f->name && strcmp(f->name, field_name) == 0 && f->type == want) {
+            return *(void**)((char*)schema + f->offset);
         }
     }
+    return NULL;
+}
 
-    if (!map) return 0.0;
+GM_EXPORT double colyseus_gm_map_get(double instance_handle, const char* field_name, const char* key) {
+    colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
+    if (!map || !key) return 0.0;
     void* item = colyseus_map_schema_get(map, key);
     return (double)(uintptr_t)item;
+}
+
+// A collection entry lands in the schema_get result slot exactly like a
+// field read: the return is the COLYSEUS_FIELD_* type (-1 when absent), the
+// value is a handle for schema children or the decoded primitive.
+static double gm_collection_item_result(void* item, bool has_schema_child,
+                                        const char* child_primitive_type) {
+    gm_schema_get_result.number = 0.0;
+    gm_schema_get_result.string[0] = '\0';
+    if (!item) return -1.0;
+    if (has_schema_child) {
+        gm_schema_get_result.number = (double)(uintptr_t)item;
+        return (double)COLYSEUS_FIELD_REF;
+    }
+    colyseus_field_type_t t = colyseus_field_type_from_string(child_primitive_type);
+    switch (t) {
+        case COLYSEUS_FIELD_STRING:
+            strncpy(gm_schema_get_result.string, (const char*)item, sizeof(gm_schema_get_result.string) - 1);
+            break;
+        case COLYSEUS_FIELD_NUMBER:
+        case COLYSEUS_FIELD_FLOAT64: gm_schema_get_result.number = *(double*)item; break;
+        case COLYSEUS_FIELD_FLOAT32: gm_schema_get_result.number = (double)*(float*)item; break;
+        case COLYSEUS_FIELD_BOOLEAN: gm_schema_get_result.number = *(bool*)item ? 1.0 : 0.0; break;
+        case COLYSEUS_FIELD_INT8:    gm_schema_get_result.number = (double)*(int8_t*)item; break;
+        case COLYSEUS_FIELD_UINT8:   gm_schema_get_result.number = (double)*(uint8_t*)item; break;
+        case COLYSEUS_FIELD_INT16:   gm_schema_get_result.number = (double)*(int16_t*)item; break;
+        case COLYSEUS_FIELD_UINT16:  gm_schema_get_result.number = (double)*(uint16_t*)item; break;
+        case COLYSEUS_FIELD_INT32:   gm_schema_get_result.number = (double)*(int32_t*)item; break;
+        case COLYSEUS_FIELD_UINT32:  gm_schema_get_result.number = (double)*(uint32_t*)item; break;
+        case COLYSEUS_FIELD_INT64:   gm_schema_get_result.number = (double)*(int64_t*)item; break;
+        case COLYSEUS_FIELD_UINT64:  gm_schema_get_result.number = (double)*(uint64_t*)item; break;
+        default: return -1.0;
+    }
+    return (double)t;
+}
+
+// Map entries in decode order — the order the server's MapSchema iterates,
+// which is what order-dependent prediction steps need. Positional access
+// walks the list, so a full enumeration is O(n²); maps in a GameMaker state
+// are small, and colyseus_map_keys() does the walk once.
+static colyseus_map_item_t* gm_map_item_at(colyseus_map_schema_t* map, int index) {
+    if (!map || index < 0) return NULL;
+    colyseus_map_item_t* item = map->items;
+    for (int i = 0; item && i < index; i++) item = item->hh.next;
+    return item;
+}
+
+GM_EXPORT double colyseus_gm_map_size(double instance_handle, const char* field_name) {
+    colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
+    return map ? (double)map->count : 0.0;
+}
+
+GM_EXPORT const char* colyseus_gm_map_key_at(double instance_handle, const char* field_name, double index) {
+    colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
+    colyseus_map_item_t* item = gm_map_item_at(map, (int)index);
+    return item && item->key ? item->key : "";
+}
+
+GM_EXPORT double colyseus_gm_map_value_at(double instance_handle, const char* field_name, double index) {
+    colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
+    colyseus_map_item_t* item = gm_map_item_at(map, (int)index);
+    if (!map || !item) return gm_collection_item_result(NULL, false, NULL);
+    return gm_collection_item_result(item->value, map->has_schema_child, map->child_primitive_type);
+}
+
+GM_EXPORT double colyseus_gm_map_get_value(double instance_handle, const char* field_name, const char* key) {
+    colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
+    if (!map || !key) return gm_collection_item_result(NULL, false, NULL);
+    return gm_collection_item_result(colyseus_map_schema_get(map, key),
+                                     map->has_schema_child, map->child_primitive_type);
+}
+
+GM_EXPORT double colyseus_gm_array_size(double instance_handle, const char* field_name) {
+    colyseus_array_schema_t* arr = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_ARRAY);
+    return arr ? (double)arr->count : 0.0;
+}
+
+GM_EXPORT double colyseus_gm_array_value_at(double instance_handle, const char* field_name, double index) {
+    colyseus_array_schema_t* arr = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_ARRAY);
+    if (!arr || index < 0 || index >= arr->count) return gm_collection_item_result(NULL, false, NULL);
+    return gm_collection_item_result(colyseus_array_schema_get(arr, (int)index),
+                                     arr->has_schema_child, arr->child_primitive_type);
 }
 
 // =============================================================================

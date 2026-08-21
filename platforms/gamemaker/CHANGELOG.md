@@ -31,6 +31,11 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 - `colyseus_room_get_reconnection_token(room)`. Persist it and pass it to
   `colyseus_client_reconnect(client, token)` to re-take a seat after the
   process is killed. [#26](https://github.com/colyseus/native-sdk/issues/26)
+- Collection enumeration: `colyseus_map_size()`, `colyseus_map_keys()`,
+  `colyseus_map_key_at()`, `colyseus_map_value_at()`, `colyseus_array_size()`
+  and `colyseus_array_get()`. Map order is the server's iteration order, so a
+  roster no longer needs an `on_add`/`on_remove` mirror. `colyseus_map_get()`
+  now also returns the value of primitive-valued maps.
 - `colyseus_is_ready()`. On HTML5 the WASM module instantiates after the game
   has started, so create the client on the first Step where this is true.
   `colyseus_client_create()` called earlier now returns 0 and says so, instead

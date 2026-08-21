@@ -184,6 +184,23 @@
     report("reflection", ok && nfields >= 4 && sawX,
       "me=" + me + " fields=" + nfields + " sawX=" + sawX);
 
+    // T3b: collection enumeration — our key is in the walk, positional reads
+    // agree with the keyed read, and the walk ends with "" / -1
+    var msize = window.colyseus_gm_map_size(state, "players");
+    var mkeys = [], idxOfMe = -1;
+    for (var k = 0; k < msize; k++) {
+      var key = window.colyseus_gm_map_key_at(state, "players", k);
+      mkeys.push(key);
+      if (key === sid) idxOfMe = k;
+    }
+    var vtype = idxOfMe >= 0 ? window.colyseus_gm_map_value_at(state, "players", idxOfMe) : -2;
+    var vhandle = window.colyseus_gm_schema_get_result_number();
+    report("map_enum", msize >= 1 && idxOfMe >= 0 && vtype === 13 && vhandle === me &&
+      window.colyseus_gm_map_key_at(state, "players", msize) === "" &&
+      window.colyseus_gm_map_value_at(state, "players", msize) === -1,
+      "size=" + msize + " keys=" + JSON.stringify(mkeys) + " idxOfMe=" + idxOfMe +
+      " vtype=" + vtype + " vhandle=" + vhandle + " me=" + me);
+
     // T4: input handle synthesis + acks + rtt
     ok = window.colyseus_gm_input_init(roomRef, 0, 0, 0) === 1;
     var tickRate = window.colyseus_gm_input_stat(roomRef, 4);

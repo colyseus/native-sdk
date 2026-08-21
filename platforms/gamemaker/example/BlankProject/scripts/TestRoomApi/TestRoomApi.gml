@@ -332,6 +332,60 @@ suite(function() {
             expect(colyseus_schema_get(colyseus_map_get(_state, "players", _sid), "y")).toBe(8);
         });
 
+        test("map enumeration follows the server's insertion order", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _sid = colyseus_room_get_session_id(global.__rt.room);
+            expect(colyseus_map_size(_state, "players")).toBe(1);
+            expect(colyseus_map_key_at(_state, "players", 0)).toBe(_sid);
+            expect(colyseus_map_value_at(_state, "players", 0)).toBe(colyseus_map_get(_state, "players", _sid));
+            expect(colyseus_map_key_at(_state, "players", 1)).toBe("");
+            expect(colyseus_map_value_at(_state, "players", 1)).toBe(undefined);
+            expect(colyseus_map_size(_state, "no_such_field")).toBe(0);
+
+            // the server inserts the bot after us — it must enumerate after us
+            colyseus_send(global.__rt.room, "add_bot", {});
+            var _start = current_time;
+            while (colyseus_map_size(_state, "players") < 2 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            var _keys = colyseus_map_keys(_state, "players");
+            expect(array_length(_keys)).toBe(2);
+            expect(_keys[0]).toBe(_sid);
+            expect(_keys[1] != _sid).toBeTruthy();
+            var _bot = colyseus_map_value_at(_state, "players", 1);
+            expect(is_struct(_bot)).toBe(true);
+            expect(_bot.isBot).toBe(1);
+            expect(colyseus_map_get(_state, "players", _keys[1])).toBe(_bot);
+
+            colyseus_send(global.__rt.room, "remove_bot", {});
+            _start = current_time;
+            while (colyseus_map_size(_state, "players") > 1 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            var _left = colyseus_map_keys(_state, "players");
+            expect(_left).toHaveLength(1);
+            expect(_left[0]).toBe(_sid);
+        });
+
+        test("array entries read by index", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _sid = colyseus_room_get_session_id(global.__rt.room);
+            var _me = colyseus_map_get(_state, "players", _sid);
+            // onJoin pushes one "sword"
+            expect(colyseus_array_size(_me, "items")).toBe(1);
+            expect(colyseus_array_get(_me, "items", 0).name).toBe("sword");
+            expect(colyseus_array_get(_me, "items", 1)).toBe(undefined);
+            expect(colyseus_array_size(_me, "no_such_field")).toBe(0);
+
+            colyseus_send(global.__rt.room, "add_item", { name: "shield" });
+            var _start = current_time;
+            while (colyseus_array_size(_me, "items") < 2 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            expect(colyseus_array_get(_me, "items", 0).name).toBe("sword");
+            expect(colyseus_array_get(_me, "items", 1).name).toBe("shield");
+        });
+
         test("struct field updates inline when listener fires", function() {
             global.__rt.callbacks = colyseus_callbacks_create(global.__rt.room);
             global.__rt.player_struct = undefined;

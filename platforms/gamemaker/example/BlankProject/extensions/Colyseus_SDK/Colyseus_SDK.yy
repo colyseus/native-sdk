@@ -578,6 +578,118 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_map_size",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_map_size",
+          "help": "(internal) map size",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_map_size",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_map_key_at",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_map_key_at",
+          "help": "(internal) map key at",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_map_key_at",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 1
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_map_value_at",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_map_value_at",
+          "help": "(internal) map value at",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_map_value_at",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_map_get_value",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_map_get_value",
+          "help": "(internal) map get value",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_map_get_value",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_array_size",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_array_size",
+          "help": "(internal) array size",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_array_size",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_array_value_at",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_array_value_at",
+          "help": "(internal) array value at",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_array_value_at",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "colyseus_callbacks_create",
           "argCount": 1,
           "args": [
@@ -3568,6 +3680,118 @@
           "hidden": true,
           "kind": 1,
           "name": "__colyseus_map_get",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_map_size",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_map_size",
+          "help": "(internal) map size",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_map_size",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_map_key_at",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_map_key_at",
+          "help": "(internal) map key at",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_map_key_at",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 1
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_map_value_at",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_map_value_at",
+          "help": "(internal) map value at",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_map_value_at",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_map_get_value",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_map_get_value",
+          "help": "(internal) map get value",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_map_get_value",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_array_size",
+          "argCount": 2,
+          "args": [
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_array_size",
+          "help": "(internal) array size",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_array_size",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_array_value_at",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_array_value_at",
+          "help": "(internal) array value at",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_array_value_at",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2

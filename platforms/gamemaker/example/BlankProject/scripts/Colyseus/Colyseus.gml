@@ -447,7 +447,7 @@ function colyseus_room_free(_room_ref) {
 /// when a colyseus_listen() callback for that field fires. Call this once
 /// per frame before reading, or use colyseus_schema_get() for a single live
 /// field. Map and array fields are not walked — read their entries through
-/// colyseus_map_get().
+/// colyseus_map_get() / colyseus_map_value_at() / colyseus_array_get().
 /// @param {Real} _room_ref  Room reference
 /// @returns {Struct}
 function colyseus_room_get_state(_room_ref) {
@@ -457,19 +457,114 @@ function colyseus_room_get_state(_room_ref) {
     return __colyseus_schema_sync_struct(_handle);
 }
 
-/// Get an item from a MapSchema field by key. Returns a struct for schema
-/// items, refreshed as of this call (see colyseus_room_get_state).
+/// @ignore Internal: a typed collection read → GML value. The C side leaves
+/// the entry in the schema_get result slot and returns its COLYSEUS_TYPE_*.
+function __colyseus_collection_result(_type) {
+    if (_type < 0) return undefined;
+    if (_type == COLYSEUS_TYPE_STRING) return __colyseus_schema_get_result_string();
+    if (_type == COLYSEUS_TYPE_REF) {
+        var _handle = __colyseus_schema_get_result_number();
+        return (_handle == 0) ? undefined : __colyseus_schema_sync_struct(_handle);
+    }
+    return __colyseus_schema_get_result_number();
+}
+
+// =============================================================================
+// Collections — MapSchema / ArraySchema entries. Map order is the order the
+// server's MapSchema iterates (insertion order), which order-dependent
+// prediction code can rely on.
+// =============================================================================
+
+/// Get an entry from a MapSchema field by key: a struct for schema entries
+/// (refreshed as of this call, see colyseus_room_get_state), the value for
+/// primitive maps, undefined when absent.
 /// @param {Real|Struct} _instance  Schema instance handle or struct
 /// @param {String} _field  Map field name
 /// @param {String} _key  Map key
-/// @returns {Struct|Undefined}
+/// @returns {Struct|String|Real|Undefined}
 function colyseus_map_get(_instance, _field, _key) {
     if (is_struct(_instance)) {
         _instance = _instance.__handle;
     }
-    var _handle = __colyseus_map_get(_instance, _field, _key);
-    if (_handle == 0) return undefined;
-    return __colyseus_schema_sync_struct(_handle);
+    return __colyseus_collection_result(__colyseus_gm_map_get_value(_instance, _field, _key));
+}
+
+/// Number of entries in a MapSchema field (0 when the field is absent).
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Map field name
+/// @returns {Real}
+function colyseus_map_size(_instance, _field) {
+    if (is_struct(_instance)) {
+        _instance = _instance.__handle;
+    }
+    return __colyseus_gm_map_size(_instance, _field);
+}
+
+/// Key of the entry at a 0-based position, "" when out of range.
+/// Each call walks to the position; use colyseus_map_keys() to enumerate.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Map field name
+/// @param {Real} _index
+/// @returns {String}
+function colyseus_map_key_at(_instance, _field, _index) {
+    if (is_struct(_instance)) {
+        _instance = _instance.__handle;
+    }
+    return __colyseus_gm_map_key_at(_instance, _field, _index);
+}
+
+/// Entry at a 0-based position (same value rules as colyseus_map_get),
+/// undefined when out of range.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Map field name
+/// @param {Real} _index
+/// @returns {Struct|String|Real|Undefined}
+function colyseus_map_value_at(_instance, _field, _index) {
+    if (is_struct(_instance)) {
+        _instance = _instance.__handle;
+    }
+    return __colyseus_collection_result(__colyseus_gm_map_value_at(_instance, _field, _index));
+}
+
+/// Every key of a MapSchema field, in the server's iteration order.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Map field name
+/// @returns {Array<String>}
+function colyseus_map_keys(_instance, _field) {
+    if (is_struct(_instance)) {
+        _instance = _instance.__handle;
+    }
+    var _n = __colyseus_gm_map_size(_instance, _field);
+    var _keys = array_create(_n, "");
+    for (var _i = 0; _i < _n; _i++) {
+        _keys[_i] = __colyseus_gm_map_key_at(_instance, _field, _i);
+    }
+    return _keys;
+}
+
+/// Number of entries in an ArraySchema field (0 when the field is absent).
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Array field name
+/// @returns {Real}
+function colyseus_array_size(_instance, _field) {
+    if (is_struct(_instance)) {
+        _instance = _instance.__handle;
+    }
+    return __colyseus_gm_array_size(_instance, _field);
+}
+
+/// Entry of an ArraySchema field at a 0-based index: a struct for schema
+/// entries (refreshed as of this call), the value for primitive arrays,
+/// undefined when out of range.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Array field name
+/// @param {Real} _index
+/// @returns {Struct|String|Real|Undefined}
+function colyseus_array_get(_instance, _field, _index) {
+    if (is_struct(_instance)) {
+        _instance = _instance.__handle;
+    }
+    return __colyseus_collection_result(__colyseus_gm_array_value_at(_instance, _field, _index));
 }
 
 // =============================================================================

@@ -270,6 +270,30 @@
         return _callN('colyseus_gm_map_get', ['number', 'string', 'string'], [instance_handle, field_name, key]);
     };
 
+    window.colyseus_gm_map_size = function(instance_handle, field_name) {
+        return _callN('colyseus_gm_map_size', ['number', 'string'], [instance_handle, field_name]);
+    };
+
+    window.colyseus_gm_map_key_at = function(instance_handle, field_name, index) {
+        return _callS('colyseus_gm_map_key_at', ['number', 'string', 'number'], [instance_handle, field_name, index]);
+    };
+
+    window.colyseus_gm_map_value_at = function(instance_handle, field_name, index) {
+        return _callN('colyseus_gm_map_value_at', ['number', 'string', 'number'], [instance_handle, field_name, index]);
+    };
+
+    window.colyseus_gm_map_get_value = function(instance_handle, field_name, key) {
+        return _callN('colyseus_gm_map_get_value', ['number', 'string', 'string'], [instance_handle, field_name, key]);
+    };
+
+    window.colyseus_gm_array_size = function(instance_handle, field_name) {
+        return _callN('colyseus_gm_array_size', ['number', 'string'], [instance_handle, field_name]);
+    };
+
+    window.colyseus_gm_array_value_at = function(instance_handle, field_name, index) {
+        return _callN('colyseus_gm_array_value_at', ['number', 'string', 'number'], [instance_handle, field_name, index]);
+    };
+
     window.colyseus_gm_callbacks_create = function(room_handle) {
         return _callN('colyseus_gm_callbacks_create', ['number'], [room_handle]);
     };
