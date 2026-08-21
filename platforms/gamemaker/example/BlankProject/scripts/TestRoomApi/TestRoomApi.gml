@@ -291,6 +291,47 @@ suite(function() {
             expect(variable_struct_exists(global.__rt.add_instance, "x")).toBe(true);
         });
 
+        test("accessors refresh the struct without a listener", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _sid = colyseus_room_get_session_id(global.__rt.room);
+            var _me = colyseus_map_get(_state, "players", _sid);
+            expect(_me.x).toBe(0);
+
+            // nobody listens to x — the only path to the new value is a re-read
+            colyseus_send(global.__rt.room, "move", { x: 123, y: 45 });
+            var _start = current_time;
+            while (colyseus_schema_get(_me, "x") != 123 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            expect(colyseus_schema_get(_me, "x")).toBe(123);
+
+            // a re-read through any accessor refreshes the cached struct in place
+            var _again = colyseus_map_get(_state, "players", _sid);
+            expect(_again).toBe(_me);
+            expect(_me.x).toBe(123);
+            expect(_me.y).toBe(45);
+
+            // nested refs refresh with their parent: host is this player
+            var _root = colyseus_room_get_state(global.__rt.room);
+            expect(_root.host).toBe(_me);
+            expect(_root.host.x).toBe(123);
+        });
+
+        test("root refresh reaches an unlistened scalar", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _sid = colyseus_room_get_session_id(global.__rt.room);
+            expect(_state.host.x).toBe(0);
+            colyseus_send(global.__rt.room, "move", { x: 9, y: 8 });
+            var _start = current_time;
+            while (colyseus_room_get_state(global.__rt.room).host.x != 9
+                   && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            // the held reference IS the cached struct, so it caught up too
+            expect(_state.host.x).toBe(9);
+            expect(colyseus_schema_get(colyseus_map_get(_state, "players", _sid), "y")).toBe(8);
+        });
+
         test("struct field updates inline when listener fires", function() {
             global.__rt.callbacks = colyseus_callbacks_create(global.__rt.room);
             global.__rt.player_struct = undefined;

@@ -59,6 +59,7 @@ global.__colyseus_schema_meta = array_create(256, undefined);  // callback index
 global.__colyseus_http_handlers = ds_map_create();  // keyed by request handle (real)
 global.__colyseus_latency_handlers = ds_map_create();  // keyed by request handle (real)
 global.__colyseus_schema_structs = ds_map_create();  // keyed by instance handle (real) → GML struct
+global.__colyseus_schema_sync_gen = 0;  // bumped per accessor call; stamps structs already refreshed in it
 global.__colyseus_current_room_ref = -1;  // set during event processing / state access for room tagging
 
 #macro __COLYSEUS_AUTH_FILE "colyseus_auth.dat"
@@ -339,9 +340,11 @@ function colyseus_schema_get_field_type(_instance, _field) {
     return __colyseus_schema_get_field_type(_instance, _field);
 }
 
-/// Get a field value from a schema instance, auto-dispatching by type.
+/// Get a field value from a schema instance, auto-dispatching by type. Always
+/// reads through to the decoder, so this is the live value.
 /// Returns: string for string fields, number for numeric/bool fields,
-///          struct for ref fields (synchronized), undefined if unknown.
+///          struct for ref fields (refreshed, see colyseus_room_get_state),
+///          undefined if unknown.
 /// @param {Real|Struct} _instance  Schema instance handle or struct
 /// @param {String} _field   Field name
 function colyseus_schema_get(_instance, _field) {
@@ -357,32 +360,49 @@ function colyseus_schema_get(_instance, _field) {
     } else if (_type == COLYSEUS_TYPE_REF) {
         var _handle = __colyseus_schema_get_result_number();
         if (_handle == 0) return undefined;
-        return __colyseus_schema_to_struct(_handle);
+        return __colyseus_schema_sync_struct(_handle);
     } else {
         return __colyseus_schema_get_result_number();
     }
 }
 
-/// @ignore Internal: Build or retrieve a cached GML struct for a schema instance handle.
-/// The struct is kept in sync — fields are refreshed on each state change.
-function __colyseus_schema_to_struct(_handle) {
-    // Return cached struct if available
+/// @ignore Internal: the cached struct for a LIVE handle, every field (and
+/// nested ref) re-read from the decoder. The public accessors go through
+/// here, so a struct is current as of the call that handed it out; the
+/// refresh writes into the cached struct, so earlier references to it see
+/// the new values too.
+function __colyseus_schema_sync_struct(_handle) {
+    global.__colyseus_schema_sync_gen += 1;
+    return __colyseus_schema_to_struct(_handle, global.__colyseus_schema_sync_gen);
+}
+
+/// @ignore Internal: Build or retrieve the cached GML struct for a schema
+/// instance handle. A new struct is populated once; a cached one is only
+/// refreshed when _gen is given (and not already stamped with it — the same
+/// instance can be reachable twice in one walk).
+function __colyseus_schema_to_struct(_handle, _gen = -1) {
     if (ds_map_exists(global.__colyseus_schema_structs, _handle)) {
-        return ds_map_find_value(global.__colyseus_schema_structs, _handle);
+        var _cached = ds_map_find_value(global.__colyseus_schema_structs, _handle);
+        if (_gen >= 0 && _cached.__sync_gen != _gen) {
+            _cached.__sync_gen = _gen;
+            __colyseus_schema_refresh_struct(_handle, _cached, _gen);
+        }
+        return _cached;
     }
 
     var _struct = {};
     _struct.__handle = _handle;
     _struct.__room_ref = global.__colyseus_current_room_ref;
+    _struct.__sync_gen = _gen;
     ds_map_set(global.__colyseus_schema_structs, _handle, _struct);
 
     // Populate fields from C data
-    __colyseus_schema_refresh_struct(_handle, _struct);
+    __colyseus_schema_refresh_struct(_handle, _struct, _gen);
     return _struct;
 }
 
 /// @ignore Internal: Refresh a GML struct's fields from the current C schema data.
-function __colyseus_schema_refresh_struct(_handle, _struct) {
+function __colyseus_schema_refresh_struct(_handle, _struct, _gen = -1) {
     var _count = __colyseus_schema_field_count(_handle);
     for (var _i = 0; _i < _count; _i++) {
         var _name = __colyseus_schema_field_name(_handle, _i);
@@ -394,7 +414,7 @@ function __colyseus_schema_refresh_struct(_handle, _struct) {
         } else if (_ftype == COLYSEUS_TYPE_REF) {
             var _ref = __colyseus_schema_get_number(_handle, _name);
             if (_ref != 0) {
-                variable_struct_set(_struct, _name, __colyseus_schema_to_struct(_ref));
+                variable_struct_set(_struct, _name, __colyseus_schema_to_struct(_ref, _gen));
             } else {
                 variable_struct_set(_struct, _name, undefined);
             }
@@ -419,19 +439,26 @@ function colyseus_room_free(_room_ref) {
     __colyseus_room_free(_room_ref);
 }
 
-/// Get room state as a synchronized struct.
-/// All schema fields are populated, including nested refs.
-/// The struct is automatically refreshed on each state change.
+/// Get the room state as a struct, every field (and nested ref) refreshed
+/// from the decoder as of this call.
+///
+/// Dot access is a snapshot: a struct you hold on to only changes when an
+/// accessor (this, colyseus_map_get, colyseus_schema_get) re-reads it, or
+/// when a colyseus_listen() callback for that field fires. Call this once
+/// per frame before reading, or use colyseus_schema_get() for a single live
+/// field. Map and array fields are not walked — read their entries through
+/// colyseus_map_get().
 /// @param {Real} _room_ref  Room reference
 /// @returns {Struct}
 function colyseus_room_get_state(_room_ref) {
     global.__colyseus_current_room_ref = _room_ref;
     var _handle = __colyseus_room_get_state(_room_ref);
     if (_handle == 0) return undefined;
-    return __colyseus_schema_to_struct(_handle);
+    return __colyseus_schema_sync_struct(_handle);
 }
 
-/// Get an item from a MapSchema field by key. Returns a struct for schema items.
+/// Get an item from a MapSchema field by key. Returns a struct for schema
+/// items, refreshed as of this call (see colyseus_room_get_state).
 /// @param {Real|Struct} _instance  Schema instance handle or struct
 /// @param {String} _field  Map field name
 /// @param {String} _key  Map key
@@ -442,7 +469,7 @@ function colyseus_map_get(_instance, _field, _key) {
     }
     var _handle = __colyseus_map_get(_instance, _field, _key);
     if (_handle == 0) return undefined;
-    return __colyseus_schema_to_struct(_handle);
+    return __colyseus_schema_sync_struct(_handle);
 }
 
 // =============================================================================
