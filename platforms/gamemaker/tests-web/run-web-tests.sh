@@ -8,8 +8,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-if ! curl -s -o /dev/null --max-time 2 http://127.0.0.1:5173; then
-    echo "[ERROR] playground server not reachable on :5173"
+PLAYGROUND_PORT="${COLYSEUS_PLAYGROUND_PORT:-5173}"
+if ! curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PLAYGROUND_PORT"; then
+    echo "[ERROR] playground server not reachable on :$PLAYGROUND_PORT"
     echo "        cd demos/prediction-tools && pnpm dev --host 0.0.0.0"
     exit 2
 fi

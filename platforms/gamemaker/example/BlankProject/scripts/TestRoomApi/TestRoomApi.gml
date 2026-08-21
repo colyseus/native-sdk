@@ -8,6 +8,23 @@ global.__rt = { done: false, room: -1, client: -1, callbacks: -1 };
 suite(function() {
 
     // =========================================================================
+    // Section 0: Extension readiness (the HTML5 gate, a no-op on native)
+    // =========================================================================
+    describe("Extension readiness", function() {
+
+        test("colyseus_is_ready() is true on native from the first call", function() {
+            expect(colyseus_is_ready()).toBeTruthy();
+        });
+
+        test("client_create succeeds once ready and passes the ABI check", function() {
+            expect(__colyseus_gm_predict_abi_version()).toBe(__COLYSEUS_GM_ABI);
+            var _client = colyseus_client_create("http://127.0.0.1:2567");
+            expect(_client).toBeGreaterThan(0);
+            colyseus_client_free(_client);
+        });
+    });
+
+    // =========================================================================
     // Section 1: Room Connection
     // =========================================================================
     describe("Room Connection", function() {

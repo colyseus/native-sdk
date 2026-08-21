@@ -71,12 +71,33 @@ global.__colyseus_current_room_ref = -1;  // set during event processing / state
 // wasm bundle otherwise fails as silent 0s from every unbound function.
 #macro __COLYSEUS_GM_ABI 1
 
+/// Whether the extension can answer calls yet.
+///
+/// Native builds are ready from the first frame. On HTML5 the WASM module
+/// instantiates asynchronously and finishes AFTER the game has entered its
+/// main loop, so a Create event runs too early: gate there, and create the
+/// client on the first Step where this returns true.
+/// @returns {Bool}
+function colyseus_is_ready() {
+    return __colyseus_gm_is_ready() > 0;
+}
+
 /// Create a Colyseus client. Automatically restores a previously saved auth token.
+/// Returns 0 (and logs why) while colyseus_is_ready() is false — call again
+/// on a later frame.
 /// @param {String} _endpoint  Server endpoint (e.g., "http://localhost:2567")
-/// @returns {Real} Client handle
+/// @returns {Real} Client handle, 0 on failure
 function colyseus_client_create(_endpoint) {
     static _abi_checked = false;
     if (!_abi_checked) {
+        if (!colyseus_is_ready()) {
+            show_debug_message("[Colyseus] colyseus_client_create: the extension "
+                + "is not ready yet (the HTML5 WASM module instantiates "
+                + "asynchronously) — wait for colyseus_is_ready() and try again");
+            return 0;
+        }
+        // latched only once the extension answers, so a too-early first call
+        // can't misreport a timing problem as a stale binary
         _abi_checked = true;
         var _abi = __colyseus_gm_predict_abi_version();
         if (_abi != __COLYSEUS_GM_ABI) {

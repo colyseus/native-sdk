@@ -19,6 +19,8 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GM_ROOT = path.dirname(HERE); // platforms/gamemaker
 const PORT = 8931;
+// COLYSEUS_PLAYGROUND_PORT relocates the playground server (default :5173)
+const PLAYGROUND = `ws://127.0.0.1:${process.env.COLYSEUS_PLAYGROUND_PORT || 5173}`;
 
 function resolvePuppeteer() {
   const candidates = [
@@ -73,7 +75,9 @@ server.listen(PORT, "127.0.0.1", async () => {
   });
   page.on("pageerror", (err) => console.error("  [pageerror]", err.message));
 
-  await page.goto(`http://127.0.0.1:${PORT}/tests-web/harness.html`);
+  await page.goto(
+    `http://127.0.0.1:${PORT}/tests-web/harness.html?server=${encodeURIComponent(PLAYGROUND)}`
+  );
   const timeout = new Promise((resolve) =>
     setTimeout(() => resolve(null), 120_000)
   );

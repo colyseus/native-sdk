@@ -16,8 +16,16 @@
 // final "WEB TESTS FINISHED <pass>/<total>" — web-tests.mjs keys on them.
 (function () {
   "use strict";
-  var SERVER = "ws://127.0.0.1:5173";
+  // ?server=ws://host:port relocates the playground (web-tests.mjs sets it)
+  var SERVER = new URLSearchParams(location.search).get("server") || "ws://127.0.0.1:5173";
   var pass = 0, total = 0;
+
+  // Sampled synchronously, right after the shim's <script> ran: the module
+  // instantiates asynchronously, so at this point the GML-facing contract is
+  // "not ready, every call answers 0". colyseus_client_create() in the GML
+  // wrapper relies on exactly this to refuse (and explain) a too-early call.
+  var readyAtLoad = window.colyseus_gm_is_ready();
+  var clientBeforeReady = window.colyseus_gm_client_create(SERVER);
 
   function log(line) {
     console.log(line);
@@ -132,6 +140,11 @@
   }
 
   async function main() {
+    // T0: the not-ready window is observable and harmless
+    report("not_ready_gate", readyAtLoad === 0 && clientBeforeReady === 0,
+      "is_ready=" + readyAtLoad + " client_create=" + clientBeforeReady +
+      " before instantiation (expected 0 / 0)");
+
     // T1: module boot
     var ready = await waitFor(function () {
       return window.colyseus_gm_is_ready() === 1;
