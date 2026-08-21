@@ -25,10 +25,10 @@ jobs:
       matrix:
         include:
           # macOS
-          - os: macos-latest
+          - os: macos-15
             target: aarch64-macos
             artifact_name: colyseus-macos-arm64
-          - os: macos-latest
+          - os: macos-15
             target: x86_64-macos
             artifact_name: colyseus-macos-x86_64
           # Linux
@@ -43,7 +43,7 @@ jobs:
             target: x86_64-windows
             artifact_name: colyseus-windows-x86_64
           # iOS (cross-compile from macOS)
-          - os: macos-latest
+          - os: macos-15
             target: aarch64-ios
             artifact_name: colyseus-ios-arm64
     runs-on: ${{ matrix.os }}
