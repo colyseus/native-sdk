@@ -127,17 +127,5 @@ void main() {
 
     await closeRoom(room);
     client.dispose();
-  },
-      timeout: const Timeout(Duration(minutes: 4)),
-      // KNOWN CORE DEFECT: auto-reconnect works exactly once per room.
-      // room_reconnect_worker_spawn() in src/room.c guards on a
-      // `thread_started` flag it never clears, and the worker thread returns
-      // as soon as a reconnect succeeds — so a second drop sets the
-      // reconnecting flags with nothing left running to act on them. The room
-      // then sits reconnecting forever: no reconnect, no leave.
-      //
-      // Reproduces 3 runs out of 3 when un-skipped. Skipped rather than left
-      // red so the rest of the suite keeps its signal; remove the skip once
-      // the core clears the flag (or keeps the worker alive across cycles).
-      skip: 'core: reconnect worker is one-shot per room (src/room.c)');
+  }, timeout: const Timeout(Duration(minutes: 4)));
 }

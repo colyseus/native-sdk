@@ -38,6 +38,7 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 - Automatic reconnection could stall with `colyseus_room_is_reconnecting()`
   true and no `on_leave` when a retry failed at DNS time (typical after a
   mobile resume). [#27](https://github.com/colyseus/native-sdk/issues/27)
+- Automatic reconnection works on every drop, not just the first one per room.
 
 ## 0.17.23
 

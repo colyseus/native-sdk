@@ -74,13 +74,15 @@ typedef struct colyseus_reconnection_worker {
     HANDLE thread;
     CRITICAL_SECTION mutex;
     CONDITION_VARIABLE cond;
-    bool thread_started;
+    bool thread_started;         /* a thread exists and must be joined */
+    bool thread_done;            /* ...but has finished its cycle */
     bool pending_attempt;
 #else
     pthread_t thread;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
     bool thread_started;
+    bool thread_done;
     bool pending_attempt;
 #endif
 } colyseus_reconnection_worker_t;
@@ -125,6 +127,7 @@ static colyseus_reconnection_worker_t* room_worker_create(void) {
     pthread_cond_init(&w->cond, NULL);
 #endif
     w->thread_started = false;
+    w->thread_done = false;
     w->pending_attempt = false;
     return w;
 }
@@ -284,6 +287,7 @@ static worker_return_t WORKER_THREAD_CALL room_reconnect_worker_func(void* arg) 
 
         if (room->reconnection.retry_count > room->reconnection.options.max_retries) {
             room->reconnection.is_reconnecting = false;
+            w->thread_done = true;
             WORKER_UNLOCK(w);
             if (room->serializer) {
                 colyseus_schema_serializer_teardown(room->serializer);
@@ -318,6 +322,10 @@ static worker_return_t WORKER_THREAD_CALL room_reconnect_worker_func(void* arg) 
             room_worker_wait(w);
         }
     }
+    /* exit is decided and published under the same lock hold, so a spawn
+     * for the next drop either finds us still looping (and we serve it) or
+     * finds thread_done and reaps us — never a thread that is "about to" exit */
+    w->thread_done = true;
     WORKER_UNLOCK(w);
 
 done:
@@ -328,13 +336,19 @@ done:
 #endif
 }
 
+static void room_reconnect_worker_join(colyseus_reconnection_worker_t* w);
+
 static void room_reconnect_worker_spawn(colyseus_room_t* room) {
     colyseus_reconnection_worker_t* w =
         (colyseus_reconnection_worker_t*)room->reconnection.worker;
     if (!w) return;
     /* Caller must already hold w->mutex. */
-    if (w->thread_started) return;
+    if (w->thread_started) {
+        if (!w->thread_done) return;   /* this cycle's thread is still running */
+        room_reconnect_worker_join(w); /* the previous cycle's — reap it */
+    }
     w->thread_started = true;
+    w->thread_done = false;
 #ifdef _WIN32
     w->thread = CreateThread(NULL, 0, room_reconnect_worker_func, room, 0, NULL);
 #else

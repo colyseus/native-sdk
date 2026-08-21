@@ -119,6 +119,7 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
   WebSocket URL, which the server requires.
 - Automatic reconnection no longer stalls with `isReconnecting == true` and no
   `onLeave` when a retry fails at DNS time (typical after a mobile resume).
+- Automatic reconnection works on every drop, not just the first one per room.
 - `MapSchema` and `ArraySchema` were handle-only shells. They now have
   `length`, `keys`, `values`, `entries`, `forEach` and `operator[]`. Arrays
   iterate in decoded-index order; the native storage prepends, so raw

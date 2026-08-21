@@ -244,6 +244,47 @@ test "reconnect: gives up after max_retries and fires on_leave(FAILED_TO_RECONNE
 }
 
 fn errored() bool { return ReconnectTest.on_error_count >= 1; }
+fn reconnectedTwice() bool { return ReconnectTest.on_reconnect_count >= 2; }
+
+// The worker thread exits after a successful cycle; the next drop must get a
+// new one instead of arming flags nobody is left to act on.
+test "reconnect: a second drop reconnects again" {
+    ReconnectTest.reset();
+
+    const settings = c.colyseus_settings_create();
+    defer c.colyseus_settings_free(settings);
+    c.colyseus_settings_set_address(settings, TEST_SERVER);
+    c.colyseus_settings_set_port(settings, TEST_PORT);
+    const client = c.colyseus_client_create(settings);
+    defer c.colyseus_client_free(client);
+
+    c.colyseus_client_join_or_create(client, "test_room", "{}",
+        ReconnectTest.onMatchmakeSuccess, ReconnectTest.onMatchmakeFailure, null);
+    try testing.expect(pollUntil(joined, 10 * std.time.ns_per_s));
+    const room = ReconnectTest.room.?;
+
+    var opts: c.colyseus_reconnection_options_t = undefined;
+    c.colyseus_reconnection_options_init_defaults(&opts);
+    opts.min_uptime_ms = 0;
+    opts.min_delay_ms = 50;
+    opts.max_delay_ms = 100;
+    opts.delay_ms = 50;
+    c.colyseus_room_set_reconnection_options(room, &opts);
+
+    const force = c.colyseus_message_map_create();
+    defer c.colyseus_message_free(force);
+
+    c.colyseus_room_send(room, "force_drop", force);
+    try testing.expect(pollUntil(reconnected, 10 * std.time.ns_per_s));
+
+    c.colyseus_room_send(room, "force_drop", force);
+    try testing.expect(pollUntil(reconnectedTwice, 10 * std.time.ns_per_s));
+    try testing.expect(!c.colyseus_room_is_reconnecting(room));
+
+    c.colyseus_room_leave(room, true);
+    defer c.colyseus_room_free(room);
+    std.Thread.sleep(200 * std.time.ns_per_ms);
+}
 
 // A retry whose connect() fails before a socket exists (DNS down — what an
 // Android app sees right after resume) must still count against max_retries
