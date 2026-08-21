@@ -254,6 +254,11 @@ function check(exports) {
   for (const [ext] of yyByExternal) {
     if (!exportNames.has(ext)) fail(`.yy declares nonexistent C export: ${ext}`);
   }
+  // The HTML5 runner loads every extension .js itself (from html5game/, with
+  // a uph_ prefix), so a <script> injection is at best a duplicate module
+  // and at worst a 404 at the page root — keep it empty.
+  if (yy.HTML5CodeInjection)
+    fail(`.yy HTML5CodeInjection must stay empty (got: ${yy.HTML5CodeInjection})`);
   const first = JSON.stringify(yy.files[0].functions);
   for (let i = 1; i < yy.files.length; i++) {
     if (JSON.stringify(yy.files[i].functions) !== first)

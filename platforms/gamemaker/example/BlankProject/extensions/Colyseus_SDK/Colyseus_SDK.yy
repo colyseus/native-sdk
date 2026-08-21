@@ -6012,7 +6012,7 @@
   "gradleinject": null,
   "hasConvertedCodeInjection": true,
   "helpfile": "",
-  "HTML5CodeInjection": "<GM_HTML5_PreHead>\n    <script src=\"colyseus_wasm.js\"></script>\n</GM_HTML5_PreHead>",
+  "HTML5CodeInjection": "",
   "html5Props": true,
   "IncludedResources": [],
   "installdir": "",

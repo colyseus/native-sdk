@@ -31,8 +31,14 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 - `colyseus_room_get_reconnection_token(room)`. Persist it and pass it to
   `colyseus_client_reconnect(client, token)` to re-take a seat after the
   process is killed. [#26](https://github.com/colyseus/native-sdk/issues/26)
+- `colyseus_is_ready()`. On HTML5 the WASM module instantiates after the game
+  has started, so create the client on the first Step where this is true.
+  `colyseus_client_create()` called earlier now returns 0 and says so, instead
+  of latching a misleading "ABI 0 != 1, rebuild" error.
 
 ### Fixed
+- HTML5 exports no longer inject `<script src="colyseus_wasm.js">` at the page
+  root, where it 404'd. The runner loads the extension's script itself.
 - `colyseus_client_reconnect()` was rejected by the server with "bad
   reconnection token" even with a valid token. [#26](https://github.com/colyseus/native-sdk/issues/26)
 - Automatic reconnection could stall with `colyseus_room_is_reconnecting()`

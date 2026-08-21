@@ -19,8 +19,14 @@ target:
    binding block is **generated** by `gen-bindings.mjs` from the C sources —
    run `node gen-bindings.mjs` after adding or changing any `GM_EXPORT`, and
    `node gen-bindings.mjs --check` runs in CI to catch drift.
-3. The extension's `HTML5CodeInjection` loads the file pre-head; the module
-   instantiates asynchronously. GML can gate on `colyseus_gm_is_ready()`.
+3. GameMaker's HTML5 runner loads the file itself: the export packs it as
+   `html5game/uph_colyseus_wasm.js` and lists it in the game's extension
+   manifest, and the runner appends the `<script>` and waits for it before
+   entering the main loop. (The extension carries no `HTML5CodeInjection`
+   for this reason — a `<script src>` of its own would 404 at the page root
+   or instantiate the module twice.)
+4. The WASM module then instantiates **asynchronously**, and finishes after
+   the game has started running — see the gate below.
 
 ## Using it in a project
 
@@ -28,6 +34,29 @@ Nothing extra: the extension asset already carries `colyseus_wasm.js` with
 `copyToTargets` set for HTML5. Export for HTML5/GX.Games and the same GML
 API works unchanged — including the prediction layer (input handles,
 predict, reconciler pump, spawns, events, netdelay).
+
+### Wait for `colyseus_is_ready()`
+
+A Create event runs before the module is up, so create the client from Step
+instead, on the first frame the extension answers:
+
+```gml
+// Create
+client = 0;
+
+// Step
+if (client == 0) {
+    if (!colyseus_is_ready()) exit;   // still instantiating (HTML5 only)
+    client = colyseus_client_create("https://example.com");
+    room = colyseus_client_join_or_create(client, "my_room", {});
+    // register handlers...
+}
+colyseus_process();
+```
+
+`colyseus_is_ready()` is true from the first frame on native, so the same
+code runs everywhere. `colyseus_client_create()` called too early returns 0
+and logs that the extension is not ready yet; it is safe to call again.
 
 Platform notes:
 
