@@ -10,16 +10,21 @@
 // Per-Step contract (colyseus_process() already pumps netdelay + reconnect):
 //   colyseus_process();
 //   var _steps = predict.tick(colyseus_predict_now());
+//   recon.pump();   // drains a pending reconcile's replay burst — runs even
+//                   // when _steps == 0, or the rollback lands a frame late
 //   repeat (_steps) { input.set("moveX", mx); input.send(); recon.pump(); }
-//   recon.pump();   // replay bursts detected by tick
 //   draw with predict.value(entity, "x") / recon.value("x")
 //
 // GameMaker's FFI can never call GML, so the reconciler runs in MANUAL PUMP
 // mode: pump() drains due steps and calls YOUR step function between
-// pump_next and pump_commit. Dead-reckon steps run C-side (step_id 1 =
-// integrate: x/y/vx/vy with optional bounds/friction/maxSpeed params).
-// Event-channel settlement and spawn rejections arrive through
-// colyseus_process() as queued events, one frame after the fact.
+// pump_next and pump_commit. Unlike the Godot/TS SDKs, where the core pumps
+// for you, the placement above is the caller's responsibility and is
+// load-bearing: a server ack that arrived in colyseus_process() has queued a
+// replay of every unacked input, and the leading pump is what runs it this
+// frame. Dead-reckon steps run C-side (step_id 1 = integrate: x/y/vx/vy
+// with optional bounds/friction/maxSpeed params). Event-channel settlement
+// and spawn rejections arrive through colyseus_process() as queued events,
+// one frame after the fact.
 // =============================================================================
 
 #macro COLYSEUS_EVENT_PREDICT_SETTLE  19

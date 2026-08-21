@@ -172,6 +172,69 @@ suite(function() {
         });
     });
 
+    describe("Predict: pump order", function() {
+
+        beforeEach(function() {
+            test_drain_events();
+            global.__pt = predict_test_join("lab-move");
+        });
+        afterEach(function() {
+            predict_test_teardown(global.__pt);
+            global.__pt = undefined;
+        });
+
+        // The header's contract: a reconcile detected by tick() is replayed by
+        // the pump that FOLLOWS tick, before the live loop — on frames where
+        // tick() returned no due steps too. Frames run far faster than the
+        // 20 Hz input step, so most acks land on a zero-step frame. A
+        // bit-exact sim never replays (the ack short-circuits), so the live
+        // step is nudged off the server's answer to force a rollback per ack.
+        test("the leading pump replays on zero-step frames", function() {
+            var _t = global.__pt;
+            expect(_t.ok).toBeTruthy();
+            predict_test_settle(_t);
+            var _input = new ColyseusInput(_t.room);
+            var _predict = new ColyseusPredict(_t.room);
+            var _me = predict_test_me(_t);
+            expect(_me).toBeGreaterThan(0);
+
+            global.__pt_pump = { frame_steps: 0, replay_on_zero: 0, live: 0 };
+            var _recon = _predict.reconciler(_me, {
+                fields: ["x", "y", "vx", "vy"],
+                smooth_ms: 66.67, snap: 8,
+                step: function(_ctx, _s, _cmd) {
+                    predict_test_step_movement(_ctx, _s, _cmd);
+                    if (_ctx.is_replay) {
+                        if (global.__pt_pump.frame_steps == 0) global.__pt_pump.replay_on_zero++;
+                    } else {
+                        global.__pt_pump.live++;
+                        _s.set("x", _s.get("x") + 0.01);   // live-only mismatch
+                    }
+                },
+            });
+
+            var _start = current_time;
+            while (current_time - _start < 2000) {
+                colyseus_process();
+                var _steps = _predict.tick(colyseus_predict_now());
+                global.__pt_pump.frame_steps = _steps;
+                _recon.pump();
+                repeat (_steps) {
+                    _input.set("moveX", 1); _input.set("moveY", 0);
+                    _input.send();
+                    _recon.pump();
+                }
+            }
+            expect(global.__pt_pump.live).toBeGreaterThan(10);
+            expect(global.__pt_pump.replay_on_zero).toBeGreaterThan(0);
+            // replays re-run the exact step from the ack, so the nudge never
+            // compounds past the unacked window
+            expect(_recon.last_correction_mag()).toBeLessThan(1);
+            _recon.free_native();
+            _predict.free_native();
+        });
+    });
+
     describe("Predict: reconciler", function() {
 
         beforeEach(function() {
