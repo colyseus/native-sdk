@@ -152,6 +152,13 @@ function ColyseusMirror(_handle) constructor {
 
 /// The per-step context. Plain fields refreshed before each step call; memo
 /// helpers freeze values live and replay them frozen (see reconciler.h).
+///
+/// Scope: the native context exists only while a step is being pumped
+/// (between the C-side pump_next and pump_commit). The fields here keep the
+/// values of the LAST step pumped, so `recon.ctx.dt` is fine to read after a
+/// pump; the raw __colyseus_gm_step_ctx()/step_cmd()/memo accessors answer
+/// NaN outside a step. Anything a step needs to publish, copy out of ctx
+/// inside the step function.
 function ColyseusStepCtx() constructor {
     dt = 0; dt_ms = 0; tick = 0; is_replay = false;
     reckon_time = 0; lag_comp_active = false; sub_dt = 0;

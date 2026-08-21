@@ -936,9 +936,12 @@ GM_EXPORT void colyseus_gm_recon_pump_end(double recon_id) {
     g_cur_step.cmd = NULL;
 }
 
+// Live only between pump_next and pump_commit; outside a step every field
+// reads NaN (like step_cmd and the memo helpers) so a misplaced read is loud
+// rather than a plausible 0.
 GM_EXPORT double colyseus_gm_step_ctx(double which) {
     const colyseus_step_ctx_t* ctx = g_cur_step.ctx;
-    if (!ctx) return 0;
+    if (!ctx) return NAN;
     switch ((int)which) {
         case 0: return ctx->dt;
         case 1: return ctx->dt_ms;

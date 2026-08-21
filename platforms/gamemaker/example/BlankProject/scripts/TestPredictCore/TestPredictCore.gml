@@ -198,12 +198,16 @@ suite(function() {
             var _me = predict_test_me(_t);
             expect(_me).toBeGreaterThan(0);
 
-            global.__pt_pump = { frame_steps: 0, replay_on_zero: 0, live: 0 };
+            global.__pt_pump = { frame_steps: 0, replay_on_zero: 0, live: 0, raw_dt: 0 };
             var _recon = _predict.reconciler(_me, {
                 fields: ["x", "y", "vx", "vy"],
                 smooth_ms: 66.67, snap: 8,
                 step: function(_ctx, _s, _cmd) {
                     predict_test_step_movement(_ctx, _s, _cmd);
+                    if (global.__pt_pump.live == 0) {
+                        // inside the step the raw accessor is live: 20 Hz lab rooms
+                        global.__pt_pump.raw_dt = __colyseus_gm_step_ctx(0);
+                    }
                     if (_ctx.is_replay) {
                         if (global.__pt_pump.frame_steps == 0) global.__pt_pump.replay_on_zero++;
                     } else {
@@ -227,6 +231,12 @@ suite(function() {
             }
             expect(global.__pt_pump.live).toBeGreaterThan(10);
             expect(global.__pt_pump.replay_on_zero).toBeGreaterThan(0);
+            // the step context is scoped to the step: the wrapper keeps the
+            // last pumped values, the raw accessor is NaN once the pump ends
+            expect(global.__pt_pump.raw_dt).toBe(1 / 20);
+            expect(_recon.ctx.dt).toBe(1 / 20);
+            expect(is_nan(__colyseus_gm_step_ctx(0))).toBeTruthy();
+            expect(is_nan(__colyseus_gm_step_cmd("moveX"))).toBeTruthy();
             // replays re-run the exact step from the ack, so the nudge never
             // compounds past the unacked window
             expect(_recon.last_correction_mag()).toBeLessThan(1);

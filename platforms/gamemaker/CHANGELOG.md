@@ -41,6 +41,11 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
   `colyseus_client_create()` called earlier now returns 0 and says so, instead
   of latching a misleading "ABI 0 != 1, rebuild" error.
 
+### Changed
+- The raw step-context accessors (`__colyseus_gm_step_ctx()` and friends) read
+  NaN outside a reconciler step instead of 0. `recon.ctx` keeps the last
+  pumped values, so wrapper-level reads are unaffected.
+
 ### Fixed
 - HTML5 exports no longer inject `<script src="colyseus_wasm.js">` at the page
   root, where it 404'd. The runner loads the extension's script itself.
