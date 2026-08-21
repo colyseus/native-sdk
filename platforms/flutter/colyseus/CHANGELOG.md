@@ -114,6 +114,8 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
 ### Fixed
 
+- Automatic reconnection no longer stalls with `isReconnecting == true` and no
+  `onLeave` when a retry fails at DNS time (typical after a mobile resume).
 - `MapSchema` and `ArraySchema` were handle-only shells. They now have
   `length`, `keys`, `values`, `entries`, `forEach` and `operator[]`. Arrays
   iterate in decoded-index order; the native storage prepends, so raw

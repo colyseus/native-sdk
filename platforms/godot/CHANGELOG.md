@@ -27,6 +27,12 @@ All notable changes to the Colyseus Godot SDK will be documented in this file.
   - Each measurement always settles — on the pong, a connection error, a server-side close before the pong, or a timeout (default 1500 ms) — so one unreachable/blackholed endpoint can't stall the selection.
 - `test_latency.gd` covering the healthy, timeout, and selection paths against the test server.
 
+### Fixed
+- Automatic reconnection could get stuck with `room.reconnecting == true` and
+  no `left` signal after an Android background/resume: a retry that failed at
+  DNS time never counted as an attempt. Reported by @zahmad12 in
+  [#27](https://github.com/colyseus/native-sdk/issues/27).
+
 ## 0.17.11
 
 ### Fixed

@@ -46,6 +46,11 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   field stays quiet.
 
 ### Fixed
+- Automatic reconnection could wedge forever: a retry whose `connect()` failed
+  before a socket existed (DNS down, typical right after an Android resume)
+  reported only `on_error`, so the worker waited for a close that never came.
+  `is_reconnecting` stayed true and `on_leave` never fired. Such a retry now
+  counts as a failed attempt. Reported by @zahmad12 in [#27](https://github.com/colyseus/native-sdk/issues/27).
 - Auth's `stored_token` is a process-wide pointer that every response rewrites,
   with no lock. A host that runs HTTP on a worker thread (the Flutter binding
   does, because `colyseus_http_*` blocks) races it against a client being

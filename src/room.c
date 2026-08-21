@@ -184,8 +184,8 @@ static int room_compute_backoff_delay(const colyseus_reconnection_options_t* opt
 
 static void room_attempt_reconnect(colyseus_room_t* room) {
     /* Tear down the closed transport and start a fresh one with an updated
-     * URL. The new transport's tick thread will deliver either an on_open
-     * → JOIN_ROOM (success) or an on_close (failure). */
+     * URL. The attempt resolves with on_open → JOIN_ROOM (success), on_close
+     * (failure) or on_error (connect() failed before a socket existed). */
     if (room->transport) {
         colyseus_transport_destroy(room->transport);
         room->transport = NULL;
@@ -310,7 +310,7 @@ static worker_return_t WORKER_THREAD_CALL room_reconnect_worker_func(void* arg) 
         WORKER_LOCK(w);
 
         /* Wait for either a successful JOIN_ROOM (sets is_reconnecting=false
-         * and signals) or a close from the failed attempt (clears
+         * and signals) or a close/error from the failed attempt (clears
          * pending_attempt and signals). */
         while (w->pending_attempt
                && !room->reconnection.cancelled
@@ -479,7 +479,7 @@ static void room_reconnection_signal_attempt_done(colyseus_room_t* room) {
         (colyseus_reconnection_worker_t*)room->reconnection.worker;
     if (!w) return;
 #ifdef COLYSEUS_RECONNECT_POLLED_SCHED
-    if (!room->reconnection.is_reconnecting || room->reconnection.cancelled) return;
+    if (!w->pending_attempt || !room->reconnection.is_reconnecting || room->reconnection.cancelled) return;
     room_reconnection_schedule_next(room);
 #else
     WORKER_LOCK(w);
@@ -1825,6 +1825,12 @@ static void room_on_transport_error(const char* error, void* userdata) {
     fprintf(stderr, "Room transport error: %s\n", error);
     if (room->on_error) {
         room->on_error(-1, error, room->on_error_userdata);
+    }
+
+    /* connect() can fail before a socket exists (DNS down after an Android
+     * resume) — then on_error is the only callback, never on_close. */
+    if (room->reconnection.is_reconnecting) {
+        room_reconnection_signal_attempt_done(room);
     }
 }
 

@@ -6,6 +6,7 @@ const c = @cImport({
     @cInclude("colyseus/messages.h");
     @cInclude("colyseus/protocol.h");
     @cInclude("string.h");
+    @cInclude("stdlib.h");
 });
 
 const TEST_SERVER = "localhost";
@@ -21,6 +22,7 @@ const ReconnectTest = struct {
     var on_leave_count: i32 = 0;
     var on_leave_last_code: i32 = 0;
     var echo_received_count: i32 = 0;
+    var on_error_count: i32 = 0;
 
     fn reset() void {
         room = null;
@@ -32,6 +34,7 @@ const ReconnectTest = struct {
         on_leave_count = 0;
         on_leave_last_code = 0;
         echo_received_count = 0;
+        on_error_count = 0;
     }
 
     fn onJoin(userdata: ?*anyopaque) callconv(.c) void {
@@ -62,6 +65,7 @@ const ReconnectTest = struct {
         _ = code;
         _ = message;
         _ = userdata;
+        on_error_count += 1;
     }
 
     fn onEcho(reader: ?*c.colyseus_message_reader_t, userdata: ?*anyopaque) callconv(.c) void {
@@ -77,6 +81,7 @@ const ReconnectTest = struct {
         c.colyseus_room_on_drop(r, onDrop, null);
         c.colyseus_room_on_reconnect(r, onReconnect, null);
         c.colyseus_room_on_leave(r, onLeave, null);
+        c.colyseus_room_on_error(r, onError, null);
         c.colyseus_room_on_message(r, "tagged_echo", onEcho, null);
         matchmake_succeeded = true;
     }
@@ -236,4 +241,61 @@ test "reconnect: gives up after max_retries and fires on_leave(FAILED_TO_RECONNE
     c.colyseus_room_leave(ReconnectTest.room.?, true);
     defer c.colyseus_room_free(ReconnectTest.room.?);
     std.Thread.sleep(200 * std.time.ns_per_ms);
+}
+
+fn errored() bool { return ReconnectTest.on_error_count >= 1; }
+
+// A retry whose connect() fails before a socket exists (DNS down — what an
+// Android app sees right after resume) must still count against max_retries
+// and end in on_leave(FAILED_TO_RECONNECT).
+test "reconnect: synchronous connect failure does not wedge the retry loop" {
+    ReconnectTest.reset();
+
+    const settings = c.colyseus_settings_create();
+    defer c.colyseus_settings_free(settings);
+    c.colyseus_settings_set_address(settings, TEST_SERVER);
+    c.colyseus_settings_set_port(settings, TEST_PORT);
+
+    const client = c.colyseus_client_create(settings);
+    defer c.colyseus_client_free(client);
+    try testing.expect(client != null);
+
+    c.colyseus_client_join_or_create(
+        client,
+        "test_room",
+        "{}",
+        ReconnectTest.onMatchmakeSuccess,
+        ReconnectTest.onMatchmakeFailure,
+        null,
+    );
+
+    try testing.expect(pollUntil(joined, 10 * std.time.ns_per_s));
+    const room = ReconnectTest.room.?;
+
+    var opts: c.colyseus_reconnection_options_t = undefined;
+    c.colyseus_reconnection_options_init_defaults(&opts);
+    opts.min_uptime_ms = 0;
+    opts.min_delay_ms = 50;
+    opts.max_delay_ms = 100;
+    opts.delay_ms = 50;
+    opts.max_retries = 2;
+    c.colyseus_room_set_reconnection_options(room, &opts);
+
+    // .invalid never resolves, so every retry's getaddrinfo() fails inside
+    // connect() — the transport reports on_error and never on_close.
+    c.free(room.*.endpoint_url);
+    room.*.endpoint_url = c.strdup("ws://reconnect-test.invalid:2567/test_room?sessionId=x");
+
+    const force = c.colyseus_message_map_create();
+    defer c.colyseus_message_free(force);
+    c.colyseus_room_send(room, "force_drop", force);
+
+    try testing.expect(pollUntil(dropped, 5 * std.time.ns_per_s));
+    try testing.expect(pollUntil(errored, 5 * std.time.ns_per_s));
+
+    // 2 retries × ≤100ms backoff: give-up should land well inside 5s.
+    try testing.expect(pollUntil(leftWithFailedToReconnect, 5 * std.time.ns_per_s));
+    try testing.expect(!c.colyseus_room_is_reconnecting(room));
+
+    defer c.colyseus_room_free(room);
 }
