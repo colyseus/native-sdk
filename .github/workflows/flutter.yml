@@ -24,7 +24,7 @@ jobs:
   # macOS and iOS need the Apple SDK headers, so they can only be built here.
   apple:
     name: Build macOS + iOS
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
