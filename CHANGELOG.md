@@ -46,6 +46,13 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   field stays quiet.
 
 ### Fixed
+- Leaving a room could crash the process (`malloc_consolidate(): invalid chunk
+  size` on Linux) once the state held a `t.ref()` field pointing at something
+  also stored in a map or array — the same `Player` as both `players[id]` and
+  `host`. Teardown freed that instance twice. The same crash could come from an
+  array holding one instance in two slots.
+- An `ADD` for an array index that already held that exact instance inserted a
+  second slot for it, so the array reported one more entry than the server sent.
 - Automatic reconnection could wedge forever: a retry whose `connect()` failed
   before a socket existed (DNS down, typical right after an Android resume)
   reported only `on_error`, so the worker waited for a close that never came.
