@@ -69,13 +69,13 @@ fi
 source "$ROOT_DIR/../../tests/dev-servers.sh"
 trap servers_stop EXIT
 
-servers_ensure example-server 2567 "$ROOT_DIR/../../example-server" \
+servers_ensure --room my_room --room view_test_room example-server 2567 "$ROOT_DIR/../../example-server" \
     npx tsx src/index.ts || warn "legacy suites will fail without :2567"
 # COLYSEUS_PLAYGROUND_PORT is where a playground gets STARTED when :5173 is
 # taken (the air-hockey dev server binds it too); COLYSEUS_PLAYGROUND_ENDPOINT
 # is what the suites CONNECT to, derived from the port unless given.
 PLAYGROUND_PORT="${COLYSEUS_PLAYGROUND_PORT:-5173}"
-servers_ensure playground "$PLAYGROUND_PORT" "$ROOT_DIR/../../../demos/prediction-tools" \
+servers_ensure --room lab-move playground "$PLAYGROUND_PORT" "$ROOT_DIR/../../../demos/prediction-tools" \
     npx vite --port "$PLAYGROUND_PORT" --strictPort --host 0.0.0.0 || warn "predict suites will fail without :$PLAYGROUND_PORT"
 export COLYSEUS_PLAYGROUND_ENDPOINT="${COLYSEUS_PLAYGROUND_ENDPOINT:-http://127.0.0.1:$PLAYGROUND_PORT}"
 

@@ -56,10 +56,10 @@ log "Build complete"
 # the proxy are stopped on exit.
 # ---------------------------------------------------------------------------
 source "$ROOT_DIR/../../tests/dev-servers.sh"
-servers_ensure example-server 2567 "$ROOT_DIR/../../example-server" \
+servers_ensure --room my_room --room view_test_room example-server 2567 "$ROOT_DIR/../../example-server" \
     npx tsx src/index.ts || warn "tests that need :2567 will fail"
 # the predict/input suites join the playground's lab rooms, not example-server
-servers_ensure playground 5173 "$ROOT_DIR/../../../demos/prediction-tools" \
+servers_ensure --room lab-move playground 5173 "$ROOT_DIR/../../../demos/prediction-tools" \
     npx vite --port 5173 --strictPort --host 0.0.0.0 || warn "predict suites will fail without :5173"
 
 TLS_DIR="$TEST_DIR/tls"
