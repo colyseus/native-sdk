@@ -143,6 +143,7 @@ void colyseus_array_schema_set(colyseus_array_schema_t* arr, int index, void* va
     /* strict ADD only: MOVE_AND_ADD/DELETE_AND_ADD/ADD_BY_REFID must not insert */
     if (operation == (uint8_t)COLYSEUS_OP_ADD &&
         item != NULL && item->value != NULL &&
+        item->value != value &&   /* re-ADD of the ref already here: overwrite */
         !was_deleted) {
         /* ADD at an occupied index = insert: shift existing items up. */
         colyseus_array_item_t* new_item = malloc(sizeof(colyseus_array_item_t));
