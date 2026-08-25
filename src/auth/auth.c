@@ -26,12 +26,31 @@ typedef struct {
 } colyseus_auth_context_t;
 
 /* Storage functions (simple in-memory for now, also stored in local secure memory, see auth/secure_storage.c) */
+
+/* `stored_token` is process-wide and every auth response rewrites it from
+ * whichever thread ran the request — a host that dispatches HTTP to a worker
+ * (the Flutter and GameMaker bindings do) then races it against a client being
+ * constructed on the main thread, freeing the string out from under a strdup.
+ * Same precedent as net_delay.c: no lock on the web, where there is one
+ * thread. */
+#ifdef __EMSCRIPTEN__
+#define AUTH_LOCK()   ((void)0)
+#define AUTH_UNLOCK() ((void)0)
+#else
+#include <pthread.h>
+static pthread_mutex_t g_auth_token_mu = PTHREAD_MUTEX_INITIALIZER;
+#define AUTH_LOCK()   pthread_mutex_lock(&g_auth_token_mu)
+#define AUTH_UNLOCK() pthread_mutex_unlock(&g_auth_token_mu)
+#endif
+
 static char* stored_token = NULL;
 
 static void storage_set_token(const char* key, const char* token) {
     // Store in memory
+    AUTH_LOCK();
     free(stored_token);
     stored_token = token ? strdup(token) : NULL;
+    AUTH_UNLOCK();
 
     // Also persist to disk/keychain/etc
     if (token) {
@@ -43,22 +62,31 @@ static void storage_set_token(const char* key, const char* token) {
 
 static char* storage_get_token(const char* key) {
     // First check in-memory cache
+    AUTH_LOCK();
     if (stored_token) {
-        return strdup(stored_token);
+        char* cached = strdup(stored_token);
+        AUTH_UNLOCK();
+        return cached;
     }
+    AUTH_UNLOCK();
 
     // Otherwise load from persistent storage
     char* token = secure_storage_get(key);
     if (token) {
+        AUTH_LOCK();
+        free(stored_token);
         stored_token = strdup(token);
+        AUTH_UNLOCK();
     }
     return token;
 }
 
 static void storage_remove_token(const char* key) {
     // Clear from memory
+    AUTH_LOCK();
     free(stored_token);
     stored_token = NULL;
+    AUTH_UNLOCK();
 
     // Remove from persistent storage
     secure_storage_remove(key);
@@ -150,10 +178,19 @@ static void auth_on_get_user_success(const colyseus_http_response_t* response, v
 
     colyseus_auth_data_t* data = auth_parse_response(response->body);
     if (data) {
+        /* /auth/userdata answers with the user alone. Emitting that verbatim
+         * would take auth_emit_change's no-token branch and clear the very
+         * token that authorised the read — the JS SDK emits
+         * `{...userData, token: this.token}` for exactly this reason. */
+        if (!data->token) {
+            const char* current = colyseus_auth_get_token(ctx->auth);
+            if (current && current[0]) data->token = strdup(current);
+        }
+        /* Emit before handing the result out — see auth_on_register_success. */
+        auth_emit_change(ctx->auth, data);
         if (ctx->on_success) {
             ctx->on_success(data, ctx->userdata);
         }
-        auth_emit_change(ctx->auth, data);
         colyseus_auth_data_free(data);
     }
 
@@ -163,13 +200,14 @@ static void auth_on_get_user_success(const colyseus_http_response_t* response, v
 static void auth_on_get_user_error(const colyseus_http_error_t* error, void* userdata) {
     colyseus_auth_context_t* ctx = (colyseus_auth_context_t*)userdata;
 
+    /* Emit null state on error, before handing the failure out — see
+     * auth_on_register_success. */
+    colyseus_auth_data_t data = { .user_json = NULL, .token = NULL };
+    auth_emit_change(ctx->auth, &data);
+
     if (ctx->on_error) {
         ctx->on_error(error->message, ctx->userdata);
     }
-
-    /* Emit null state on error */
-    colyseus_auth_data_t data = { .user_json = NULL, .token = NULL };
-    auth_emit_change(ctx->auth, &data);
 
     free(ctx);
 }
@@ -207,10 +245,14 @@ static void auth_on_register_success(const colyseus_http_response_t* response, v
 
     colyseus_auth_data_t* data = auth_parse_response(response->body);
     if (data) {
+        /* Settle our own state BEFORE handing the result out. A binding that
+         * resolves a future here gives the app the thread back mid-callback,
+         * and disposing the client then frees `auth` under the emit. The JS
+         * SDK emits before it resolves for the same reason. */
+        auth_emit_change(ctx->auth, data);
         if (ctx->on_success) {
             ctx->on_success(data, ctx->userdata);
         }
-        auth_emit_change(ctx->auth, data);
         colyseus_auth_data_free(data);
     }
 

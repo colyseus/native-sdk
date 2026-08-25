@@ -8,6 +8,20 @@ global.__rt = { done: false, room: -1, client: -1, callbacks: -1 };
 suite(function() {
 
     // =========================================================================
+    // Section 0: Extension readiness (the HTML5 gate, a no-op on native)
+    // =========================================================================
+    describe("Extension readiness", function() {
+
+        test("native is ready at once, and client_create passes the ABI check", function() {
+            expect(colyseus_is_ready()).toBeTruthy();
+            expect(__colyseus_gm_predict_abi_version()).toBe(__COLYSEUS_GM_ABI);
+            var _client = colyseus_client_create("http://127.0.0.1:2567");
+            expect(_client).toBeGreaterThan(0);
+            colyseus_client_free(_client);
+        });
+    });
+
+    // =========================================================================
     // Section 1: Room Connection
     // =========================================================================
     describe("Room Connection", function() {
@@ -272,6 +286,83 @@ suite(function() {
             expect(global.__rt.add_done).toBeTruthy();
             expect(is_struct(global.__rt.add_instance)).toBe(true);
             expect(variable_struct_exists(global.__rt.add_instance, "x")).toBe(true);
+        });
+
+        test("accessors refresh the struct without a listener", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _sid = colyseus_room_get_session_id(global.__rt.room);
+            var _me = colyseus_map_get(_state, "players", _sid);
+            expect(_me.x).toBe(0);
+
+            // nobody listens to x — the only path to the new value is a re-read
+            colyseus_send(global.__rt.room, "move", { x: 123, y: 45 });
+            var _start = current_time;
+            while (colyseus_schema_get(_me, "x") != 123 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            expect(colyseus_schema_get(_me, "x")).toBe(123);
+
+            // a re-read through any accessor refreshes the cached struct in place
+            var _again = colyseus_map_get(_state, "players", _sid);
+            expect(_again).toBe(_me);
+            expect(_me.x).toBe(123);
+            expect(_me.y).toBe(45);
+
+            // nested refs refresh with their parent: host is this player
+            var _root = colyseus_room_get_state(global.__rt.room);
+            expect(_root.host).toBe(_me);
+            expect(_root.host.x).toBe(123);
+        });
+
+        test("map enumeration follows the server's insertion order", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _sid = colyseus_room_get_session_id(global.__rt.room);
+            expect(colyseus_map_size(_state, "players")).toBe(1);
+            expect(colyseus_map_key_at(_state, "players", 0)).toBe(_sid);
+            expect(colyseus_map_value_at(_state, "players", 0)).toBe(colyseus_map_get(_state, "players", _sid));
+            expect(colyseus_map_key_at(_state, "players", 1)).toBe("");
+            expect(colyseus_map_value_at(_state, "players", 1)).toBe(undefined);
+            expect(colyseus_map_size(_state, "no_such_field")).toBe(0);
+
+            // the server inserts the bot after us — it must enumerate after us
+            colyseus_send(global.__rt.room, "add_bot", {});
+            var _start = current_time;
+            while (colyseus_map_size(_state, "players") < 2 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            var _keys = colyseus_map_keys(_state, "players");
+            expect(array_length(_keys)).toBe(2);
+            expect(_keys[0]).toBe(_sid);
+            var _bot = colyseus_map_get(_state, "players", _keys[1]);
+            expect(_bot.isBot).toBe(1);
+
+            colyseus_send(global.__rt.room, "remove_bot", {});
+            _start = current_time;
+            while (colyseus_map_size(_state, "players") > 1 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            var _left = colyseus_map_keys(_state, "players");
+            expect(_left).toHaveLength(1);
+            expect(_left[0]).toBe(_sid);
+        });
+
+        test("array entries read by index", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _sid = colyseus_room_get_session_id(global.__rt.room);
+            var _me = colyseus_map_get(_state, "players", _sid);
+            // onJoin pushes one "sword"
+            expect(colyseus_array_size(_me, "items")).toBe(1);
+            expect(colyseus_array_get(_me, "items", 0).name).toBe("sword");
+            expect(colyseus_array_get(_me, "items", 1)).toBe(undefined);
+            expect(colyseus_array_size(_me, "no_such_field")).toBe(0);
+
+            colyseus_send(global.__rt.room, "add_item", { name: "shield" });
+            var _start = current_time;
+            while (colyseus_array_size(_me, "items") < 2 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            expect(colyseus_array_get(_me, "items", 0).name).toBe("sword");
+            expect(colyseus_array_get(_me, "items", 1).name).toBe("shield");
         });
 
         test("struct field updates inline when listener fires", function() {

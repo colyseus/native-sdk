@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"TestAuthApi",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"TestAuthApi",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

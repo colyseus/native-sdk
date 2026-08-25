@@ -2,6 +2,7 @@
 #include "colyseus_state.h"
 #include "colyseus_schema_registry.h"
 #include "colyseus_gdscript_schema.h"
+#include "colyseus_netdelay.h"
 #include "msgpack_encoder.h"
 #include <colyseus/room.h>
 #include <colyseus/schema.h>
@@ -130,6 +131,10 @@ void gdext_colyseus_room_destructor(void* p_class_userdata, GDExtensionClassInst
         unregister_room_wrapper(wrapper);
         
         if (wrapper->native_room) {
+            /* retire any latency-injector wrap before the transport dies */
+            if (wrapper->native_room->transport) {
+                gdext_colyseus_netdelay_unwrap(wrapper->native_room->transport);
+            }
             colyseus_room_free(wrapper->native_room);
         }
         

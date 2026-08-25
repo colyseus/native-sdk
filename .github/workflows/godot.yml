@@ -142,6 +142,10 @@ jobs:
             src/colyseus_client.c
             src/colyseus_room.c
             src/colyseus_callbacks.c
+            src/colyseus_input.c
+            src/colyseus_predict.c
+            src/colyseus_reconciler_gd.c
+            src/colyseus_netdelay.c
             src/colyseus_state.c
             src/colyseus_schema_registry.c
             src/colyseus_gdscript_schema.c
@@ -151,14 +155,25 @@ jobs:
             ../../src/common/settings.c
             ../../src/client.c
             ../../src/room.c
+            ../../src/room_clock.c
+            ../../src/input_handle.c
+            ../../src/network/latency.c
+            ../../src/network/net_delay.c
             ../../src/network/websocket_transport.c
             ../../src/schema/decode.c
+            ../../src/schema/encode.c
+            ../../src/schema/input_encoder.c
+            ../../src/schema/quantize.c
             ../../src/schema/ref_tracker.c
             ../../src/schema/collections.c
             ../../src/schema/decoder.c
             ../../src/schema/serializer.c
             ../../src/schema/callbacks.c
             ../../src/schema/dynamic_schema.c
+            ../../src/predict/predict.c
+            ../../src/predict/reconciler.c
+            ../../src/predict/events.c
+            ../../src/predict/spawns.c
             ../../src/utils/strUtil.c
             ../../src/utils/sha1_c.c
             ../../src/utils/time.c
@@ -403,6 +418,10 @@ jobs:
             src/colyseus_client.c
             src/colyseus_room.c
             src/colyseus_callbacks.c
+            src/colyseus_input.c
+            src/colyseus_predict.c
+            src/colyseus_reconciler_gd.c
+            src/colyseus_netdelay.c
             src/colyseus_state.c
             src/colyseus_schema_registry.c
             src/colyseus_gdscript_schema.c
@@ -412,14 +431,25 @@ jobs:
             ../../src/common/settings.c
             ../../src/client.c
             ../../src/room.c
+            ../../src/room_clock.c
+            ../../src/input_handle.c
+            ../../src/network/latency.c
+            ../../src/network/net_delay.c
             ../../src/network/websocket_transport.c
             ../../src/schema/decode.c
+            ../../src/schema/encode.c
+            ../../src/schema/input_encoder.c
+            ../../src/schema/quantize.c
             ../../src/schema/ref_tracker.c
             ../../src/schema/collections.c
             ../../src/schema/decoder.c
             ../../src/schema/serializer.c
             ../../src/schema/callbacks.c
             ../../src/schema/dynamic_schema.c
+            ../../src/predict/predict.c
+            ../../src/predict/reconciler.c
+            ../../src/predict/events.c
+            ../../src/predict/spawns.c
             ../../src/utils/strUtil.c
             ../../src/utils/sha1_c.c
             ../../src/utils/time.c

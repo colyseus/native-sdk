@@ -1,0 +1,11 @@
+.{
+    .name = .colyseus_sdk_flutter,
+    .version = "0.18.0",
+    .dependencies = .{
+        .native_sdk = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{""},
+    .fingerprint = 0xa3ebeadfc212be35,
+}

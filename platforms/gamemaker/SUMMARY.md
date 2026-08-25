@@ -28,21 +28,12 @@ This directory contains a complete build system for compiling the Colyseus Nativ
    - Cross-compilation notes
    - Troubleshooting guide
 
-2. **INTEGRATION.md** - Game Maker integration guide
-   - Step-by-step setup instructions
-   - External function definitions
-   - Complete usage examples
-   - Callback handling
-   - Platform-specific considerations
+2. **HTML5_SETUP.md** - the WASM build and the readiness gate
 
-3. **API_REFERENCE.md** - Complete API reference
-   - All available functions with signatures
-   - GML external function definitions
-   - Parameter descriptions
-   - Usage examples
-   - Covers: Client, Room, Auth, Messaging, State, and Utility functions
+3. **SUMMARY.md** (this file) - Project overview
 
-4. **SUMMARY.md** (this file) - Project overview
+The GML API itself is documented in the two scripts the extension ships,
+`Colyseus.gml` and `ColyseusPredict.gml`.
 
 ### Configuration
 

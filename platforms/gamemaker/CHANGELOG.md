@@ -2,6 +2,67 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.0
+
+### Added
+- Auth sign-in flows, alongside the token accessors that already existed:
+  - `colyseus_auth_sign_in_anonymously(client, callback, [options])`
+  - `colyseus_auth_register_with_email_and_password(client, email, password, callback, [options])`
+  - `colyseus_auth_sign_in_with_email_and_password(client, email, password, callback)`
+  - `colyseus_auth_get_user_data(client, callback)`
+  - `colyseus_auth_send_password_reset_email(client, email, callback)`
+  - `colyseus_auth_sign_out(client)` — drops the token here, in the on-disk
+    copy, and in the platform's secure storage. `colyseus_auth_clear_token` is
+    now an alias for it.
+  - Each takes the same `callback(err, data)` an HTTP call does, where a
+    successful `data` is the server's own `{ user, token }` reply. The token
+    lands on the client, so later `colyseus_http_*` calls are authenticated.
+  - The calls block in the core, so they run on the same worker thread HTTP
+    uses and answer through the polled event queue — `colyseus_process()` is
+    what delivers them. No new event types: an auth call is a request to
+    `/auth/*`, so its reply travels as a normal HTTP response.
+- `TestAuthApi` script covering the flows against the example server.
+- Latency-based endpoint selection:
+  - `colyseus_get_latency(client, endpoint, callback, timeout_ms = 0)` — measures the round-trip time to a server; `callback(err, latency_ms)`.
+  - `colyseus_select_by_latency(client, endpoints, callback, timeout_ms = 0)` — measures an array of endpoints in parallel; `callback(err, { endpoint, latency_ms })` returns the lowest-latency endpoint.
+  - Each measurement always settles — on the pong, a connection error, a server-side close before the pong, or a timeout (default 1500 ms) — so one unreachable/blackholed endpoint can't stall the selection.
+  - Event types `COLYSEUS_EVENT_LATENCY_RESPONSE` (16), `COLYSEUS_EVENT_LATENCY_ERROR` (17) and `COLYSEUS_EVENT_LATENCY_SELECTED` (18), plus dispatch cases in `colyseus_process()`.
+- `TestLatencyApi` script covering latency event dispatch.
+- `colyseus_room_get_reconnection_token(room)`. Persist it and pass it to
+  `colyseus_client_reconnect(client, token)` to re-take a seat after the
+  process is killed. [#26](https://github.com/colyseus/native-sdk/issues/26)
+- Collection enumeration: `colyseus_map_size()`, `colyseus_map_keys()`,
+  `colyseus_map_key_at()`, `colyseus_map_value_at()`, `colyseus_array_size()`
+  and `colyseus_array_get()`. Map order is the server's iteration order, so a
+  roster no longer needs an `on_add`/`on_remove` mirror. `colyseus_map_get()`
+  now also returns the value of primitive-valued maps.
+- `colyseus_is_ready()`. On HTML5 the WASM module instantiates after the game
+  has started, so create the client on the first Step where this is true.
+  `colyseus_client_create()` called earlier now returns 0 and says so, instead
+  of latching a misleading "ABI 0 != 1, rebuild" error.
+
+### Changed
+- The raw step-context accessors (`__colyseus_gm_step_ctx()` and friends) read
+  NaN outside a reconciler step instead of 0. `recon.ctx` keeps the last
+  pumped values, so wrapper-level reads are unaffected.
+
+### Fixed
+- HTML5 exports no longer inject `<script src="colyseus_wasm.js">` at the page
+  root, where it 404'd. The runner loads the extension's script itself.
+- The `.yymps` package now ships `ColyseusPredict.gml` alongside `Colyseus.gml`.
+  A package built from 0.18.0 sources without it failed to compile on
+  `__colyseus_predict_dispatch`.
+- The structs from `colyseus_room_get_state()`, `colyseus_map_get()` and
+  `colyseus_schema_get()` are refreshed (nested refs included) after every
+  patch. Dot access used to stay frozen at join time for any field without a
+  `colyseus_listen()` callback, despite the docs saying otherwise.
+- `colyseus_client_reconnect()` was rejected by the server with "bad
+  reconnection token" even with a valid token. [#26](https://github.com/colyseus/native-sdk/issues/26)
+- Automatic reconnection could stall with `colyseus_room_is_reconnecting()`
+  true and no `on_leave` when a retry failed at DNS time (typical after a
+  mobile resume). [#27](https://github.com/colyseus/native-sdk/issues/27)
+- Automatic reconnection works on every drop, not just the first one per room.
+
 ## 0.17.23
 
 ### Added

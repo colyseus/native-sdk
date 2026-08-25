@@ -86,7 +86,13 @@ export class TestRoom extends Room {
     },
   }
 
-  onCreate() {
+  onCreate(options?: { private?: boolean }) {
+    // SDK suites run in parallel against this one server; a private room is
+    // skipped by joinOrCreate, so each suite keeps its room to itself.
+    if (options?.private) {
+      this.setPrivate();
+    }
+
     // broadcast "weather" event every 4 seconds
     this.clock.setInterval(() => {
       const weather = ["sunny", "cloudy", "rainy", "snowy"];
