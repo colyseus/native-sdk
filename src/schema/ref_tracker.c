@@ -8,13 +8,18 @@
 /* Forward declaration for recursive removal */
 static void schedule_children_for_removal(colyseus_ref_tracker_t* tracker, colyseus_ref_entry_t* entry);
 
+/* Address of a pointer-typed field (string, ref, array or map) in an instance. */
+static void** schema_field_slot(void* instance, const colyseus_field_t* field) {
+    return (void**)((char*)instance + field->offset);
+}
+
 void colyseus_schema_free_string_fields(colyseus_schema_t* instance) {
     const colyseus_schema_vtable_t* vt = instance ? instance->__vtable : NULL;
     if (!vt || colyseus_vtable_is_dynamic(vt)) return;
     for (int i = 0; i < vt->field_count; i++) {
         const colyseus_field_t* f = &vt->fields[i];
         if (f->type != COLYSEUS_FIELD_STRING) continue;
-        char** slot = (char**)((char*)instance + f->offset);
+        char** slot = (char**)schema_field_slot(instance, f);
         free(*slot);
         *slot = NULL;
     }
@@ -28,29 +33,43 @@ static void ref_tracker_forget(colyseus_ref_tracker_t* tracker, int ref_id) {
 }
 
 /* One instance can sit at two indices of an array, or in two collections — the
- * wire references it by refId. Destroying per slot would free it twice. */
+ * wire references it by refId. Destroying per slot would free it twice, and the
+ * alias pass below needs these pointers after the fact. */
 typedef struct destroyed_ref {
     void* ptr;
     UT_hash_handle hh;
 } destroyed_ref_t;
 
+static bool ref_seen(destroyed_ref_t* set, void* ptr) {
+    destroyed_ref_t* found = NULL;
+    HASH_FIND_PTR(set, &ptr, found);
+    return found != NULL;
+}
+
+/* The vtable of a live codegen-backed schema entry; NULL for anything the
+ * static teardown must leave alone — already freed, a collection, or dynamic. */
+static const colyseus_schema_vtable_t* static_schema_vtable(const colyseus_ref_entry_t* entry) {
+    if (!entry->ref || entry->ref_type != COLYSEUS_REF_TYPE_SCHEMA) return NULL;
+    if (!entry->vtable || colyseus_vtable_is_dynamic(entry->vtable)) return NULL;
+    return entry->vtable;
+}
+
 typedef struct {
     colyseus_ref_tracker_t* tracker;
     const colyseus_schema_vtable_t* child_vtable;
-    destroyed_ref_t** destroyed;
+    destroyed_ref_t* destroyed;
 } destroy_children_ctx_t;
 
 static void destroy_collection_child(colyseus_schema_t* instance, destroy_children_ctx_t* ctx) {
     if (!instance) return;
-    destroyed_ref_t* seen = NULL;
-    HASH_FIND_PTR(*ctx->destroyed, &instance, seen);
-    if (seen) return;
+    /* must precede every read of *instance: on a repeat it is already freed */
+    if (ref_seen(ctx->destroyed, instance)) return;
     const colyseus_schema_vtable_t* vt = instance->__vtable ? instance->__vtable : ctx->child_vtable;
     if (!vt || colyseus_vtable_is_dynamic(vt) || !vt->destroy) return;
-    seen = malloc(sizeof(destroyed_ref_t));
-    if (!seen) return;   /* without the marker a repeat would double-free; leak instead */
-    seen->ptr = instance;
-    HASH_ADD_PTR(*ctx->destroyed, ptr, seen);
+    destroyed_ref_t* mark = malloc(sizeof(destroyed_ref_t));
+    if (!mark) return;   /* without the marker a repeat would double-free; leak instead */
+    mark->ptr = instance;
+    HASH_ADD_PTR(ctx->destroyed, ptr, mark);
     int ref_id = instance->__refId;
     colyseus_schema_free_string_fields(instance);
     vt->destroy(instance);
@@ -71,16 +90,15 @@ void colyseus_ref_tracker_destroy_static_refs(colyseus_ref_tracker_t* tracker, v
     if (!tracker) return;
     colyseus_ref_entry_t* entry;
     colyseus_ref_entry_t* tmp;
-    destroyed_ref_t* destroyed = NULL;
+    destroy_children_ctx_t ctx = { tracker, NULL, NULL };
 
     /*
-     * Pass 1 — strings. Nothing else frees them: schema-codegen's destroy()
-     * ignores char* fields entirely. Freeing NULLs the slot, so the recursive
-     * destroy below can't trip over it.
+     * Pass 1 — strings, freed and NULLed up front. Codegen's destroy() frees
+     * its own char* fields too, so clearing the slot is what stops the two
+     * from colliding on an instance this walk also destroys.
      */
     HASH_ITER(hh, tracker->refs, entry, tmp) {
-        if (!entry->ref || entry->ref_type != COLYSEUS_REF_TYPE_SCHEMA) continue;
-        if (!entry->vtable || colyseus_vtable_is_dynamic(entry->vtable)) continue;
+        if (!static_schema_vtable(entry)) continue;
         colyseus_schema_free_string_fields((colyseus_schema_t*)entry->ref);
     }
 
@@ -95,7 +113,7 @@ void colyseus_ref_tracker_destroy_static_refs(colyseus_ref_tracker_t* tracker, v
         if (entry->ref_type == COLYSEUS_REF_TYPE_MAP) {
             colyseus_map_schema_t* map = (colyseus_map_schema_t*)entry->ref;
             if (map->has_schema_child) {
-                destroy_children_ctx_t ctx = { tracker, map->child_vtable, &destroyed };
+                ctx.child_vtable = map->child_vtable;
                 colyseus_map_schema_foreach(map, destroy_map_child, &ctx);
             }
             entry->ref = NULL;
@@ -103,7 +121,7 @@ void colyseus_ref_tracker_destroy_static_refs(colyseus_ref_tracker_t* tracker, v
         } else if (entry->ref_type == COLYSEUS_REF_TYPE_ARRAY) {
             colyseus_array_schema_t* arr = (colyseus_array_schema_t*)entry->ref;
             if (arr->has_schema_child) {
-                destroy_children_ctx_t ctx = { tracker, arr->child_vtable, &destroyed };
+                ctx.child_vtable = arr->child_vtable;
                 colyseus_array_schema_foreach(arr, destroy_array_child, &ctx);
             }
             entry->ref = NULL;
@@ -114,29 +132,26 @@ void colyseus_ref_tracker_destroy_static_refs(colyseus_ref_tracker_t* tracker, v
     /*
      * A t.ref() field can point at an instance we just destroyed as a
      * collection child — the same Player is both players["id"] and host.
-     * Codegen's destroy() frees what its ref fields point at, so the root
-     * would free that child a second time. Clear the aliases first.
+     * Codegen's destroy() frees what its ref fields point at, so clear those
+     * aliases before the caller's root destroy runs, or it frees them again.
      */
-    HASH_ITER(hh, tracker->refs, entry, tmp) {
-        if (!entry->ref || entry->ref_type != COLYSEUS_REF_TYPE_SCHEMA) continue;
-        const colyseus_schema_vtable_t* vt = entry->vtable;
-        if (!vt || colyseus_vtable_is_dynamic(vt) || !vt->fields) continue;
-        for (int i = 0; i < vt->field_count; i++) {
-            if (vt->fields[i].type != COLYSEUS_FIELD_REF) continue;
-            void** slot = (void**)((char*)entry->ref + vt->fields[i].offset);
-            void* target = *slot;
-            if (!target) continue;
-            destroyed_ref_t* hit = NULL;
-            HASH_FIND_PTR(destroyed, &target, hit);
-            if (hit) *slot = NULL;
+    if (ctx.destroyed) {
+        HASH_ITER(hh, tracker->refs, entry, tmp) {
+            const colyseus_schema_vtable_t* vt = static_schema_vtable(entry);
+            if (!vt || !vt->fields) continue;
+            for (int i = 0; i < vt->field_count; i++) {
+                if (vt->fields[i].type != COLYSEUS_FIELD_REF) continue;
+                void** slot = schema_field_slot(entry->ref, &vt->fields[i]);
+                if (*slot && ref_seen(ctx.destroyed, *slot)) *slot = NULL;
+            }
         }
     }
 
-    destroyed_ref_t* seen;
-    destroyed_ref_t* seen_tmp;
-    HASH_ITER(hh, destroyed, seen, seen_tmp) {
-        HASH_DEL(destroyed, seen);
-        free(seen);
+    destroyed_ref_t* mark;
+    destroyed_ref_t* mark_tmp;
+    HASH_ITER(hh, ctx.destroyed, mark, mark_tmp) {
+        HASH_DEL(ctx.destroyed, mark);
+        free(mark);
     }
 }
 
@@ -339,8 +354,7 @@ static void schedule_children_for_removal(colyseus_ref_tracker_t* tracker, colys
                     continue;
                 }
 
-                void* field_ptr = (char*)schema + field->offset;
-                void* field_value = *(void**)field_ptr;
+                void* field_value = *schema_field_slot(schema, field);
 
                 if (!field_value) continue;
 
