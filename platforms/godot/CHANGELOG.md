@@ -26,6 +26,14 @@ All notable changes to the Colyseus Godot SDK will be documented in this file.
   - `select_by_latency(endpoints, timeout_ms = 0)` measures an array of endpoints in parallel and emits `_latency_selected(request_id, best_endpoint, best_latency_ms)` with the lowest-latency endpoint (`best_endpoint` is empty when every endpoint failed).
   - Each measurement always settles — on the pong, a connection error, a server-side close before the pong, or a timeout (default 1500 ms) — so one unreachable/blackholed endpoint can't stall the selection.
 - `test_latency.gd` covering the healthy, timeout, and selection paths against the test server.
+
+### Fixed
+- Automatic reconnection only worked once per room; a second drop left
+  `room.reconnecting` true forever with no `left` signal.
+
+## 0.17.12
+
+### Added
 - `room.get_reconnection_token()`. Persist it and pass it to
   `client.reconnect(token)` to re-take a seat after the process is killed.
   Thanks @zahmad12! [#26](https://github.com/colyseus/native-sdk/issues/26)
@@ -35,8 +43,6 @@ All notable changes to the Colyseus Godot SDK will be documented in this file.
   no `left` signal after an Android background/resume: a retry that failed at
   DNS time never counted as an attempt. Reported by @zahmad12 in
   [#27](https://github.com/colyseus/native-sdk/issues/27).
-- Automatic reconnection only worked once per room; a second drop left
-  `room.reconnecting` true forever with no `left` signal.
 - `client.reconnect(token)` was rejected by the server with "bad reconnection
   token" even with a valid token. [#26](https://github.com/colyseus/native-sdk/issues/26)
 
