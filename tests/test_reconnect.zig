@@ -12,6 +12,13 @@ const c = @cImport({
 const TEST_SERVER = "localhost";
 const TEST_PORT = "2567";
 
+// `zig build test` runs the test binaries in parallel against one server, and
+// TestRoom sets no maxClients — a joinOrCreate would drop several suites into
+// the same room instance, where a foreign client's onJoin/onLeave mutates
+// `players` and fires the very callbacks these tests count. So: create, never
+// join, and mark the room private so nobody else can matchmake into it.
+const PRIVATE_ROOM = "{\"private\":true}";
+
 const ReconnectTest = struct {
     var room: ?[*c]c.colyseus_room_t = null;
     var matchmake_succeeded: bool = false;
@@ -125,10 +132,10 @@ test "reconnect: drop + automatic reconnect + flushed messages" {
     defer c.colyseus_client_free(client);
     try testing.expect(client != null);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         ReconnectTest.onMatchmakeSuccess,
         ReconnectTest.onMatchmakeFailure,
         null,
@@ -189,10 +196,10 @@ test "reconnect: gives up after max_retries and fires on_leave(FAILED_TO_RECONNE
     defer c.colyseus_client_free(client);
     try testing.expect(client != null);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         ReconnectTest.onMatchmakeSuccess,
         ReconnectTest.onMatchmakeFailure,
         null,
@@ -258,7 +265,7 @@ test "reconnect: a second drop reconnects again" {
     const client = c.colyseus_client_create(settings);
     defer c.colyseus_client_free(client);
 
-    c.colyseus_client_join_or_create(client, "test_room", "{}",
+    c.colyseus_client_create_room(client, "test_room", PRIVATE_ROOM,
         ReconnectTest.onMatchmakeSuccess, ReconnectTest.onMatchmakeFailure, null);
     try testing.expect(pollUntil(joined, 10 * std.time.ns_per_s));
     const room = ReconnectTest.room.?;
@@ -301,10 +308,10 @@ test "reconnect: synchronous connect failure does not wedge the retry loop" {
     defer c.colyseus_client_free(client);
     try testing.expect(client != null);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         ReconnectTest.onMatchmakeSuccess,
         ReconnectTest.onMatchmakeFailure,
         null,
@@ -371,7 +378,7 @@ test "reconnect: manual client.reconnect() with the room's token" {
     const client = c.colyseus_client_create(settings);
     defer c.colyseus_client_free(client);
 
-    c.colyseus_client_join_or_create(client, "test_room", "{}",
+    c.colyseus_client_create_room(client, "test_room", PRIVATE_ROOM,
         ReconnectTest.onMatchmakeSuccess, ReconnectTest.onMatchmakeFailure, null);
     try testing.expect(pollUntil(joined, 10 * std.time.ns_per_s));
     const room = ReconnectTest.room.?;
