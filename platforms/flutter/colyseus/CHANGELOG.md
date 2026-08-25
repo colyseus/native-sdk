@@ -2,6 +2,16 @@
 
 All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
+## 0.18.1
+
+### Fixed
+
+- 0.18.0 was published without its native libraries, so any app using it threw
+  `Failed to load dynamic library 'libcolyseus_flutter.dylib'` (and the
+  equivalent on the other platforms) as soon as it constructed a client. The
+  libraries for macOS, iOS, Android, Linux and Windows now ship with the
+  package.
+
 ## 0.18.0
 
 ### Added

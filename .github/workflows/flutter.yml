@@ -131,7 +131,21 @@ jobs:
 
       - name: Validate
         working-directory: ${{ runner.temp }}/pkg
-        run: flutter pub publish --dry-run
+        run: |
+          set -o pipefail
+          flutter pub publish --dry-run 2>&1 | tee "$RUNNER_TEMP/dry-run.txt"
+
+      # 0.18.0 went out with every native library stripped by a .gitignore and
+      # pub still reported zero warnings, so assert on the archive listing
+      # rather than trusting the exit code.
+      - name: Assert the archive carries the native libraries
+        run: |
+          set -eu
+          for lib in libcolyseus_flutter.dylib colyseus_flutter.xcframework \
+                     libcolyseus_flutter.so colyseus_flutter.dll; do
+            grep -q "$lib" "$RUNNER_TEMP/dry-run.txt" \
+              || { echo "native library missing from the package: $lib" >&2; exit 1; }
+          done
 
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/') || inputs.publish
