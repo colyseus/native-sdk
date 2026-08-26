@@ -115,16 +115,6 @@ void colyseus_decoder_free(colyseus_decoder_t* decoder) {
     colyseus_type_context_free(decoder->context);
     colyseus_changes_free(decoder->changes);
 
-    /* Free state if vtable has destroy function.
-     * For dynamic schemas, ref_tracker_clear already destroyed everything.
-     * For static schemas, we need to call destroy here. */
-    if (decoder->state && decoder->state_vtable && decoder->state_vtable->destroy) {
-        if (!colyseus_vtable_is_dynamic(decoder->state_vtable)) {
-            colyseus_schema_free_string_fields(decoder->state);
-            decoder->state_vtable->destroy(decoder->state);
-        }
-    }
-
     free(decoder);
 }
 
@@ -142,6 +132,18 @@ colyseus_schema_t* colyseus_decoder_get_state(colyseus_decoder_t* decoder) {
 void colyseus_decoder_teardown(colyseus_decoder_t* decoder) {
     if (!decoder) return;
     colyseus_ref_tracker_clear(decoder->refs);
+
+    /* A dynamic tree is destroyed by the clear above; a codegen'd one destroys
+     * itself and has to be asked. Either way the root is gone afterwards, so
+     * the pointer must not outlive it: colyseus_room_get_state() hands it
+     * straight to the app, and a client that reads state while a room is
+     * closing would read freed memory. */
+    if (decoder->state && decoder->state_vtable && decoder->state_vtable->destroy
+        && !colyseus_vtable_is_dynamic(decoder->state_vtable)) {
+        colyseus_schema_free_string_fields(decoder->state);
+        decoder->state_vtable->destroy(decoder->state);
+    }
+    decoder->state = NULL;
 }
 
 /*
