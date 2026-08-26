@@ -17,6 +17,16 @@ public enum Colyseus {
         set { runtime.callbackQueue = newValue }
     }
 
+    /// Local monotonic milliseconds — the timebase everything in the SDK
+    /// measures against.
+    ///
+    /// This is the same clock ``Colyseus/RoomClock/now`` reads, available
+    /// without a room: a shell that switches between rooms still has to drive
+    /// one frame loop, and ``Colyseus/Predict/tick(_:)`` will not accept wall
+    /// time (an epoch millisecond count is not a duration from anything the
+    /// prediction layer knows about).
+    public static var now: Double { colyseus_room_clock_now(nil) }
+
     // MARK: - Pumping
 
     /// Release inbound traffic, decode it, advance reconnection, and deliver

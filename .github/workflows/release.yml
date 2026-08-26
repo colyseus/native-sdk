@@ -148,9 +148,37 @@ jobs:
           name: colyseus-wasm32
           path: colyseus-wasm32.tar.gz
 
+  # The Apple xcframework, for SwiftPM consumers: one binary target covering
+  # macOS, iOS, iOS simulator, tvOS and tvOS simulator.
+  build-xcframework:
+    name: Build Colyseus.xcframework
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build xcframework
+        working-directory: platforms/swift
+        run: bash build.sh release
+
+      - name: Upload xcframework
+        uses: actions/upload-artifact@v4
+        with:
+          name: Colyseus.xcframework
+          path: |
+            platforms/swift/build/Colyseus.xcframework.zip
+            platforms/swift/build/Colyseus.xcframework.zip.sha256
+
   # Create GitHub release with all artifacts
   release:
-    needs: [build, build-wasm]
+    needs: [build, build-wasm, build-xcframework]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -183,6 +211,12 @@ jobs:
             --exclude='*.tar.gz' \
             .
           mv "${RUNNER_TEMP}/colyseus-source-${{ steps.version.outputs.version }}.tar.gz" .
+
+      - name: Read the xcframework checksum
+        id: xcframework
+        run: |
+          checksum=$(cat artifacts/Colyseus.xcframework/Colyseus.xcframework.zip.sha256 2>/dev/null || echo "")
+          echo "checksum=${checksum}" >> $GITHUB_OUTPUT
 
       - name: Package all-targets bundle
         run: |
@@ -258,6 +292,24 @@ jobs:
             | Windows | x86_64 | `colyseus-windows-x86_64.zip` |
             | iOS | arm64 | `colyseus-ios-arm64.tar.gz` |
             | WebAssembly | wasm32 | `colyseus-wasm32.tar.gz` |
+            | Apple (SwiftPM) | macOS, iOS, tvOS | `Colyseus.xcframework.zip` |
+            
+            ### Swift
+            
+            ```swift
+            .binaryTarget(
+                name: "CColyseus",
+                url: "https://github.com/colyseus/native-sdk/releases/download/${{ steps.version.outputs.version }}/Colyseus.xcframework.zip",
+                checksum: "${{ steps.xcframework.outputs.checksum }}"
+            )
+            ```
+            
+            Or point `platforms/swift` at it directly:
+            
+            ```sh
+            export COLYSEUS_XCFRAMEWORK_URL=https://github.com/colyseus/native-sdk/releases/download/${{ steps.version.outputs.version }}/Colyseus.xcframework.zip
+            export COLYSEUS_XCFRAMEWORK_CHECKSUM=${{ steps.xcframework.outputs.checksum }}
+            ```
             
             ### Usage
             
