@@ -9,7 +9,7 @@ import Foundation
 /// It also remembers which field of which instance it came from, which is what
 /// lets ``Colyseus/Callbacks/onAdd(_:_:)`` survive the server replacing the
 /// whole collection.
-public struct MapSchema<Element: SchemaCollectionElement>: Sendable {
+public struct MapSchema<Element: SchemaValue>: Sendable {
     let owner: SchemaRef
     /// The field name on ``owner``. Callback registration keys off this.
     public let field: String
@@ -30,7 +30,7 @@ public struct MapSchema<Element: SchemaCollectionElement>: Sendable {
     public subscript(key: String) -> Element? {
         guard let raw else { return nil }
         guard let value = key.withCString({ colyseus_map_schema_get(raw, $0) }) else { return nil }
-        return Element._fromCollectionSlot(value, primitive: primitiveType(of: raw))
+        return Element._fromSchemaSlot(value, primitive: primitiveType(of: raw))
     }
 
     public func contains(_ key: String) -> Bool {
@@ -46,7 +46,7 @@ public struct MapSchema<Element: SchemaCollectionElement>: Sendable {
         guard let raw else { return [] }
         let primitive = primitiveType(of: raw)
         return mapSchemaSlots(raw).compactMap { slot in
-            Element._fromCollectionSlot(slot.value, primitive: primitive)
+            Element._fromSchemaSlot(slot.value, primitive: primitive)
                 .map { (key: slot.key, value: $0) }
         }
     }
@@ -59,7 +59,7 @@ public struct MapSchema<Element: SchemaCollectionElement>: Sendable {
 }
 
 /// An `ArraySchema` on the decoded state.
-public struct ArraySchema<Element: SchemaCollectionElement>: Sendable {
+public struct ArraySchema<Element: SchemaValue>: Sendable {
     let owner: SchemaRef
     public let field: String
 
@@ -78,7 +78,7 @@ public struct ArraySchema<Element: SchemaCollectionElement>: Sendable {
     public subscript(index: Int) -> Element? {
         guard let raw, index >= 0, index < Int(raw.pointee.count) else { return nil }
         guard let value = colyseus_array_schema_get(raw, Int32(index)) else { return nil }
-        return Element._fromCollectionSlot(value, primitive: primitiveType(of: raw))
+        return Element._fromSchemaSlot(value, primitive: primitiveType(of: raw))
     }
 
     /// Every element, in index order.

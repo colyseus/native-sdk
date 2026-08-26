@@ -17,7 +17,7 @@ import Foundation
 /// The instance a ref points at belongs to the decoder, which replaces
 /// instances on resync — after a reconnect, say. Read refs out of
 /// ``Colyseus/Room/state`` each frame rather than storing them across frames.
-open class SchemaRef: SchemaCollectionElement, @unchecked Sendable {
+open class SchemaRef: SchemaValue, @unchecked Sendable {
     public let view: SchemaView
 
     public required init(_ view: SchemaView) {
@@ -32,15 +32,15 @@ open class SchemaRef: SchemaCollectionElement, @unchecked Sendable {
         SchemaView(view.child(field)).map(T.init)
     }
 
-    public func mapOf<T: SchemaCollectionElement>(_ field: String, _: T.Type = T.self) -> MapSchema<T> {
+    public func mapOf<T: SchemaValue>(_ field: String, _: T.Type = T.self) -> MapSchema<T> {
         MapSchema(owner: self, field: field)
     }
 
-    public func arrayOf<T: SchemaCollectionElement>(_ field: String, _: T.Type = T.self) -> ArraySchema<T> {
+    public func arrayOf<T: SchemaValue>(_ field: String, _: T.Type = T.self) -> ArraySchema<T> {
         ArraySchema(owner: self, field: field)
     }
 
-    public static func _fromCollectionSlot(
+    public static func _fromSchemaSlot(
         _ pointer: UnsafeMutableRawPointer,
         primitive _: SchemaFieldType?
     ) -> Self? {
@@ -48,21 +48,22 @@ open class SchemaRef: SchemaCollectionElement, @unchecked Sendable {
     }
 }
 
-/// What a schema collection can hold: a generated ``SchemaRef``, or one of the
-/// primitives a `t.array(t.number())` yields.
+/// Something a schema slot can hold: a generated ``SchemaRef``, or one of the
+/// primitives a `t.number()` field or a `t.array(t.number())` yields.
 ///
-/// The core stores a collection's primitives at their declared width — an
-/// `int8` really is one byte behind the pointer — so reading one needs the
-/// collection's declared type, which is what `primitive` carries.
-public protocol SchemaCollectionElement {
-    static func _fromCollectionSlot(
+/// The core stores primitives at their declared width — an `int8` really is
+/// one byte behind the pointer — so reading one needs the declared type, which
+/// is what `primitive` carries. Collections and change callbacks both hand out
+/// slots this way, which is why one protocol serves both.
+public protocol SchemaValue {
+    static func _fromSchemaSlot(
         _ pointer: UnsafeMutableRawPointer,
         primitive: SchemaFieldType?
     ) -> Self?
 }
 
-extension Double: SchemaCollectionElement {
-    public static func _fromCollectionSlot(
+extension Double: SchemaValue {
+    public static func _fromSchemaSlot(
         _ pointer: UnsafeMutableRawPointer,
         primitive: SchemaFieldType?
     ) -> Double? {
@@ -70,8 +71,8 @@ extension Double: SchemaCollectionElement {
     }
 }
 
-extension Int: SchemaCollectionElement {
-    public static func _fromCollectionSlot(
+extension Int: SchemaValue {
+    public static func _fromSchemaSlot(
         _ pointer: UnsafeMutableRawPointer,
         primitive: SchemaFieldType?
     ) -> Int? {
@@ -79,8 +80,8 @@ extension Int: SchemaCollectionElement {
     }
 }
 
-extension Bool: SchemaCollectionElement {
-    public static func _fromCollectionSlot(
+extension Bool: SchemaValue {
+    public static func _fromSchemaSlot(
         _ pointer: UnsafeMutableRawPointer,
         primitive: SchemaFieldType?
     ) -> Bool? {
@@ -88,8 +89,8 @@ extension Bool: SchemaCollectionElement {
     }
 }
 
-extension String: SchemaCollectionElement {
-    public static func _fromCollectionSlot(
+extension String: SchemaValue {
+    public static func _fromSchemaSlot(
         _ pointer: UnsafeMutableRawPointer,
         primitive: SchemaFieldType?
     ) -> String? {

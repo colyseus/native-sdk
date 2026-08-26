@@ -39,6 +39,10 @@ public extension Colyseus {
         /// figures the estimate is built from.
         public private(set) lazy var clock = RoomClock(colyseus_room_get_clock(raw))
 
+        /// The room's decode-callback layer, built on first use. There is one
+        /// per room, shared by everything that watches the state.
+        public private(set) lazy var callbacks = Callbacks(colyseus_room_callbacks(raw))
+
         // MARK: - Lifetime
 
         init(raw: UnsafeMutablePointer<colyseus_room_t>) {
