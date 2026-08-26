@@ -88,7 +88,12 @@ public extension Colyseus {
         ) -> Void
 
         private func request(_ path: String, body: String?, call: @escaping BodyCall) async throws -> Response {
-            guard let raw else { throw Colyseus.Error.unavailable("client has been released") }
+            guard let handle = raw else {
+                throw Colyseus.Error.unavailable("client has been released")
+            }
+            // The C client owns this pointer and outlives the request; handing
+            // it to the worker is the whole point of having one.
+            nonisolated(unsafe) let raw = handle
 
             return try await withCheckedThrowingContinuation { continuation in
                 queue.async {

@@ -1,7 +1,10 @@
 import CColyseus
 import Foundation
 
-public extension Colyseus {
+// A plain extension, not a `public` one: `open` conflicts with an extension
+// that already declares its members public, and SpawnLocal exists to be
+// subclassed from the app's module.
+extension Colyseus {
     /// A predicted local body, before the server has one of its own.
     ///
     /// Subclass it with whatever your projectile needs, and the store will
@@ -17,7 +20,9 @@ public extension Colyseus {
         /// confirmed one.
         open func value(_ field: String) -> Double { .nan }
     }
+}
 
+public extension Colyseus {
     /// One entry in a spawn store — a predicted local, an authoritative
     /// instance, or both while the handoff completes.
     struct SpawnEntry: @unchecked Sendable {
