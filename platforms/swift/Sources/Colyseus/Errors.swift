@@ -10,8 +10,19 @@ public extension Colyseus {
         /// The room closed while a call was still waiting on it.
         case roomClosed(code: Int32, reason: String)
 
-        /// A `request()` the server answered with a rejection.
-        case requestRejected(String)
+        /// A `request()` the server's handler deliberately refused with
+        /// `ctx.reject(reason)`. The reason arrives as the server authored it,
+        /// so a structured one survives instead of being flattened to text.
+        case requestRejected(reason: MessagePackValue)
+
+        /// A `request()` whose handler threw, or for which the room had no
+        /// handler at all. Rebuilt from the sanitized `{ name, message, code }`
+        /// the server sends — never the raw thrown value, so a crash cannot
+        /// pose as a deliberate rejection.
+        case requestFailed(name: String, message: String, code: MessagePackValue?)
+
+        /// A `request()` that got no reply in time.
+        case requestTimedOut(type: String, seconds: TimeInterval)
 
         /// An HTTP call that came back outside 2xx.
         case http(status: Int32, body: String)
@@ -36,6 +47,10 @@ public extension Colyseus {
                 return reason.isEmpty ? "room closed (\(code))" : "room closed (\(code)): \(reason)"
             case .requestRejected(let reason):
                 return "request rejected: \(reason)"
+            case .requestFailed(let name, let message, _):
+                return "request failed — \(name): \(message)"
+            case .requestTimedOut(let type, let seconds):
+                return "request \"\(type)\" timed out after \(Int(seconds * 1000))ms"
             case .http(let status, let body):
                 return "HTTP \(status): \(body)"
             case .auth(let message):

@@ -118,8 +118,5 @@ Two clients are built on this package, and are the best place to see it used:
 
 ## Known gaps
 
-- `room.request()` is not bound. The core implements it, but its message reader
-  exposes no raw-bytes accessor, which is the same reason the Flutter binding
-  left it out.
 - Unreliable input needs a datagram transport the core does not have yet.
 - `SetSchema` and `CollectionSchema` do not exist in the core.
