@@ -78,3 +78,43 @@ public final class MovePlayer: SchemaRef {
 public final class MoveState: SchemaRef {
     public var players: MapSchema<MovePlayer> { mapOf("players") }
 }
+
+// MARK: - lab-goal
+
+extension PlaygroundSim {
+    /// The goal zone: a strip on the right edge, from `src/shared/goal.ts`.
+    static let goalZone = (x: arenaWidth - 8, y: arenaHeight / 2 - 9, width: 8.0, height: 18.0)
+    static let scoreCooldownTicks = 50.0
+
+    /// The scoring gate, run once per input step on both sides.
+    ///
+    /// Returns true on the entry EDGE only. Whether the goal is AWARDED is the
+    /// server's to decide, which is exactly why the client can predict the
+    /// crossing without ever mispredicting it.
+    static func stepScoreGate(_ player: SchemaView) -> Bool {
+        let ticks = player["scoreTicks"]
+        if ticks > 0 {
+            player.set("scoreTicks", to: ticks - 1)
+            return false
+        }
+
+        let x = player["x"], y = player["y"]
+        if x >= goalZone.x, y >= goalZone.y, y <= goalZone.y + goalZone.height {
+            player.set("scoreTicks", to: scoreCooldownTicks)
+            return true
+        }
+        return false
+    }
+}
+
+public final class GoalPlayer: SchemaRef {
+    public var x: Double { view["x"] }
+    public var y: Double { view["y"] }
+    public var score: Double { view["score"] }
+    public var scoreTicks: Double { view["scoreTicks"] }
+}
+
+public final class GoalState: SchemaRef {
+    public var players: MapSchema<GoalPlayer> { mapOf("players") }
+    public var denyRate: Double { view["denyRate"] }
+}

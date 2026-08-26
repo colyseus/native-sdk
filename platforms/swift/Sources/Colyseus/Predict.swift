@@ -91,11 +91,14 @@ public extension Colyseus {
     /// ```
     final class Predict: @unchecked Sendable {
         let raw: OpaquePointer
+        /// The room clock, which the children this Predict creates need too.
+        let clock: OpaquePointer?
         private var children: [AnyObject] = []
         private let lock = NSLock()
 
-        init(raw: OpaquePointer) {
+        init(raw: OpaquePointer, clock: OpaquePointer?) {
             self.raw = raw
+            self.clock = clock
         }
 
         deinit { colyseus_predict_free(raw) }
@@ -103,7 +106,8 @@ public extension Colyseus {
         /// The Predict for this room: its own callbacks layer, wired to the
         /// room clock and the server's fixed step.
         public static func get<State: SchemaRef>(_ room: Room<State>) -> Predict? {
-            colyseus_predict_for_room(room.raw).map(Predict.init(raw:))
+            guard let raw = colyseus_predict_for_room(room.raw) else { return nil }
+            return Predict(raw: raw, clock: room.clock.raw)
         }
 
         // MARK: - Attaching
