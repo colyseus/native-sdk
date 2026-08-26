@@ -155,7 +155,7 @@ export fn colyseus_message_map_put_msg(map: ?*PayloadWrapper, key: [*c]const u8,
     if (map == null or key == null or value == null or map.?.payload_type != .map) return;
     const key_str = std.mem.span(key);
 
-    const val_payload = getPayloadForEncoding(value.?) orelse return;
+    const val_payload = takePayload(value.?) orelse return;
     map.?.payload.?.mapPut(key_str, val_payload) catch return;
 }
 
@@ -209,15 +209,28 @@ export fn colyseus_message_array_push_msg(arr: ?*PayloadWrapper, value: ?*Payloa
     if (arr == null or value == null or arr.?.payload_type != .array) return;
     var list = &arr.?.array_elements.?;
 
-    const val_payload = getPayloadForEncoding(value.?) orelse return;
+    const val_payload = takePayload(value.?) orelse return;
     list.append(allocator, val_payload) catch return;
 }
 
 // ============================================================================
-// Encode snapshot: deep clone so zig-msgpack encode cannot alias builder heap.
+// Payload ownership
+//
+// A wrapper's payload leaves it in one of two ways, and they are not the same:
+//
+//   takePayload()   nesting — the parent adopts the payload, so the child must
+//                   never free it again. The child wrapper survives but empty,
+//                   which makes a later colyseus_message_free() a no-op.
+//   copyPayload()   encoding — the builder keeps everything it had, so the same
+//                   message can be encoded (and sent) more than once.
+//
+// zig-msgpack's Pack.write does not consume what it writes, so the encode copy
+// is ours to free once the bytes are out.
 // ============================================================================
 
-fn clonePayloadForEncode(p: Payload) (Payload.Error || error{ OutOfMemory, UnsupportedNonStringMapKey })!Payload {
+const CopyError = Payload.Error || error{ OutOfMemory, UnsupportedNonStringMapKey };
+
+fn copyValue(p: Payload) CopyError!Payload {
     return switch (p) {
         .nil, .bool, .int, .uint, .float, .timestamp => p,
         .str => |s| try Payload.strToPayload(s.str, allocator),
@@ -227,8 +240,7 @@ fn clonePayloadForEncode(p: Payload) (Payload.Error || error{ OutOfMemory, Unsup
             var arr_payload = try Payload.arrPayload(items.len, allocator);
             errdefer arr_payload.free(allocator);
             for (items, 0..) |item, i| {
-                const cloned = try clonePayloadForEncode(item);
-                try arr_payload.setArrElement(i, cloned);
+                try arr_payload.setArrElement(i, try copyValue(item));
             }
             return arr_payload;
         },
@@ -237,21 +249,20 @@ fn clonePayloadForEncode(p: Payload) (Payload.Error || error{ OutOfMemory, Unsup
             errdefer new_payload.free(allocator);
             var it = m.iterator();
             while (it.next()) |entry| {
-                const key = entry.key_ptr.*;
-                switch (key) {
-                    .str => |ks| {
-                        const val = try clonePayloadForEncode(entry.value_ptr.*);
-                        try new_payload.mapPut(ks.str, val);
-                    },
+                // Every key this builder can produce is a string.
+                const key = switch (entry.key_ptr.*) {
+                    .str => |ks| ks.str,
                     else => return error.UnsupportedNonStringMapKey,
-                }
+                };
+                try new_payload.mapPut(key, try copyValue(entry.value_ptr.*));
             }
             return new_payload;
         },
     };
 }
 
-fn getPayloadForEncoding(wrapper: *PayloadWrapper) ?Payload {
+/// Hand the payload to a new owner, leaving the wrapper empty.
+fn takePayload(wrapper: *PayloadWrapper) ?Payload {
     switch (wrapper.payload_type) {
         .map, .primitive => {
             const p = wrapper.payload orelse return null;
@@ -259,19 +270,45 @@ fn getPayloadForEncoding(wrapper: *PayloadWrapper) ?Payload {
             return p;
         },
         .array => {
-            if (wrapper.array_elements) |list| {
-                var arr_payload = Payload.arrPayload(list.items.len, allocator) catch return null;
-                errdefer arr_payload.free(allocator);
-                for (list.items, 0..) |item, i| {
-                    const cloned = clonePayloadForEncode(item) catch return null;
-                    arr_payload.setArrElement(i, cloned) catch {
-                        cloned.free(allocator);
-                        return null;
-                    };
-                }
-                return arr_payload;
+            const list = if (wrapper.array_elements) |*l| l else return null;
+            var arr_payload = Payload.arrPayload(list.items.len, allocator) catch return null;
+            for (list.items, 0..) |item, i| {
+                arr_payload.setArrElement(i, item) catch {
+                    arr_payload.free(allocator);
+                    return null;
+                };
             }
-            return null;
+            // The elements moved into arr_payload; dropping them here is what
+            // keeps the wrapper's deinit from freeing them a second time.
+            list.clearRetainingCapacity();
+            return arr_payload;
+        },
+    }
+}
+
+/// A throwaway copy for one encode pass. The wrapper keeps its own.
+fn copyPayload(wrapper: *PayloadWrapper) ?Payload {
+    switch (wrapper.payload_type) {
+        .map, .primitive => {
+            const p = wrapper.payload orelse return null;
+            return copyValue(p) catch null;
+        },
+        .array => {
+            const list = wrapper.array_elements orelse return null;
+            var arr_payload = Payload.arrPayload(list.items.len, allocator) catch return null;
+            errdefer arr_payload.free(allocator);
+            for (list.items, 0..) |item, i| {
+                const copied = copyValue(item) catch {
+                    arr_payload.free(allocator);
+                    return null;
+                };
+                arr_payload.setArrElement(i, copied) catch {
+                    copied.free(allocator);
+                    arr_payload.free(allocator);
+                    return null;
+                };
+            }
+            return arr_payload;
         },
     }
 }
@@ -286,12 +323,10 @@ export fn colyseus_message_encode(wrapper: ?*PayloadWrapper, out_len: *usize) ?[
         return null;
     }
 
-    // Get the payload to encode
-    const payload_to_encode = getPayloadForEncoding(wrapper.?) orelse {
+    const payload_to_encode = copyPayload(wrapper.?) orelse {
         out_len.* = 0;
         return null;
     };
-    // zig-msgpack: Pack.write does not consume the payload; caller must free after write.
     defer payload_to_encode.free(allocator);
 
     // Create buffer for encoding

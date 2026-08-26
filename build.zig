@@ -854,6 +854,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_input", .file = "tests/test_input.zig", .description = "Run input layer + RoomClock tests (byte fixtures)" },
         .{ .name = "test_predict", .file = "tests/test_predict.zig", .description = "Run Predict layer tests (behavior fixtures)" },
         .{ .name = "test_netdelay", .file = "tests/test_netdelay.zig", .description = "Run network-delay injector tests (offline)" },
+        .{ .name = "test_msgpack_builder", .file = "tests/test_msgpack_builder.zig", .description = "Run message builder ownership tests (offline)" },
         .{ .name = "test_gamemaker_predict", .file = "tests/test_gamemaker_predict.zig", .description = "Run GameMaker predict-bridge tests (offline, drives the GML FFI surface)" },
         .{ .name = "test_gamemaker_schema", .file = "tests/test_gamemaker_schema.zig", .description = "Run GameMaker schema-bridge tests (offline)" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },

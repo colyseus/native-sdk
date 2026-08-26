@@ -1377,7 +1377,9 @@ uint32_t colyseus_room_request(colyseus_room_t* room, const char* type, colyseus
     size_t encoded_len = 0;
     uint8_t* encoded_data = payload ? colyseus_message_encode(payload, &encoded_len) : NULL;
 
-    return colyseus_room_request_encoded(room, type, encoded_data, encoded_len, callback, userdata);
+    uint32_t request_id = colyseus_room_request_encoded(room, type, encoded_data, encoded_len, callback, userdata);
+    colyseus_message_encoded_free(encoded_data, encoded_len);
+    return request_id;
 }
 
 void colyseus_room_cancel_request(colyseus_room_t* room, uint32_t request_id) {
