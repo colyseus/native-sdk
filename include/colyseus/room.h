@@ -105,13 +105,24 @@ typedef struct colyseus_pending_msg {
 typedef void (*colyseus_room_on_response_fn)(bool ok, colyseus_message_reader_t* reader,
     const char* error, void* userdata);
 
+/*
+ * The same outcome model with the reply left as raw msgpack, for bindings that
+ * decode in their own language — so a reply and an onMessage payload arrive as
+ * one value type rather than two. `data` is NULL/0 for an empty reply, and is
+ * only valid for the duration of the callback.
+ */
+typedef void (*colyseus_room_on_response_encoded_fn)(bool ok, const uint8_t* data, size_t length,
+    const char* error, void* userdata);
+
 /* Reply to a colyseus_room_ping() — round-trip time in whole milliseconds. */
 typedef void (*colyseus_room_on_ping_fn)(int rtt_ms, void* userdata);
 
 /* Pending request awaiting a ROOM_RESPONSE (hash by request id). */
 typedef struct colyseus_pending_request {
     uint32_t request_id;
+    /* exactly one is set — `callback_encoded` wins when present */
     colyseus_room_on_response_fn callback;
+    colyseus_room_on_response_encoded_fn callback_encoded;
     void* userdata;
     UT_hash_handle hh;
 } colyseus_pending_request_t;
@@ -369,6 +380,12 @@ uint32_t colyseus_room_request(colyseus_room_t* room, const char* type, colyseus
 uint32_t colyseus_room_request_encoded(colyseus_room_t* room, const char* type,
     const uint8_t* payload, size_t payload_length,
     colyseus_room_on_response_fn callback, void* userdata);
+
+/* Same again, and the REPLY stays raw msgpack too — what a language binding
+ * wants, so `request` and `onMessage` hand back the same value type. */
+uint32_t colyseus_room_request_encoded_reply(colyseus_room_t* room, const char* type,
+    const uint8_t* payload, size_t payload_length,
+    colyseus_room_on_response_encoded_fn callback, void* userdata);
 
 /* Drop a pending request (timeout/cancel path). Idempotent; a late
  * ROOM_RESPONSE for a cancelled id is silently ignored. */

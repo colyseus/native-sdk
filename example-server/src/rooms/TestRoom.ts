@@ -84,6 +84,35 @@ export class TestRoom extends Room {
     echo: (client: Client, message: any) => {
       client.send("tagged_echo", message);
     },
+
+    // ── room.request() fixtures ────────────────────────────────────────────
+    // One handler per ROOM_RESPONSE outcome, so every SDK's request binding
+    // can be driven against the same four replies. A fifth outcome, "no
+    // handler registered", needs no fixture: request an unknown type.
+
+    /** OK with a value — echoed verbatim, so nesting survives the round trip. */
+    request_echo: (_client: Client, message: any) => message,
+
+    /** OK with a value the server computed. */
+    request_sum: (_client: Client, message: { a: number, b: number }) => message.a + message.b,
+
+    /** OK with an EMPTY reply — a handler that only has side effects. */
+    request_ack: (_client: Client, _message: any) => { /* no return */ },
+
+    /** REJECTED: a deliberate, typed reason the caller reads verbatim. */
+    request_deny: (_client: Client, _message: any, ctx: any) =>
+      ctx.reject({ code: 403, why: "denied by the room" }),
+
+    /** ERROR: a fault. The reason never reaches the client — it gets a
+     *  sanitized { name, message } instead, so a crash cannot pose as a
+     *  deliberate rejection. */
+    request_boom: () => { throw new Error("handler exploded"); },
+
+    /** Replies only after a delay, for exercising a binding's timeout. */
+    request_slow: async (_client: Client, message: { ms?: number }) => {
+      await new Promise((resolve) => setTimeout(resolve, message?.ms ?? 3000));
+      return "eventually";
+    },
   }
 
   onCreate(options?: { private?: boolean }) {

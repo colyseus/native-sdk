@@ -178,6 +178,53 @@ test "request_response_outcomes" {
     try testing.expect(outcomes[3].replied and !outcomes[3].ok and outcomes[3].has_reader and outcomes[3].faulted);
 }
 
+const EncodedOutcome = struct {
+    ok: bool = false,
+    faulted: bool = false,
+    replied: bool = false,
+    reply: [32]u8 = undefined,
+    reply_len: usize = 0,
+};
+
+fn onEncodedOutcome(ok: bool, data: [*c]const u8, length: usize, err: [*c]const u8, userdata: ?*anyopaque) callconv(.c) void {
+    const outcome: *EncodedOutcome = @ptrCast(@alignCast(userdata.?));
+    outcome.replied = true;
+    outcome.ok = ok;
+    outcome.faulted = (err != null);
+    outcome.reply_len = length;
+    if (data != null and length > 0 and length <= outcome.reply.len) {
+        @memcpy(outcome.reply[0..length], data[0..length]);
+    }
+}
+
+// The reply a language binding gets: the msgpack bytes, undecoded, so it can
+// run them through the same decoder its onMessage payloads go through.
+test "request_encoded_reply_hands_back_raw_msgpack" {
+    const room = makeRoom();
+    defer destroyRoom(room);
+
+    var outcomes = [_]EncodedOutcome{.{}} ** 3;
+    _ = c.colyseus_room_request_encoded_reply(room, "a", null, 0, onEncodedOutcome, &outcomes[0]);
+    _ = c.colyseus_room_request_encoded_reply(room, "b", null, 0, onEncodedOutcome, &outcomes[1]);
+    _ = c.colyseus_room_request_encoded_reply(room, "c", null, 0, onEncodedOutcome, &outcomes[2]);
+
+    feed(room, &[_]u8{ 22, 0, 0, 164, 110, 111, 112, 101 }); // OK, "nope"
+    feed(room, &[_]u8{ 22, 1, 0 });                          // OK, empty
+    feed(room, &[_]u8{ 22, 2, 1, 42 });                       // REJECTED, 42
+
+    try testing.expect(outcomes[0].replied and outcomes[0].ok and !outcomes[0].faulted);
+    try testing.expectEqualSlices(u8, &[_]u8{ 164, 110, 111, 112, 101 }, outcomes[0].reply[0..outcomes[0].reply_len]);
+
+    // An empty reply is length 0, not an empty-string msgpack byte.
+    try testing.expect(outcomes[1].replied and outcomes[1].ok);
+    try testing.expectEqual(@as(usize, 0), outcomes[1].reply_len);
+
+    // A rejection carries the authored reason, which is the whole point of
+    // keeping it separate from a fault.
+    try testing.expect(outcomes[2].replied and !outcomes[2].ok and !outcomes[2].faulted);
+    try testing.expectEqualSlices(u8, &[_]u8{42}, outcomes[2].reply[0..outcomes[2].reply_len]);
+}
+
 test "cancel_request_ignores_late_response" {
     const room = makeRoom();
     defer destroyRoom(room);
