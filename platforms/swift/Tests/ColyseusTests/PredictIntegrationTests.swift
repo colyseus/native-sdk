@@ -251,8 +251,7 @@ final class PredictIntegrationTests: XCTestCase {
                     run.corrections.append(reconciler.lastCorrectionMagnitude)
                 }
 
-                if leg.x == 0, leg.y == 0 {
-                    let state = reconciler.state
+                if leg.x == 0, leg.y == 0, let state = reconciler.state {
                     let speed = (state["vx"] * state["vx"] + state["vy"] * state["vy"]).squareRoot()
                     run.fastestCoast = max(run.fastestCoast, speed)
                 }

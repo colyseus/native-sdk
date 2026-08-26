@@ -132,8 +132,9 @@ final class EventChannelIntegrationTests: XCTestCase {
         while Date() < deadline {
             Colyseus.pump()
             for _ in 0 ..< predict.tick(room.clock.now) {
-                let dx = targetX - reconciler.state["x"]
-                let dy = targetY - reconciler.state["y"]
+                guard let state = reconciler.state else { break }
+                let dx = targetX - state["x"]
+                let dy = targetY - state["y"]
                 // The input is tri-state, so this is a direction, not a speed.
                 input.data.set("moveX", to: dx > 0.5 ? 1 : (dx < -0.5 ? -1 : 0))
                 input.data.set("moveY", to: dy > 0.5 ? 1 : (dy < -0.5 ? -1 : 0))

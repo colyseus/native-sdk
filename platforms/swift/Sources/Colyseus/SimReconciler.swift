@@ -123,11 +123,7 @@ public extension Colyseus.Predict {
             return nil
         }
 
-        let reconciler = Colyseus.Reconciler(
-            raw: created, step: StepBox { _, _, _ in }, stepPointer: pointer, parent: self
-        )
-        adoptChild(reconciler, keeping: box)
-        return reconciler
+        return Colyseus.Reconciler(raw: created, step: box, stepPointer: pointer, predict: self)
     }
 }
 

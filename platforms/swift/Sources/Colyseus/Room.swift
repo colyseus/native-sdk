@@ -41,7 +41,16 @@ public extension Colyseus {
 
         /// The room's decode-callback layer, built on first use. There is one
         /// per room, shared by everything that watches the state.
-        public private(set) lazy var callbacks = Callbacks(colyseus_room_callbacks(raw))
+        public var callbacks: Callbacks {
+            lock.lock()
+            defer { lock.unlock() }
+            if let existing = _callbacks { return existing }
+            let created = Callbacks(colyseus_room_callbacks(raw))
+            _callbacks = created
+            return created
+        }
+
+        private var _callbacks: Callbacks?
 
         // MARK: - Lifetime
 
@@ -54,9 +63,16 @@ public extension Colyseus {
         }
 
         deinit {
-            // Order matters: the transport thread can be inside a callback
-            // right now, and it reaches the bridge through this pointer. Free
-            // the room first — that joins the thread — and only then let go.
+            // The callbacks layer belongs to the C room and dies with it, so
+            // Swift-side registrations have to be dropped BEFORE the free —
+            // a stored property released afterwards would unregister from
+            // memory that is gone.
+            _callbacks?.invalidate()
+
+            // Then order matters again: the transport thread can be inside a
+            // callback right now, and it reaches the bridge through this
+            // pointer. Free the room — which joins the thread — and only then
+            // let go of the bridge.
             colyseus_netdelay_unwrap(raw.pointee.transport)
             colyseus_room_free(raw)
             releasePointer(bridgePointer, as: RoomBridge.self)

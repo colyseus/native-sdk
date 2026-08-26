@@ -58,45 +58,54 @@ public extension Colyseus {
         let raw: OpaquePointer
         private let hooks: SpawnHooks
         private let hooksPointer: UnsafeMutableRawPointer
-        private weak var parent: Predict?
 
-        init(raw: OpaquePointer, hooks: SpawnHooks, hooksPointer: UnsafeMutableRawPointer, parent: Predict?) {
+        /// Held strongly: the store is driven by the Predict's tick.
+        private let predict: Predict
+        /// A patch can arrive in the same pump that disposed this store.
+        private var isDisposed: Bool { lock.withLock { disposed } }
+        private var disposed = false
+        private let lock = NSLock()
+
+        init(raw: OpaquePointer, hooks: SpawnHooks, hooksPointer: UnsafeMutableRawPointer, predict: Predict) {
             self.raw = raw
             self.hooks = hooks
             self.hooksPointer = hooksPointer
-            self.parent = parent
+            self.predict = predict
         }
 
-        deinit {
-            colyseus_spawns_free(raw)
-            releasePointer(hooksPointer, as: SpawnHooks.self)
-        }
+        deinit { dispose() }
 
         /// Record an optimistic spawn. The id is stable across the handoff.
         @discardableResult
         public func spawn(_ local: SpawnLocal) -> Int {
+            guard !isDisposed else { return 0 }
             // The store takes ownership here and gives it back through
             // local_free, whether the entry is confirmed, rejected or evicted.
-            Int(colyseus_spawns_spawn(raw, retainedPointer(local)))
+            return Int(colyseus_spawns_spawn(raw, retainedPointer(local)))
         }
 
         /// Drop a prediction that has not been confirmed. A no-op once it has.
         public func cancel(_ id: Int) {
+            guard !isDisposed else { return }
             colyseus_spawns_cancel(raw, Int32(id))
         }
 
         /// The server said yes but its patch is still in flight — keep this
         /// entry out of the eviction sweep.
         public func accept(_ id: Int) {
+            guard !isDisposed else { return }
             colyseus_spawns_accept(raw, Int32(id))
         }
 
-        public var count: Int { Int(colyseus_spawns_size(raw)) }
+        public var count: Int { isDisposed ? 0 : Int(colyseus_spawns_size(raw)) }
 
-        public func isAlive(_ id: Int) -> Bool { colyseus_spawns_alive(raw, Int32(id)) }
+        public func isAlive(_ id: Int) -> Bool {
+            !isDisposed && colyseus_spawns_alive(raw, Int32(id))
+        }
 
         /// Every entry, in the order they were created.
         public var entries: [SpawnEntry] {
+            guard !isDisposed else { return [] }
             var collected: [SpawnEntry] = []
             var cursor = colyseus_spawns_first(raw)
             while let entry = cursor {
@@ -109,16 +118,26 @@ public extension Colyseus {
         /// Where to draw an entry, whichever side of the handoff it is on:
         /// the prediction while pending, the server's instance after.
         public func value(_ entry: SpawnEntry, _ field: String) -> Double {
-            field.withCString { colyseus_spawns_value(raw, entry.raw, $0) }
+            guard !isDisposed else { return .nan }
+            return field.withCString { colyseus_spawns_value(raw, entry.raw, $0) }
         }
 
         public func clear() {
+            guard !isDisposed else { return }
             colyseus_spawns_clear(raw)
         }
 
-        /// Stop this store. The Predict stops driving it.
+        /// Stop this store and let the Predict go. Safe to call twice, and
+        /// called for you when the last reference goes away.
         public func dispose() {
-            parent?.release(self)
+            lock.lock()
+            let alreadyGone = disposed
+            disposed = true
+            lock.unlock()
+            guard !alreadyGone else { return }
+
+            colyseus_spawns_free(raw)
+            releasePointer(hooksPointer, as: SpawnHooks.self)
         }
     }
 }
@@ -197,12 +216,11 @@ public extension Colyseus.Predict {
             return nil
         }
 
-        let store = Colyseus.Spawns(raw: created, hooks: hooks, hooksPointer: pointer, parent: self)
+        let store = Colyseus.Spawns(raw: created, hooks: hooks, hooksPointer: pointer, predict: self)
 
         collection.field.withCString { fieldPointer in
             colyseus_predict_bind_spawns(raw, created, collection.owner.view.instance, fieldPointer, nil)
         }
-        adopt(store)
         return store
     }
 }
@@ -220,5 +238,13 @@ final class SpawnHooks: @unchecked Sendable {
         self.owned = owned
         self.spawnTime = spawnTime
         self.onReject = onReject
+    }
+}
+
+private extension NSLock {
+    func withLock<R>(_ body: () -> R) -> R {
+        lock()
+        defer { unlock() }
+        return body()
     }
 }

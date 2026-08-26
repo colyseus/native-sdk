@@ -23,24 +23,29 @@ public extension Colyseus {
         let raw: OpaquePointer
         private let handlers: EventHandlers
         private let handlersPointer: UnsafeMutableRawPointer
-        private weak var parent: Predict?
+
+        /// Held strongly for the same reason a reconciler holds it: this is
+        /// driven by the Predict's tick and must not outlive it.
+        private let predict: Predict
+        /// A room message can arrive in the same pump that disposed this, so
+        /// every entry point checks rather than trusting the caller.
+        private var isDisposed: Bool { lock.withLock { disposed } }
+        private var disposed = false
+        private let lock = NSLock()
 
         init(
             raw: OpaquePointer,
             handlers: EventHandlers,
             handlersPointer: UnsafeMutableRawPointer,
-            parent: Predict?
+            predict: Predict
         ) {
             self.raw = raw
             self.handlers = handlers
             self.handlersPointer = handlersPointer
-            self.parent = parent
+            self.predict = predict
         }
 
-        deinit {
-            colyseus_event_channel_free(raw)
-            releasePointer(handlersPointer, as: EventHandlers.self)
-        }
+        deinit { dispose() }
 
         /// Predict from outside the simulation — a button press, a UI action.
         ///
@@ -52,6 +57,7 @@ public extension Colyseus {
         /// pending under this key, or the cooldown has not elapsed.
         @discardableResult
         public func predict(key: String = "") -> Bool {
+            guard !isDisposed else { return false }
             let payload = strdup(key)
             let accepted = key.withCString { colyseus_event_channel_predict(raw, $0, payload) }
             // Only an accepted prediction becomes the channel's to free.
@@ -64,30 +70,44 @@ public extension Colyseus {
         /// usually wants to handle differently.
         @discardableResult
         public func confirm(key: String? = nil) -> Int {
-            withCStrings([key]) { Int(colyseus_event_channel_confirm(raw, $0[0])) }
+            guard !isDisposed else { return 0 }
+            return withCStrings([key]) { Int(colyseus_event_channel_confirm(raw, $0[0])) }
         }
 
         /// The server overruled. Returns how many predictions this retracted.
         @discardableResult
         public func reject(key: String? = nil) -> Int {
-            withCStrings([key]) { Int(colyseus_event_channel_reject(raw, $0[0])) }
+            guard !isDisposed else { return 0 }
+            return withCStrings([key]) { Int(colyseus_event_channel_reject(raw, $0[0])) }
         }
 
         /// Is something still waiting on the server? A nil key asks about any.
         public func isPending(key: String? = nil) -> Bool {
-            withCStrings([key]) { colyseus_event_channel_has(raw, $0[0]) }
+            guard !isDisposed else { return false }
+            return withCStrings([key]) { colyseus_event_channel_has(raw, $0[0]) }
         }
 
-        public var pendingCount: Int { Int(colyseus_event_channel_pending_count(raw)) }
+        public var pendingCount: Int {
+            isDisposed ? 0 : Int(colyseus_event_channel_pending_count(raw))
+        }
 
         /// Drop everything pending without confirming or rejecting it.
         public func clear() {
+            guard !isDisposed else { return }
             colyseus_event_channel_clear(raw)
         }
 
-        /// Stop this channel. The Predict stops driving it.
+        /// Stop this channel and let the Predict go. Safe to call twice, and
+        /// called for you when the last reference goes away.
         public func dispose() {
-            parent?.release(self)
+            lock.lock()
+            let alreadyGone = disposed
+            disposed = true
+            lock.unlock()
+            guard !alreadyGone else { return }
+
+            colyseus_event_channel_free(raw)
+            releasePointer(handlersPointer, as: EventHandlers.self)
         }
     }
 }
@@ -150,10 +170,9 @@ public extension Colyseus.Predict {
         }
 
         let channel = Colyseus.EventChannel(
-            raw: created, handlers: handlers, handlersPointer: pointer, parent: self
+            raw: created, handlers: handlers, handlersPointer: pointer, predict: self
         )
         colyseus_predict_drive_events(raw, created)
-        adopt(channel)
         return channel
     }
 }
@@ -197,5 +216,13 @@ final class EventHandlers: @unchecked Sendable {
         self.onConfirm = onConfirm
         self.onReject = onReject
         self.onUnpredicted = onUnpredicted
+    }
+}
+
+private extension NSLock {
+    func withLock<R>(_ body: () -> R) -> R {
+        lock()
+        defer { unlock() }
+        return body()
     }
 }

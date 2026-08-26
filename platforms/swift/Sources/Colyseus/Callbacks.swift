@@ -25,12 +25,21 @@ public extension Colyseus {
             self.raw = raw
         }
 
-        deinit {
+        deinit { invalidate() }
+
+        /// Drop every registration without telling the C layer.
+        ///
+        /// Called by the room on its way out: by then the layer it registered
+        /// against has been freed, and unregistering would read it.
+        func invalidate() {
+            isValid.current = false
             registrations.withLock { entries in
                 for entry in entries.values { entry.release() }
                 entries.removeAll()
             }
         }
+
+        private let isValid = Guarded(true)
 
         /// The room's own callback layer. A room has exactly one, so several
         /// callers — and a ``Colyseus/Predict`` — share it.
@@ -233,8 +242,12 @@ public extension Colyseus {
 
         private func cancel(_ handle: colyseus_callback_handle_t) {
             let entry = registrations.withLock { $0.removeValue(forKey: handle) }
-            guard let entry, let raw else { return }
-            colyseus_callbacks_remove(raw, entry.handle)
+            guard let entry else { return }
+            // A subscription cancelled after the room closed has nothing left
+            // to unregister from.
+            if let raw, isValid.current {
+                colyseus_callbacks_remove(raw, entry.handle)
+            }
             entry.release()
         }
     }

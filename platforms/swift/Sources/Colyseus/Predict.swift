@@ -93,12 +93,24 @@ public extension Colyseus {
         let raw: OpaquePointer
         /// The room clock, which the children this Predict creates need too.
         let clock: OpaquePointer?
-        private var children: [AnyObject] = []
+
+        /// The room this Predict borrows its callbacks layer from.
+        ///
+        /// Held strongly, because freeing the room frees that layer: a Predict
+        /// that outlived its room would unregister from memory that is gone.
+        /// Ownership runs one way — reconciler to Predict to room — so
+        /// teardown order follows without anyone having to remember it.
+        private let room: AnyObject?
+
+        /// Callbacks the C side holds by pointer for this Predict's lifetime
+        /// and never hands back: reckoning steps, which have no detach hook.
+        private var retained: [AnyObject] = []
         private let lock = NSLock()
 
-        init(raw: OpaquePointer, clock: OpaquePointer?) {
+        init(raw: OpaquePointer, clock: OpaquePointer?, room: AnyObject?) {
             self.raw = raw
             self.clock = clock
+            self.room = room
         }
 
         deinit { colyseus_predict_free(raw) }
@@ -107,7 +119,7 @@ public extension Colyseus {
         /// room clock and the server's fixed step.
         public static func get<State: SchemaRef>(_ room: Room<State>) -> Predict? {
             guard let raw = colyseus_predict_for_room(room.raw) else { return nil }
-            return Predict(raw: raw, clock: room.clock.raw)
+            return Predict(raw: raw, clock: room.clock.raw, room: room)
         }
 
         // MARK: - Attaching
@@ -200,7 +212,7 @@ public extension Colyseus {
             step: @escaping @Sendable (SchemaView, Double, Double) -> Void
         ) -> Bool {
             let box = ReckonBox(step)
-            adopt(box)
+            retain(box)
 
             return withCStrings(fields) { fieldPointers in
                 var borrowed = fieldPointers
@@ -238,7 +250,7 @@ public extension Colyseus {
             step: @escaping @Sendable (SchemaView, Double, Double) -> Void
         ) -> Bool {
             let box = ReckonBox(step)
-            adopt(box)
+            retain(box)
 
             return withCStrings(fields) { fieldPointers in
                 var borrowed = fieldPointers
@@ -290,25 +302,11 @@ public extension Colyseus {
 
         // MARK: -
 
-        /// Children are driven by tick(); the Predict holds them so they do not
-        /// die while it is still driving them.
-        func adopt(_ child: AnyObject) {
+        /// Keep an object alive for this Predict's whole life, for the C
+        /// callbacks that are never unregistered.
+        func retain(_ object: AnyObject) {
             lock.lock()
-            children.append(child)
-            lock.unlock()
-        }
-
-        /// As above, plus a companion object the C side only borrows.
-        func adoptChild(_ child: AnyObject, keeping companion: AnyObject) {
-            lock.lock()
-            children.append(child)
-            children.append(companion)
-            lock.unlock()
-        }
-
-        func release(_ child: AnyObject) {
-            lock.lock()
-            children.removeAll { $0 === child }
+            retained.append(object)
             lock.unlock()
         }
 

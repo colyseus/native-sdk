@@ -83,34 +83,52 @@ public extension Colyseus {
     /// correction is nothing and the entity never visibly moves.
     final class Reconciler: @unchecked Sendable {
         let raw: OpaquePointer
-        private let step: StepBox
-        private let stepPointer: UnsafeMutableRawPointer
-        private weak var parent: Predict?
 
-        init(raw: OpaquePointer, step: StepBox, stepPointer: UnsafeMutableRawPointer, parent: Predict?) {
+        /// The Predict that drives this, held strongly. Freeing a Predict
+        /// takes the room's callbacks layer with it, so a reconciler must
+        /// never be the thing that outlives it.
+        private let predict: Predict
+
+        /// The step closure, which the C side reaches through userdata.
+        private let step: AnyObject
+        private let stepPointer: UnsafeMutableRawPointer
+        private var isDisposed: Bool { lock.withLock { disposed } }
+        private var disposed = false
+        private let lock = NSLock()
+
+        init(raw: OpaquePointer, step: AnyObject, stepPointer: UnsafeMutableRawPointer, predict: Predict) {
             self.raw = raw
             self.step = step
             self.stepPointer = stepPointer
-            self.parent = parent
+            self.predict = predict
         }
 
-        deinit {
-            colyseus_reconciler_free(raw)
-            releasePointer(stepPointer, as: StepBox.self)
-        }
+        deinit { dispose() }
 
         /// The predicted state — the mirror your step mutates.
         ///
         /// Read this for game logic. For drawing, prefer
         /// ``Colyseus/Predict/value(_:_:)``, which adds the decaying
         /// correction so a disagreement eases out instead of snapping.
-        public var state: SchemaView { SchemaView(colyseus_reconciler_state(raw))! }
+        ///
+        /// Nil on a composite reconciler, which has one mirror per part rather
+        /// than a single state — read those through ``world`` instead.
+        public var state: SchemaView? {
+            isDisposed ? nil : SchemaView(colyseus_reconciler_state(raw))
+        }
+
+        /// The parts of a composite reconciler, or nil on a flat one.
+        public var world: SimWorld? {
+            guard !isDisposed, let raw = colyseus_sim_reconciler_world(raw) else { return nil }
+            return SimWorld(raw: raw)
+        }
 
         /// The rendered value of a reconciled field: predicted, interpolated
         /// between the two most recent steps, plus the correction still
         /// decaying.
         public func value(_ field: String) -> Double {
-            field.withCString { colyseus_reconciler_value(raw, $0) }
+            guard !isDisposed else { return .nan }
+            return field.withCString { colyseus_reconciler_value(raw, $0) }
         }
 
         /// Re-seed from the server and drop everything in flight.
@@ -119,30 +137,45 @@ public extension Colyseus {
         /// session numbers its inputs from zero, and a reconciler still
         /// holding the old window replays a backlog that no longer exists.
         public func reset() {
+            guard !isDisposed else { return }
             colyseus_reconciler_reset(raw)
         }
 
-        /// Stop this reconciler. The Predict stops driving it.
+        /// Stop reconciling and let the Predict go.
+        ///
+        /// Safe to call more than once, and called for you when the last
+        /// reference goes away.
         public func dispose() {
-            parent?.release(self)
+            lock.lock()
+            let alreadyGone = disposed
+            disposed = true
+            lock.unlock()
+            guard !alreadyGone else { return }
+
+            // Frees the C object AND deregisters it from the Predict's tick.
+            colyseus_reconciler_free(raw)
+            releaseErased(stepPointer)
         }
 
         // MARK: - Telemetry
 
         /// Inputs applied locally that the server has not confirmed.
-        public var pendingCount: Int { Int(colyseus_reconciler_pending_count(raw)) }
+        public var pendingCount: Int { isDisposed ? 0 : Int(colyseus_reconciler_pending_count(raw)) }
 
         /// The fixed step, in milliseconds.
-        public var stepMs: Double { colyseus_reconciler_step_ms(raw) }
+        public var stepMs: Double { isDisposed ? 0 : colyseus_reconciler_step_ms(raw) }
 
         /// The last input the server confirmed.
-        public var reconcileSeq: Int { Int(colyseus_reconciler_reconcile_seq(raw)) }
+        public var reconcileSeq: Int { isDisposed ? 0 : Int(colyseus_reconciler_reconcile_seq(raw)) }
 
         /// How far the last correction moved things.
-        public var lastCorrectionMagnitude: Double { colyseus_reconciler_last_correction_mag(raw) }
+        public var lastCorrectionMagnitude: Double {
+            isDisposed ? 0 : colyseus_reconciler_last_correction_mag(raw)
+        }
 
         public func lastCorrection(_ field: String) -> Double {
-            field.withCString { colyseus_reconciler_last_correction(raw, $0) }
+            guard !isDisposed else { return 0 }
+            return field.withCString { colyseus_reconciler_last_correction(raw, $0) }
         }
 
         /// How far prediction and server have been disagreeing.
@@ -152,7 +185,8 @@ public extension Colyseus {
         /// reads, so check it against something that proves the world is still
         /// moving.
         public var drift: Drift {
-            colyseus_reconciler_drift(raw).map { Drift($0.pointee) } ?? Drift(ema: 0, peak: 0)
+            guard !isDisposed else { return Drift(ema: 0, peak: 0) }
+            return colyseus_reconciler_drift(raw).map { Drift($0.pointee) } ?? Drift(ema: 0, peak: 0)
         }
     }
 
@@ -269,9 +303,7 @@ public extension Colyseus.Predict {
             return nil
         }
 
-        let reconciler = Colyseus.Reconciler(raw: created, step: box, stepPointer: pointer, parent: self)
-        adopt(reconciler)
-        return reconciler
+        return Colyseus.Reconciler(raw: created, step: box, stepPointer: pointer, predict: self)
     }
 }
 
@@ -282,5 +314,23 @@ final class StepBox: @unchecked Sendable {
 
     init(_ body: @escaping (Colyseus.StepContext, SchemaView, SchemaView) -> Void) {
         self.body = body
+    }
+}
+
+
+/// Release a retain taken by `retainedPointer`, whatever the object was.
+///
+/// The concrete type differs between a flat reconciler and a composite one,
+/// and a release is a decrement either way.
+func releaseErased(_ pointer: UnsafeMutableRawPointer?) {
+    guard let pointer else { return }
+    Unmanaged<AnyObject>.fromOpaque(pointer).release()
+}
+
+private extension NSLock {
+    func withLock<R>(_ body: () -> R) -> R {
+        lock()
+        defer { unlock() }
+        return body()
     }
 }
