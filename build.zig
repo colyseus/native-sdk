@@ -23,6 +23,14 @@ pub fn build(b: *std.Build) void {
     // Linux and Emscripten need gnu11 for POSIX functions (strdup, strndup, etc.)
     const c_std = if (os_tag == .linux or is_emscripten) "-std=gnu11" else "-std=c11";
 
+    // Zig 0.15's DWARF unwinder has no mcontext layout for tvOS, so every Zig
+    // module that can panic fails to COMPILE for it. Stripping debug info drops
+    // the stack-trace machinery that reaches for it.
+    const strip_zig_modules: ?bool = if (os_tag == .tvos)
+        true
+    else
+        b.option(bool, "strip", "Strip debug info from the Zig modules");
+
     // Build options
     const build_shared = b.option(bool, "shared", "Build shared library") orelse false;
     const build_examples = b.option(bool, "examples", "Build example programs") orelse (if (is_emscripten) false else true);
@@ -203,6 +211,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/network/http.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip_zig_modules,
         });
         http_zig_module.addIncludePath(b.path("include"));
         http_zig_module.addIncludePath(b.path("third_party/uthash/src"));
@@ -222,6 +231,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/certs/system_certs.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip_zig_modules,
         });
 
         system_certs_object = b.addLibrary(.{
@@ -237,6 +247,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/utils/strUtil.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip_zig_modules,
         // WASM-specific flags for emscripten
         .stack_check = if (is_emscripten) false else null,
         .pic = if (is_emscripten) true else null,
@@ -273,6 +284,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/msgpack/msgpack_builder.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip_zig_modules,
         .stack_check = if (is_emscripten) false else null,
         .pic = if (is_emscripten) true else null,
         .omit_frame_pointer = if (is_emscripten) true else null,
