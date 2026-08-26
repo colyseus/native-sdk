@@ -138,8 +138,11 @@ on:
   pull_request_target:
     types: [opened, reopened]
 
+# A pull-request conversation comment goes through the issues API, which needs
+# its own scope even on a repository with issues switched off.
 permissions:
   pull-requests: write
+  issues: write
 
 jobs:
   redirect:
