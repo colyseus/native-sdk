@@ -120,6 +120,7 @@ See [example.gd](example.gd)
 - `create_room(room_name: String, options: Dictionary = {}) -> ColyseusRoom`
 - `join(room_name: String, options: Dictionary = {}) -> ColyseusRoom`
 - `join_by_id(room_id: String, options: Dictionary = {}) -> ColyseusRoom`
+- `reconnect(reconnection_token: String) -> ColyseusRoom` - Re-take a seat the server is holding via `allowReconnection()`
 - `get_endpoint() -> String`
 
 ### ColyseusRoom
@@ -130,6 +131,7 @@ See [example.gd](example.gd)
 - `leave(consented: bool = true)` - Leave the room
 - `get_id() -> String` - Get the room ID
 - `get_session_id() -> String` - Get the session ID
+- `get_reconnection_token() -> String` - Token for `client.reconnect()`; persist it to survive a process kill
 - `get_name() -> String` - Get the room name
 - `is_connected() -> bool` - Check if connected (joined and WebSocket is open)
 

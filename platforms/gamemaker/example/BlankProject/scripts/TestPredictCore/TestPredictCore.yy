@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"TestPredictCore",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"TestPredictCore",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

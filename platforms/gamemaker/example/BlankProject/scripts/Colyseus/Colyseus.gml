@@ -19,6 +19,9 @@
 #macro COLYSEUS_EVENT_COLLECTION_CHANGE 13
 #macro COLYSEUS_EVENT_ROOM_DROP        14
 #macro COLYSEUS_EVENT_ROOM_RECONNECT   15
+#macro COLYSEUS_EVENT_LATENCY_RESPONSE 16
+#macro COLYSEUS_EVENT_LATENCY_ERROR    17
+#macro COLYSEUS_EVENT_LATENCY_SELECTED 18
 
 // Field type constants (matches colyseus_field_type_t)
 #macro COLYSEUS_TYPE_STRING   0
@@ -54,7 +57,9 @@ global.__colyseus_room_handlers = ds_map_create();  // keyed by room_ref (real)
 global.__colyseus_schema_handlers = array_create(256, undefined);
 global.__colyseus_schema_meta = array_create(256, undefined);  // callback index → { parent_handle, field }
 global.__colyseus_http_handlers = ds_map_create();  // keyed by request handle (real)
+global.__colyseus_latency_handlers = ds_map_create();  // keyed by request handle (real)
 global.__colyseus_schema_structs = ds_map_create();  // keyed by instance handle (real) → GML struct
+global.__colyseus_decode_epoch = 0;  // +1 per decoded patch; a cached struct stamped older is stale
 global.__colyseus_current_room_ref = -1;  // set during event processing / state access for room tagging
 
 #macro __COLYSEUS_AUTH_FILE "colyseus_auth.dat"
@@ -63,10 +68,45 @@ global.__colyseus_current_room_ref = -1;  // set during event processing / state
 // Client creation — wraps native + restores auth token
 // =============================================================================
 
+// Must match GM_PREDICT_ABI_VERSION in gamemaker_predict.c. A stale dylib or
+// wasm bundle otherwise fails as silent 0s from every unbound function.
+#macro __COLYSEUS_GM_ABI 1
+
+/// Whether the extension can answer calls yet.
+///
+/// Native builds are ready from the first frame. On HTML5 the WASM module
+/// instantiates asynchronously and finishes AFTER the game has entered its
+/// main loop, so a Create event runs too early: gate there, and create the
+/// client on the first Step where this returns true.
+/// @returns {Bool}
+function colyseus_is_ready() {
+    return __colyseus_gm_is_ready() > 0;
+}
+
 /// Create a Colyseus client. Automatically restores a previously saved auth token.
+/// Returns 0 (and logs why) while colyseus_is_ready() is false — call again
+/// on a later frame.
 /// @param {String} _endpoint  Server endpoint (e.g., "http://localhost:2567")
-/// @returns {Real} Client handle
+/// @returns {Real} Client handle, 0 on failure
 function colyseus_client_create(_endpoint) {
+    static _abi_checked = false;
+    if (!_abi_checked) {
+        if (!colyseus_is_ready()) {
+            show_debug_message("[Colyseus] colyseus_client_create: the extension "
+                + "is not ready yet (the HTML5 WASM module instantiates "
+                + "asynchronously) — wait for colyseus_is_ready() and try again");
+            return 0;
+        }
+        // latched only once the extension answers, so a too-early first call
+        // can't misreport a timing problem as a stale binary
+        _abi_checked = true;
+        var _abi = __colyseus_gm_predict_abi_version();
+        if (_abi != __COLYSEUS_GM_ABI) {
+            show_debug_message("[Colyseus] FATAL: extension ABI " + string(_abi)
+                + " != wrapper ABI " + string(__COLYSEUS_GM_ABI)
+                + " — rebuild/recopy libcolyseus + colyseus_wasm.js");
+        }
+    }
     var _client = __colyseus_gm_client_create(_endpoint);
     if (_client > 0) {
         __colyseus_auth_restore(_client);
@@ -120,6 +160,14 @@ function colyseus_client_join(_client, _room_name, _options) {
 /// @returns {Real} Room reference
 function colyseus_client_join_by_id(_client, _room_id, _options) {
     return __colyseus_gm_client_join_by_id(_client, _room_id, __colyseus_options_to_json(_options));
+}
+
+/// Token for colyseus_client_reconnect(). Persist it to re-take this seat
+/// after the process is killed; the server must allowReconnection().
+/// @param {Real} _room_ref  Room reference
+/// @returns {String}  "roomId:token", empty until joined
+function colyseus_room_get_reconnection_token(_room_ref) {
+    return __colyseus_gm_room_get_reconnection_token(_room_ref);
 }
 
 // =============================================================================
@@ -206,7 +254,7 @@ function colyseus_listen(_callbacks, _instance_or_property, _property_or_handler
         var _handle = colyseus_callbacks_listen(_callbacks, 0, _field);
     } else {
         // Full form: colyseus_listen(callbacks, instance, "field", handler)
-        _parent_handle = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        _parent_handle = __colyseus_handle(_instance_or_property);
         _field = _property_or_handler;
         var _handle = colyseus_callbacks_listen(_callbacks, _parent_handle, _field);
     }
@@ -225,7 +273,7 @@ function colyseus_on_add(_callbacks, _instance_or_property, _property_or_handler
         _handler = _property_or_handler;
         var _handle = colyseus_callbacks_on_add(_callbacks, 0, _instance_or_property);
     } else {
-        var _inst = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        var _inst = __colyseus_handle(_instance_or_property);
         var _handle = colyseus_callbacks_on_add(_callbacks, _inst, _property_or_handler);
     }
     if (_handle >= 0) {
@@ -242,7 +290,7 @@ function colyseus_on_remove(_callbacks, _instance_or_property, _property_or_hand
         _handler = _property_or_handler;
         var _handle = colyseus_callbacks_on_remove(_callbacks, 0, _instance_or_property);
     } else {
-        var _inst = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        var _inst = __colyseus_handle(_instance_or_property);
         var _handle = colyseus_callbacks_on_remove(_callbacks, _inst, _property_or_handler);
     }
     if (_handle >= 0) {
@@ -263,11 +311,11 @@ function colyseus_on_change(_callbacks, _instance_or_property, _property_or_hand
         _handle = colyseus_callbacks_on_change_collection(_callbacks, 0, _instance_or_property);
     } else if (is_string(_property_or_handler)) {
         // Collection on child: (callbacks, instance, "field", handler)
-        var _inst = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        var _inst = __colyseus_handle(_instance_or_property);
         _handle = colyseus_callbacks_on_change_collection(_callbacks, _inst, _property_or_handler);
     } else {
         // Instance onChange: (callbacks, instance, handler)
-        var _inst = is_struct(_instance_or_property) ? _instance_or_property.__handle : _instance_or_property;
+        var _inst = __colyseus_handle(_instance_or_property);
         _handler = _property_or_handler;
         _handle = colyseus_callbacks_on_change_instance(_callbacks, _inst);
     }
@@ -286,50 +334,48 @@ function colyseus_on_change(_callbacks, _instance_or_property, _property_or_hand
 /// @param {String} _field  Field name
 /// @returns {Real} COLYSEUS_TYPE_* constant, or -1 if not found
 function colyseus_schema_get_field_type(_instance, _field) {
-    if (is_struct(_instance)) {
-        _instance = _instance.__handle;
-    }
+    _instance = __colyseus_handle(_instance);
     return __colyseus_schema_get_field_type(_instance, _field);
 }
 
-/// Get a field value from a schema instance, auto-dispatching by type.
+/// Get a field value from a schema instance, auto-dispatching by type. Always
+/// reads through to the decoder, so this is the live value.
 /// Returns: string for string fields, number for numeric/bool fields,
-///          struct for ref fields (synchronized), undefined if unknown.
+///          struct for ref fields (see colyseus_room_get_state),
+///          undefined if unknown.
 /// @param {Real|Struct} _instance  Schema instance handle or struct
 /// @param {String} _field   Field name
 function colyseus_schema_get(_instance, _field) {
-    // Allow passing a struct returned by a previous colyseus_schema_get call
-    if (is_struct(_instance)) {
-        _instance = _instance.__handle;
-    }
-    var _type = __colyseus_schema_get(_instance, _field);
-    if (_type == COLYSEUS_TYPE_STRING) {
-        return __colyseus_schema_get_result_string();
-    } else if (_type < 0) {
-        return undefined;
-    } else if (_type == COLYSEUS_TYPE_REF) {
-        var _handle = __colyseus_schema_get_result_number();
-        if (_handle == 0) return undefined;
-        return __colyseus_schema_to_struct(_handle);
-    } else {
-        return __colyseus_schema_get_result_number();
-    }
+    return __colyseus_typed_result(__colyseus_schema_get(__colyseus_handle(_instance), _field));
 }
 
-/// @ignore Internal: Build or retrieve a cached GML struct for a schema instance handle.
-/// The struct is kept in sync — fields are refreshed on each state change.
-function __colyseus_schema_to_struct(_handle) {
-    // Return cached struct if available
-    if (ds_map_exists(global.__colyseus_schema_structs, _handle)) {
-        return ds_map_find_value(global.__colyseus_schema_structs, _handle);
+/// @ignore Internal: a typed read → GML value. The C side leaves the value in
+/// the schema_get result slot and returns its COLYSEUS_TYPE_* (-1 = absent).
+function __colyseus_typed_result(_type) {
+    if (_type < 0) return undefined;
+    if (_type == COLYSEUS_TYPE_STRING) return __colyseus_schema_get_result_string();
+    if (_type == COLYSEUS_TYPE_REF) {
+        var _handle = __colyseus_schema_get_result_number();
+        return (_handle == 0) ? undefined : __colyseus_schema_to_struct(_handle);
     }
+    return __colyseus_schema_get_result_number();
+}
 
-    var _struct = {};
-    _struct.__handle = _handle;
-    _struct.__room_ref = global.__colyseus_current_room_ref;
-    ds_map_set(global.__colyseus_schema_structs, _handle, _struct);
-
-    // Populate fields from C data
+/// @ignore Internal: the cached GML struct for a schema instance handle,
+/// re-read from the decoder when a patch has landed since it was last
+/// refreshed. Every accessor and event path goes through here, so a struct
+/// is current as of the last patch colyseus_process() delivered, and the
+/// refresh writes into the cached struct: references held from earlier
+/// calls catch up too. Only handles just read from live data reach this.
+function __colyseus_schema_to_struct(_handle) {
+    var _struct = ds_map_find_value(global.__colyseus_schema_structs, _handle);
+    if (_struct == undefined) {
+        _struct = { __handle: _handle, __room_ref: global.__colyseus_current_room_ref, __sync_epoch: -1 };
+        ds_map_set(global.__colyseus_schema_structs, _handle, _struct);
+    } else if (_struct.__sync_epoch == global.__colyseus_decode_epoch) {
+        return _struct;
+    }
+    _struct.__sync_epoch = global.__colyseus_decode_epoch;
     __colyseus_schema_refresh_struct(_handle, _struct);
     return _struct;
 }
@@ -372,9 +418,15 @@ function colyseus_room_free(_room_ref) {
     __colyseus_room_free(_room_ref);
 }
 
-/// Get room state as a synchronized struct.
-/// All schema fields are populated, including nested refs.
-/// The struct is automatically refreshed on each state change.
+/// Get the room state as a struct, every field (and nested ref) current as
+/// of the last patch colyseus_process() delivered.
+///
+/// Dot access reads the cached struct; the first accessor call after a
+/// patch (this, colyseus_map_get, colyseus_schema_get, or an event handler
+/// receiving the instance) re-reads it, so call one of them before reading
+/// in a frame, or use colyseus_schema_get() for a single field. Map and
+/// array fields are not walked: read their entries through
+/// colyseus_map_get() / colyseus_map_value_at() / colyseus_array_get().
 /// @param {Real} _room_ref  Room reference
 /// @returns {Struct}
 function colyseus_room_get_state(_room_ref) {
@@ -384,18 +436,88 @@ function colyseus_room_get_state(_room_ref) {
     return __colyseus_schema_to_struct(_handle);
 }
 
-/// Get an item from a MapSchema field by key. Returns a struct for schema items.
+// =============================================================================
+// Collections — MapSchema / ArraySchema entries. Map order is the order the
+// server's MapSchema iterates (insertion order), which order-dependent
+// prediction code can rely on.
+// =============================================================================
+
+/// Get an entry from a MapSchema field by key: a struct for schema entries
+/// (current as of the last patch, see colyseus_room_get_state), the value
+/// for primitive maps, undefined when absent.
 /// @param {Real|Struct} _instance  Schema instance handle or struct
 /// @param {String} _field  Map field name
 /// @param {String} _key  Map key
-/// @returns {Struct|Undefined}
+/// @returns {Struct|String|Real|Undefined}
 function colyseus_map_get(_instance, _field, _key) {
-    if (is_struct(_instance)) {
-        _instance = _instance.__handle;
+    _instance = __colyseus_handle(_instance);
+    return __colyseus_typed_result(__colyseus_gm_map_get_value(_instance, _field, _key));
+}
+
+/// Number of entries in a MapSchema field (0 when the field is absent).
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Map field name
+/// @returns {Real}
+function colyseus_map_size(_instance, _field) {
+    _instance = __colyseus_handle(_instance);
+    return __colyseus_gm_map_size(_instance, _field);
+}
+
+/// Key of the entry at a 0-based position, "" when out of range.
+/// Each call walks to the position; use colyseus_map_keys() to enumerate.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Map field name
+/// @param {Real} _index
+/// @returns {String}
+function colyseus_map_key_at(_instance, _field, _index) {
+    _instance = __colyseus_handle(_instance);
+    return __colyseus_gm_map_key_at(_instance, _field, _index);
+}
+
+/// Entry at a 0-based position (same value rules as colyseus_map_get),
+/// undefined when out of range.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Map field name
+/// @param {Real} _index
+/// @returns {Struct|String|Real|Undefined}
+function colyseus_map_value_at(_instance, _field, _index) {
+    _instance = __colyseus_handle(_instance);
+    return __colyseus_typed_result(__colyseus_gm_map_value_at(_instance, _field, _index));
+}
+
+/// Every key of a MapSchema field, in the server's iteration order.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Map field name
+/// @returns {Array<String>}
+function colyseus_map_keys(_instance, _field) {
+    _instance = __colyseus_handle(_instance);
+    var _n = __colyseus_gm_map_size(_instance, _field);
+    var _keys = array_create(_n, "");
+    for (var _i = 0; _i < _n; _i++) {
+        _keys[_i] = __colyseus_gm_map_key_at(_instance, _field, _i);
     }
-    var _handle = __colyseus_map_get(_instance, _field, _key);
-    if (_handle == 0) return undefined;
-    return __colyseus_schema_to_struct(_handle);
+    return _keys;
+}
+
+/// Number of entries in an ArraySchema field (0 when the field is absent).
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Array field name
+/// @returns {Real}
+function colyseus_array_size(_instance, _field) {
+    _instance = __colyseus_handle(_instance);
+    return __colyseus_gm_array_size(_instance, _field);
+}
+
+/// Entry of an ArraySchema field at a 0-based index: a struct for schema
+/// entries (current as of the last patch), the value for primitive arrays,
+/// undefined when out of range.
+/// @param {Real|Struct} _instance  Schema instance handle or struct
+/// @param {String} _field  Array field name
+/// @param {Real} _index
+/// @returns {Struct|String|Real|Undefined}
+function colyseus_array_get(_instance, _field, _index) {
+    _instance = __colyseus_handle(_instance);
+    return __colyseus_typed_result(__colyseus_gm_array_value_at(_instance, _field, _index));
 }
 
 // =============================================================================
@@ -512,6 +634,37 @@ function colyseus_http_patch(_client, _path, _body, _callback) {
     return _handle;
 }
 
+// =============================================================================
+// Latency measurement — callback(err, result) style
+// =============================================================================
+
+/// Measure latency to a single endpoint.
+/// @param {Real} _client  Client handle
+/// @param {String} _endpoint  ws:// or wss:// URL
+/// @param {Function} _callback  callback(err, latency_ms) — err is undefined on success
+/// @param {Real} [_timeout_ms]  measurement timeout in ms (0 = default 1500)
+function colyseus_get_latency(_client, _endpoint, _callback, _timeout_ms = 0) {
+    var _handle = __colyseus_gm_get_latency(_client, _endpoint, _timeout_ms);
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_latency_handlers, _handle, _callback);
+    }
+    return _handle;
+}
+
+/// Measure several endpoints and select the lowest-latency one.
+/// @param {Real} _client  Client handle
+/// @param {Array<String>} _endpoints  array of ws:// / wss:// URLs
+/// @param {Function} _callback  callback(err, result) — result = { endpoint, latency_ms, results }
+/// @param {Real} [_timeout_ms]  per-endpoint timeout in ms (0 = default 1500)
+function colyseus_select_by_latency(_client, _endpoints, _callback, _timeout_ms = 0) {
+    var _json = json_stringify(_endpoints);
+    var _handle = __colyseus_gm_select_by_latency(_client, _json, _timeout_ms);
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_latency_handlers, _handle, _callback);
+    }
+    return _handle;
+}
+
 /// Set auth token for HTTP requests (sent as Bearer token).
 /// Automatically persists the token to disk for future sessions.
 /// @param {Real} _client  Client handle
@@ -529,10 +682,101 @@ function colyseus_auth_get_token(_client) {
 }
 
 /// Clear the persisted auth token (e.g., on logout).
+/// @deprecated Use colyseus_auth_sign_out, which also clears the token from
+/// the platform's own secure storage.
 function colyseus_auth_clear_token(_client) {
-    __colyseus_gm_auth_set_token(_client, "");
+    colyseus_auth_sign_out(_client);
+}
+
+// Auth operation ordinals — mirror gm_auth_op_t in src/gamemaker_export.c.
+#macro COLYSEUS_AUTH_GET_USER_DATA 0
+#macro COLYSEUS_AUTH_REGISTER 1
+#macro COLYSEUS_AUTH_SIGN_IN 2
+#macro COLYSEUS_AUTH_SIGN_IN_ANONYMOUS 3
+#macro COLYSEUS_AUTH_SEND_PASSWORD_RESET 4
+
+/// Sign in without credentials. The token still identifies the player, so keep
+/// it if you want them back on the same account next launch.
+/// @param {Real} _client  Client handle
+/// @param {Function} _callback  callback(err, data) — data is { user, token }
+/// @param {Struct} [_options]  Merged into the request body
+/// @returns {Real} request handle
+function colyseus_auth_sign_in_anonymously(_client, _callback, _options = undefined) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_SIGN_IN_ANONYMOUS, "", "", _options, _callback);
+}
+
+/// Create an account.
+/// @param {Real} _client  Client handle
+/// @param {String} _email
+/// @param {String} _password
+/// @param {Function} _callback  callback(err, data) — data is { user, token }
+/// @param {Struct} [_options]  Merged into the request body
+/// @returns {Real} request handle
+function colyseus_auth_register_with_email_and_password(_client, _email, _password, _callback, _options = undefined) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_REGISTER, _email, _password, _options, _callback);
+}
+
+/// Sign in with an existing account.
+/// @param {Real} _client  Client handle
+/// @param {String} _email
+/// @param {String} _password
+/// @param {Function} _callback  callback(err, data) — data is { user, token }
+/// @returns {Real} request handle
+function colyseus_auth_sign_in_with_email_and_password(_client, _email, _password, _callback) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_SIGN_IN, _email, _password, undefined, _callback);
+}
+
+/// The user record behind the current token. Fails when there is none.
+/// @param {Real} _client  Client handle
+/// @param {Function} _callback  callback(err, data)
+/// @returns {Real} request handle
+function colyseus_auth_get_user_data(_client, _callback) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_GET_USER_DATA, "", "", undefined, _callback);
+}
+
+/// Ask the server to send a password-reset email.
+/// @param {Real} _client  Client handle
+/// @param {String} _email
+/// @param {Function} _callback  callback(err, data)
+/// @returns {Real} request handle
+function colyseus_auth_send_password_reset_email(_client, _email, _callback) {
+    return __colyseus_auth_request(_client, COLYSEUS_AUTH_SEND_PASSWORD_RESET, _email, "", undefined, _callback);
+}
+
+/// Drop the token, here and in the platform's secure storage. No request.
+/// @param {Real} _client  Client handle
+function colyseus_auth_sign_out(_client) {
+    __colyseus_gm_auth_signout(_client);
     if (file_exists(__COLYSEUS_AUTH_FILE)) {
         file_delete(__COLYSEUS_AUTH_FILE);
+    }
+}
+
+/// @ignore Internal: start an auth call and route its reply like an HTTP one.
+function __colyseus_auth_request(_client, _op, _email, _password, _options, _callback) {
+    // One payload rather than three arguments: GameMaker rejects an extension
+    // function with more than four arguments of differing types.
+    var _payload = {};
+    if (_email != "") _payload.email = _email;
+    if (_password != "") _payload.password = _password;
+    if (is_struct(_options)) _payload.options = _options;
+
+    var _handle = __colyseus_gm_auth_request(_client, _op, json_stringify(_payload));
+    if (_handle > 0) {
+        ds_map_set(global.__colyseus_http_handlers, _handle,
+            method({ __inner: _callback }, __colyseus_auth_settle));
+    }
+    return _handle;
+}
+
+/// @ignore Internal: the token the server just issued has to reach the on-disk
+/// copy too, or the next launch would restore a stale one.
+function __colyseus_auth_settle(_err, _data) {
+    if (_err == undefined && is_struct(_data) && variable_struct_exists(_data, "token")) {
+        __colyseus_auth_save(_data.token);
+    }
+    if (__inner != undefined) {
+        __inner(_err, _data);
     }
 }
 
@@ -603,9 +847,24 @@ function __colyseus_decode_message() {
 
 /// Poll and dispatch all queued Colyseus events. Call once per frame in Step.
 function colyseus_process() {
+    // netdelay-wrapped rooms deliver inbound ONLY here (thread serialization);
+    // reconnect_poll drives the web build's polled auto-reconnect (no-op native)
+    __colyseus_gm_netdelay_pump();
+    __colyseus_gm_reconnect_poll();
+
     var _evt = colyseus_poll_event();
+    var _in_patch = false;
 
     while (_evt != COLYSEUS_EVENT_NONE) {
+        // A decoded patch queues its schema callbacks first, then ONE
+        // STATE_CHANGE. The epoch steps once per patch: at the first schema
+        // event of that burst (so handlers already see fresh structs), or at
+        // a STATE_CHANGE that had no burst in front of it.
+        var _schema_evt = (_evt >= COLYSEUS_EVENT_PROPERTY_CHANGE && _evt <= COLYSEUS_EVENT_ITEM_REMOVE)
+            || _evt == COLYSEUS_EVENT_INSTANCE_CHANGE || _evt == COLYSEUS_EVENT_COLLECTION_CHANGE;
+        if (!_in_patch && (_schema_evt || _evt == COLYSEUS_EVENT_STATE_CHANGE)) global.__colyseus_decode_epoch += 1;
+        _in_patch = _schema_evt;
+
         var _room_ref = colyseus_event_get_room();
         global.__colyseus_current_room_ref = _room_ref;
         var _entry = ds_map_exists(global.__colyseus_room_handlers, _room_ref)
@@ -785,6 +1044,48 @@ function colyseus_process() {
                     };
                     _handler(_err, undefined);
                 }
+                break;
+
+            case COLYSEUS_EVENT_LATENCY_RESPONSE:
+                var _cb = colyseus_event_get_callback_handle();
+                if (ds_map_exists(global.__colyseus_latency_handlers, _cb)) {
+                    var _handler = ds_map_find_value(global.__colyseus_latency_handlers, _cb);
+                    ds_map_delete(global.__colyseus_latency_handlers, _cb);
+                    _handler(undefined, colyseus_event_get_latency());
+                }
+                break;
+
+            case COLYSEUS_EVENT_LATENCY_ERROR:
+                var _cb = colyseus_event_get_callback_handle();
+                if (ds_map_exists(global.__colyseus_latency_handlers, _cb)) {
+                    var _handler = ds_map_find_value(global.__colyseus_latency_handlers, _cb);
+                    ds_map_delete(global.__colyseus_latency_handlers, _cb);
+                    _handler({ code: colyseus_event_get_code(), message: colyseus_event_get_message() }, undefined);
+                }
+                break;
+
+            case COLYSEUS_EVENT_LATENCY_SELECTED:
+                var _cb = colyseus_event_get_callback_handle();
+                if (ds_map_exists(global.__colyseus_latency_handlers, _cb)) {
+                    var _handler = ds_map_find_value(global.__colyseus_latency_handlers, _cb);
+                    ds_map_delete(global.__colyseus_latency_handlers, _cb);
+                    var _endpoint = colyseus_event_get_message();
+                    if (_endpoint == "") {
+                        _handler({ code: 0, message: "all endpoints failed to respond" }, undefined);
+                    } else {
+                        _handler(undefined, {
+                            endpoint: _endpoint,
+                            latency_ms: colyseus_event_get_latency()
+                        });
+                    }
+                }
+                break;
+
+            default:
+                // predict layer (event-channel settlement, spawn rejects).
+                // Hard name reference: ColyseusPredict.gml must ship with
+                // this script — GML compiles unknown functions as errors.
+                __colyseus_predict_dispatch(_evt);
                 break;
         }
 

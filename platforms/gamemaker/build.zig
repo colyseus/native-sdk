@@ -210,6 +210,7 @@ fn buildGameMakerExtension(
     // Add include paths
     gamemaker.addIncludePath(native_sdk_dep.path("include"));
     gamemaker.addIncludePath(native_sdk_dep.path("third_party/uthash/src"));
+    gamemaker.addIncludePath(native_sdk_dep.path("third_party/cJSON")); // for cJSON.h (latency endpoints array)
     gamemaker.addIncludePath(b.path("src")); // For local headers
 
     // GameMaker export layer (C code that wraps colyseus C API)
@@ -217,6 +218,7 @@ fn buildGameMakerExtension(
         .root = b.path("."),
         .files = &.{
             "src/gamemaker_export.c",
+            "src/gamemaker_predict.c",
         },
         .flags = &.{
             "-Wall",

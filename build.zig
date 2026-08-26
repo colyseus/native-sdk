@@ -1,5 +1,12 @@
 const std = @import("std");
 
+// Windows-only: cJSON marks its API __declspec(dllexport) by default, and one
+// dllexport anywhere makes MinGW's linker export ONLY marked symbols. A
+// consumer that links this library into a DLL and resolves colyseus_* symbols
+// at runtime (the Flutter binding does) therefore finds an export table with
+// nothing but cJSON in it. Opt in to hide them and get export-all back.
+const cjson_hide_symbols_flag = "-DCJSON_HIDE_SYMBOLS";
+
 pub fn build(b: *std.Build) void {
     // Standard target options
     const target = b.standardTargetOptions(.{});
@@ -21,6 +28,11 @@ pub fn build(b: *std.Build) void {
     const build_examples = b.option(bool, "examples", "Build example programs") orelse (if (is_emscripten) false else true);
     const skip_integration = b.option(bool, "skip-integration", "Skip integration tests (which require a running server)") orelse false;
     const debug_tests = b.option(bool, "debug-tests", "Install test executables for debugging") orelse false;
+    const hide_cjson_exports = b.option(
+        bool,
+        "hide-cjson-exports",
+        "Windows: compile cJSON without dllexport so the consuming DLL can export all symbols",
+    ) orelse false;
 
     // Apple SDK path option (auto-detected on macOS if not specified)
     // Handles macOS, iOS, and tvOS targets
@@ -494,8 +506,19 @@ pub fn build(b: *std.Build) void {
         "src/common/settings.c",
         "src/client.c",
         "src/room.c",
+        "src/room_clock.c",
+        "src/input_handle.c",
+        "src/predict/reconciler.c",
+        "src/predict/predict.c",
+        "src/predict/events.c",
+        "src/predict/spawns.c",
+        "src/network/latency.c",
+        "src/network/net_delay.c",
         // Schema
         "src/schema/decode.c",
+        "src/schema/encode.c",
+        "src/schema/input_encoder.c",
+        "src/schema/quantize.c",
         "src/schema/ref_tracker.c",
         "src/schema/collections.c",
         "src/schema/decoder.c",
@@ -528,12 +551,19 @@ pub fn build(b: *std.Build) void {
 
     // C flags
     const base_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", c_std };
+    const base_flags_hidden_cjson =
+        base_flags ++ [_][]const u8{cjson_hide_symbols_flag};
     const web_flags = [_][]const u8{ "-Wall", "-Wextra", "-pedantic", "-Wno-newline-eof", c_std, "-DPLATFORM_WEB" };
 
     // Add common sources
     colyseus.addCSourceFiles(.{
         .files = &common_sources,
-        .flags = if (is_emscripten) &web_flags else &base_flags,
+        .flags = if (is_emscripten)
+            &web_flags
+        else if (hide_cjson_exports)
+            &base_flags_hidden_cjson
+        else
+            &base_flags,
     });
 
     // Link mbedTLS (native only - browser handles TLS)
@@ -599,6 +629,7 @@ pub fn build(b: *std.Build) void {
     const headers = .{
         "client.h",
         "http.h",
+        "latency.h",
         "protocol.h",
         "room.h",
         "settings.h",
@@ -701,6 +732,101 @@ pub fn build(b: *std.Build) void {
             .run_step_name = "run-auth-example",
             .run_step_desc = "Run the auth example",
         }, target, optimize, colyseus, wslay_version_h, c_std);
+
+        buildExample(b, .{
+            .name = "latency_example",
+            .source_file = "examples/latency_example.c",
+            .run_step_name = "run-latency-example",
+            .run_step_desc = "Run the latency selection example",
+        }, target, optimize, colyseus, wslay_version_h, c_std);
+    }
+
+    // ========================================================================
+    // Prediction-playground validation client (lives in the sibling demos
+    // repo; built only when that checkout is present). Not for emscripten —
+    // zig cannot link exes against emscripten's libc.
+    // ========================================================================
+    if (!is_emscripten) {
+        const probe_src = "../demos/prediction-tools/clients/native/predict_probe.c";
+        if (std.fs.cwd().access(probe_src, .{})) |_| {
+            const probe_module = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+            });
+            const probe = b.addExecutable(.{
+                .name = "predict_probe",
+                .root_module = probe_module,
+            });
+            probe.linkLibC();
+            probe.addCSourceFile(.{
+                .file = .{ .cwd_relative = probe_src },
+                .flags = &.{ "-Wall", "-Wextra", c_std },
+            });
+            probe.addIncludePath(b.path("include"));
+            probe.addIncludePath(b.path("third_party/uthash/src"));
+            probe.addIncludePath(b.path("third_party/sds"));
+            probe.addIncludePath(b.path("third_party/cJSON"));
+            probe.addIncludePath(b.path("third_party/wslay/lib/includes"));
+            probe.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
+            probe.addIncludePath(.{ .cwd_relative = "../demos/prediction-tools/clients/native" });
+            probe.linkLibrary(colyseus);
+            b.installArtifact(probe);
+        } else |_| {}
+    }
+
+    // ========================================================================
+    // Prediction-playground interactive app (same sibling repo). Needs raylib
+    // from the system; skipped silently when pkg-config can't find it.
+    // Never for emscripten — the web build links via emcc (see the app's
+    // run-web.sh), and pkg-config would hand us the NATIVE raylib anyway.
+    // ========================================================================
+    if (!is_emscripten) {
+        const app_src = "../demos/prediction-tools/clients/native-app/main.c";
+        const raylib = pkgConfig(b, "raylib");
+        if (std.fs.cwd().access(app_src, .{})) |_| {
+            if (raylib) |ray| {
+                const app_module = b.createModule(.{
+                    .target = target,
+                    .optimize = optimize,
+                });
+                const app = b.addExecutable(.{
+                    .name = "predict_playground",
+                    .root_module = app_module,
+                });
+                app.linkLibC();
+                app.addCSourceFile(.{
+                    .file = .{ .cwd_relative = app_src },
+                    .flags = &.{ "-Wall", "-Wextra", c_std },
+                });
+                app.addIncludePath(b.path("include"));
+                app.addIncludePath(b.path("third_party/uthash/src"));
+                app.addIncludePath(b.path("third_party/sds"));
+                app.addIncludePath(b.path("third_party/cJSON"));
+                app.addIncludePath(b.path("third_party/wslay/lib/includes"));
+                app.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
+                // Schema headers are shared with the headless probe.
+                app.addIncludePath(.{ .cwd_relative = "../demos/prediction-tools/clients/native" });
+                app.addIncludePath(.{ .cwd_relative = "../demos/prediction-tools/clients/native-app" });
+                app.addIncludePath(.{ .cwd_relative = ray.include });
+                app.addLibraryPath(.{ .cwd_relative = ray.lib });
+                app.linkSystemLibrary("raylib");
+                if (target.result.os.tag == .macos) {
+                    app.linkFramework("Cocoa");
+                    app.linkFramework("IOKit");
+                    app.linkFramework("CoreVideo");
+                    app.linkFramework("OpenGL");
+                }
+                app.linkLibrary(colyseus);
+                b.installArtifact(app);
+
+                const run_app = b.addRunArtifact(app);
+                if (b.args) |args| run_app.addArgs(args);
+                const run_step = b.step("run-playground", "Run the prediction playground app");
+                run_step.dependOn(&run_app.step);
+            } else {
+                std.debug.print("note: raylib not found (pkg-config) — skipping predict_playground\n", .{});
+            }
+        } else |_| {}
     }
 
     // ========================================================================
@@ -721,6 +847,15 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_room", .file = "tests/test_room.zig", .description = "Run room tests" },
         .{ .name = "test_storage", .file = "tests/test_storage.zig", .description = "Run storage tests" },
         .{ .name = "test_schema", .file = "tests/test_schema.zig", .description = "Run schema tests" },
+        .{ .name = "test_schema_arrayops", .file = "tests/test_schema_arrayops.zig", .description = "Run ArraySchema wire-semantics tests (byte fixtures)" },
+        .{ .name = "test_schema_resync", .file = "tests/test_schema_resync.zig", .description = "Run decodeResync reconciliation tests (byte fixtures)" },
+        .{ .name = "test_room_protocol", .file = "tests/test_room_protocol.zig", .description = "Run 0.18 room wire-compat tests (byte fixtures)" },
+        .{ .name = "test_quantized", .file = "tests/test_quantized.zig", .description = "Run 5.0 reflection + t.quantized tests (byte fixtures)" },
+        .{ .name = "test_input", .file = "tests/test_input.zig", .description = "Run input layer + RoomClock tests (byte fixtures)" },
+        .{ .name = "test_predict", .file = "tests/test_predict.zig", .description = "Run Predict layer tests (behavior fixtures)" },
+        .{ .name = "test_netdelay", .file = "tests/test_netdelay.zig", .description = "Run network-delay injector tests (offline)" },
+        .{ .name = "test_gamemaker_predict", .file = "tests/test_gamemaker_predict.zig", .description = "Run GameMaker predict-bridge tests (offline, drives the GML FFI surface)" },
+        .{ .name = "test_gamemaker_schema", .file = "tests/test_gamemaker_schema.zig", .description = "Run GameMaker schema-bridge tests (offline)" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
@@ -773,6 +908,20 @@ pub fn build(b: *std.Build) void {
         test_exe.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
         test_exe.linkLibrary(colyseus);
 
+        // The GM bridge isn't part of libcolyseus — compile it into its test
+        // exe so the exact GML-facing FFI surface is what gets exercised.
+        if (std.mem.startsWith(u8, test_file.name, "test_gamemaker")) {
+            test_exe.addCSourceFiles(.{
+                .root = b.path("."),
+                .files = &.{
+                    "platforms/gamemaker/src/gamemaker_export.c",
+                    "platforms/gamemaker/src/gamemaker_predict.c",
+                },
+                .flags = &.{"-Wall"},
+            });
+            test_exe.addIncludePath(b.path("platforms/gamemaker/src"));
+        }
+
         // If debug-tests is enabled, install the test executable
         if (debug_tests) {
             b.installArtifact(test_exe);
@@ -788,6 +937,39 @@ pub fn build(b: *std.Build) void {
         const individual_test_step = b.step(test_file.name, test_file.description);
         individual_test_step.dependOn(&run_test.step);
     }
+}
+
+// ============================================================================
+// System-library discovery
+// ============================================================================
+
+const PkgPaths = struct { include: []const u8, lib: []const u8 };
+
+/// Resolve a system package's include/lib dirs via pkg-config. Returns null
+/// when pkg-config is missing or doesn't know the package — callers treat that
+/// as "skip this optional target".
+fn pkgConfig(b: *std.Build, name: []const u8) ?PkgPaths {
+    const query = struct {
+        fn run(bb: *std.Build, pkg: []const u8, variable: []const u8) ?[]const u8 {
+            const result = std.process.Child.run(.{
+                .allocator = bb.allocator,
+                .argv = &.{ "pkg-config", variable, pkg },
+            }) catch return null;
+            defer bb.allocator.free(result.stderr);
+            if (result.term != .Exited or result.term.Exited != 0 or result.stdout.len == 0) {
+                bb.allocator.free(result.stdout);
+                return null;
+            }
+            const trimmed = std.mem.trim(u8, result.stdout, " \n\r\"");
+            const owned = bb.allocator.dupe(u8, trimmed) catch null;
+            bb.allocator.free(result.stdout);
+            return owned;
+        }
+    }.run;
+
+    const include = query(b, name, "--variable=includedir") orelse return null;
+    const lib = query(b, name, "--variable=libdir") orelse return null;
+    return .{ .include = include, .lib = lib };
 }
 
 // ============================================================================

@@ -127,7 +127,7 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
     memset(data, 0, sizeof(colyseus_ws_transport_data_t));
     data->state = COLYSEUS_WS_DISCONNECTED;
     data->running = false;
-    data->in_tick_thread = false;
+    data->tick_thread_id_valid = false;
     data->pending_close = false;
     data->pending_close_code = 0;
     data->pending_close_reason = NULL;
@@ -213,6 +213,16 @@ static void ws_send_unreliable_impl(colyseus_transport_t* transport, const uint8
     (void)length;
 }
 
+/* Whether the calling thread IS this transport's tick thread. */
+static bool ws_on_tick_thread(const colyseus_ws_transport_data_t* data) {
+    if (!data->tick_thread_id_valid) return false;
+#ifdef _WIN32
+    return data->tick_thread_id == GetCurrentThreadId();
+#else
+    return pthread_equal(data->tick_thread_id, pthread_self()) != 0;
+#endif
+}
+
 static void ws_close_impl(colyseus_transport_t* transport, int code, const char* reason) {
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
@@ -236,9 +246,12 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
         return;
     }
 
-    /* If we're being called from within the tick thread, defer the close.
-     * We cannot pthread_join() on ourselves - that would deadlock. */
-    if (data->in_tick_thread) {
+    /* Only defer when the CALLER is the tick thread: joining yourself would
+     * deadlock, so the thread has to finish the close on its way out. Any
+     * other caller must join here — deferring for them leaves the close with
+     * nobody to complete it, and destroy() then frees this struct while the
+     * loop is still reading it. */
+    if (ws_on_tick_thread(data)) {
         WS_LOG("Close called from tick thread - deferring");
         data->pending_close = true;
         data->pending_close_code = code;
@@ -311,7 +324,12 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
     colyseus_transport_t* transport = (colyseus_transport_t*)arg;
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
-    data->in_tick_thread = true;
+#ifdef _WIN32
+    data->tick_thread_id = GetCurrentThreadId();
+#else
+    data->tick_thread_id = pthread_self();
+#endif
+    data->tick_thread_id_valid = true;
 
     while (data->running) {
         ws_tick_once(transport);
@@ -323,7 +341,7 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
 #endif
     }
 
-    data->in_tick_thread = false;
+    data->tick_thread_id_valid = false;
 
     /* Handle deferred close (was requested from within tick thread) */
     if (data->pending_close) {

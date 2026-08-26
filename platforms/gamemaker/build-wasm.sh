@@ -67,6 +67,7 @@ emcc \
     -I "$ROOT_DIR/third_party/sds" \
     -I "$ROOT_DIR/third_party/cJSON" \
     "$SCRIPT_DIR/src/gamemaker_export.c" \
+    "$SCRIPT_DIR/src/gamemaker_predict.c" \
     $LIBS \
     -sSINGLE_FILE=1 \
     -sFETCH=1 \

@@ -12,6 +12,13 @@ const c = @cImport({
 const TEST_SERVER = "localhost";
 const TEST_PORT = "2567";
 
+// `zig build test` runs the test binaries in parallel against one server, and
+// TestRoom sets no maxClients — a joinOrCreate would drop several suites into
+// the same room instance, where a foreign client's onJoin/onLeave mutates
+// `players` and fires the very callbacks these tests count. So: create, never
+// join, and mark the room private so nobody else can matchmake into it.
+const PRIVATE_ROOM = "{\"private\":true}";
+
 // Test state tracking
 var test_passed: bool = false;
 var test_failed: bool = false;
@@ -258,10 +265,10 @@ test "callbacks: listen to property changes" {
     var room: ?[*c]c.colyseus_room_t = null;
     defer cleanupRoom(&room);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         onRoomSuccess,
         onError,
         &room,
@@ -338,10 +345,10 @@ test "callbacks: onAdd for map collection" {
     var room: ?[*c]c.colyseus_room_t = null;
     defer cleanupRoom(&room);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         onRoomSuccess,
         onError,
         &room,
@@ -414,10 +421,10 @@ test "callbacks: onRemove for map collection" {
     var room: ?[*c]c.colyseus_room_t = null;
     defer cleanupRoom(&room);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         onRoomSuccess,
         onError,
         &room,
@@ -485,10 +492,10 @@ test "callbacks: nested property listening" {
     var room: ?[*c]c.colyseus_room_t = null;
     defer cleanupRoom(&room);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         onRoomSuccess,
         onError,
         &room,
@@ -559,10 +566,10 @@ test "callbacks: remove callback by handle" {
     var room: ?[*c]c.colyseus_room_t = null;
     defer cleanupRoom(&room);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         onRoomSuccess,
         onError,
         &room,
@@ -631,10 +638,10 @@ test "callbacks: array splice+push triggers onRemove and onAdd" {
     var room: ?[*c]c.colyseus_room_t = null;
     defer cleanupRoom(&room);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         onRoomSuccess,
         onError,
         &room,
@@ -740,10 +747,10 @@ test "callbacks: on_change_instance fires when properties change" {
     var room: ?[*c]c.colyseus_room_t = null;
     defer cleanupRoom(&room);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         onRoomSuccess,
         onError,
         &room,
@@ -840,10 +847,10 @@ test "callbacks: on_change_collection fires with key and value" {
     var room: ?[*c]c.colyseus_room_t = null;
     defer cleanupRoom(&room);
 
-    c.colyseus_client_join_or_create(
+    c.colyseus_client_create_room(
         client,
         "test_room",
-        "{}",
+        PRIVATE_ROOM,
         onRoomSuccess,
         onError,
         &room,

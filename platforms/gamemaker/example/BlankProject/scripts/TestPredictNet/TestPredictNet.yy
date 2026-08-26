@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"TestPredictNet",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"TestPredictNet",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

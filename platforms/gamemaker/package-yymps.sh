@@ -14,12 +14,13 @@
 # Prerequisites:
 #   - Built binaries in zig-out/lib/ (from `zig build -Dall`)
 #   - Built WASM in wasm-out/ (from ./build-wasm.sh)
-#   - jq, md5sum/md5
+#   - jq, node, md5sum/md5
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERSION=$(jq -r '.version' "$SCRIPT_DIR/version.json")
+GEN="$SCRIPT_DIR/gen-bindings.mjs"
 PACKAGE_DISPLAY_NAME="Colyseus SDK"
 PACKAGE_ID="Colyseus_SDK"
 # The .yyp filename MUST match the .yymps filename (without extension).
@@ -27,7 +28,10 @@ PACKAGE_ID="Colyseus_SDK"
 # filename during import — parent references in .yy files must use this name.
 PACKAGE_NAME="colyseus-gamemaker-${VERSION}"
 EXT_DIR="extensions/Colyseus_SDK"
-SCRIPT_RESOURCE_DIR="scripts/Colyseus"
+# The wrapper scripts ship as a set (gen-bindings owns the list and verifies
+# every call in them resolves — a script left out would not compile).
+node "$GEN" --check
+SCRIPT_RESOURCES=($(node "$GEN" --list-scripts))
 
 # Output
 OUT_DIR="$SCRIPT_DIR/package-out"
@@ -37,7 +41,7 @@ echo "=== Packaging Colyseus GameMaker SDK v${VERSION} ==="
 
 # Clean staging area
 rm -rf "$STAGE"
-mkdir -p "$STAGE/$EXT_DIR" "$STAGE/$SCRIPT_RESOURCE_DIR"
+mkdir -p "$STAGE/$EXT_DIR"
 
 # =========================================================================
 # 1. Copy extension .yy and scripts from source of truth (example project)
@@ -83,12 +87,20 @@ fix_trailing_commas "$EXAMPLE/$EXT_DIR/Colyseus_SDK.yy" | jq \
   ]
 ' > "$STAGE/$EXT_DIR/Colyseus_SDK.yy"
 
-# Copy Colyseus.gml + Colyseus.yy — fix parent references
-cp "$EXAMPLE/$SCRIPT_RESOURCE_DIR/Colyseus.gml" "$STAGE/$SCRIPT_RESOURCE_DIR/Colyseus.gml"
-fix_trailing_commas "$EXAMPLE/$SCRIPT_RESOURCE_DIR/Colyseus.yy" | jq \
-  --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" '
-  .parent = { "name": $name, "path": $path }
-' > "$STAGE/$SCRIPT_RESOURCE_DIR/Colyseus.yy"
+# Copy each script resource (.gml + .yy) — fix parent references
+YYP_SCRIPT_RESOURCES=""
+for script in "${SCRIPT_RESOURCES[@]}"; do
+    src_dir="$EXAMPLE/scripts/$script"
+    dst_dir="$STAGE/scripts/$script"
+    mkdir -p "$dst_dir"
+    cp "$src_dir/$script.gml" "$dst_dir/$script.gml"
+    fix_trailing_commas "$src_dir/$script.yy" | jq \
+      --arg name "$PACKAGE_NAME" --arg path "$PACKAGE_NAME.yyp" '
+      .parent = { "name": $name, "path": $path }
+    ' > "$dst_dir/$script.yy"
+    YYP_SCRIPT_RESOURCES+=",
+    {\"id\":{\"name\":\"$script\",\"path\":\"scripts/$script/$script.yy\"}}"
+done
 
 # =========================================================================
 # 2. Copy built binaries
@@ -152,8 +164,7 @@ cat > "$STAGE/$PACKAGE_NAME.yyp" << EOFYYP
   },
   "name":"$PACKAGE_NAME",
   "resources":[
-    {"id":{"name":"${PACKAGE_ID}","path":"$EXT_DIR/Colyseus_SDK.yy"}},
-    {"id":{"name":"Colyseus","path":"$SCRIPT_RESOURCE_DIR/Colyseus.yy"}}
+    {"id":{"name":"${PACKAGE_ID}","path":"$EXT_DIR/Colyseus_SDK.yy"}}$YYP_SCRIPT_RESOURCES
   ],
   "resourceType":"GMProject",
   "resourceVersion":"2.0",

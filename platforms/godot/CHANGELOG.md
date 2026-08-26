@@ -2,7 +2,51 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
-## 0.17.11-rc.1
+## 0.18.0
+
+### Added
+- `client.auth` gains the sign-in flows, alongside the token accessors it
+  already had: `sign_in_anonymously`, `register_with_email_and_password`,
+  `sign_in_with_email_and_password`, `get_user_data`,
+  `send_password_reset_email` and `sign_out`. Each takes a
+  `callback(err, data)` in the same shape `client.http` uses, where `data` is
+  the server's own `{ "user": {...}, "token": "..." }` reply, and each returns
+  the request id.
+
+  The token lands on the client, so `client.http` is authenticated from then
+  on. It also persists in the platform's secure storage under one
+  process-wide key, so a signed-in session survives a restart — call
+  `sign_out()` when you don't want that.
+
+  These calls block in the core, so they run on the same detached worker
+  thread `client.http` uses and answer through the polled event queue.
+  `Colyseus.poll()` (automatic outside headless) is what delivers them.
+- Latency-based endpoint selection on the Colyseus client:
+  - `get_latency(endpoint, timeout_ms = 0)` measures the round-trip time to a server and emits `_latency_response(request_id, latency_ms, endpoint)` on success or `_latency_error(request_id, code, message)` on failure.
+  - `select_by_latency(endpoints, timeout_ms = 0)` measures an array of endpoints in parallel and emits `_latency_selected(request_id, best_endpoint, best_latency_ms)` with the lowest-latency endpoint (`best_endpoint` is empty when every endpoint failed).
+  - Each measurement always settles — on the pong, a connection error, a server-side close before the pong, or a timeout (default 1500 ms) — so one unreachable/blackholed endpoint can't stall the selection.
+- `test_latency.gd` covering the healthy, timeout, and selection paths against the test server.
+
+### Fixed
+- Automatic reconnection only worked once per room; a second drop left
+  `room.reconnecting` true forever with no `left` signal.
+
+## 0.17.12
+
+### Added
+- `room.get_reconnection_token()`. Persist it and pass it to
+  `client.reconnect(token)` to re-take a seat after the process is killed.
+  Thanks @zahmad12! [#26](https://github.com/colyseus/native-sdk/issues/26)
+
+### Fixed
+- Automatic reconnection could get stuck with `room.reconnecting == true` and
+  no `left` signal after an Android background/resume: a retry that failed at
+  DNS time never counted as an attempt. Reported by @zahmad12 in
+  [#27](https://github.com/colyseus/native-sdk/issues/27).
+- `client.reconnect(token)` was rejected by the server with "bad reconnection
+  token" even with a valid token. [#26](https://github.com/colyseus/native-sdk/issues/26)
+
+## 0.17.11
 
 ### Fixed
 - Android `wss://` connections could fail with a TLS certificate-bundle load failure on release builds — working for some devices/users and failing for others against the same endpoint. The SDK runs its own mbedTLS handshake and was picking a single CA source in priority order (system store → bundled Mozilla → settings override), so a device's system trust store could shadow the comprehensive bundled roots and abort TLS entirely if it lacked the server's root or failed to parse — hence the device-dependence. All available CA sources are now merged into one trust chain (bundled Mozilla roots always loaded as a device-independent baseline, with the system store and any override layered on top); TLS init only fails if the chain ends up empty. Reported by @pierroo in #24.

@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"TestLatencyApi",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"TestLatencyApi",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

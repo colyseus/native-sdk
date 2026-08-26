@@ -241,12 +241,16 @@ static void colyseus_callbacks_trigger_changes(colyseus_changes_t* changes, void
         }
 
         /*
-         * Trigger onRemove on child structure if DELETE and previous_value is a schema
+         * Trigger onRemove on child structure if DELETE and previous_value is a schema.
+         * field_type gates the cast: on a string field previous_value is a char*,
+         * and reading __refId off it punned the first bytes of the string as a refId.
          */
         if ((change->op & COLYSEUS_OP_DELETE) == COLYSEUS_OP_DELETE &&
-            change->previous_value != NULL) {
+            change->previous_value != NULL &&
+            (change->field_type == COLYSEUS_FIELD_REF ||
+             change->field_type == COLYSEUS_FIELD_ARRAY ||
+             change->field_type == COLYSEUS_FIELD_MAP)) {
 
-            /* Check if previous_value is a schema */
             colyseus_schema_t* prev_schema = (colyseus_schema_t*)change->previous_value;
             /* A schema has __refId at offset 0 - try to get child callbacks */
             int child_ref_id = COLYSEUS_REF_ID(prev_schema);
