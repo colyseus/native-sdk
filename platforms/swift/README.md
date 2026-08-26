@@ -16,6 +16,22 @@ room.onMessage("score") { payload in
 }
 ```
 
+## Installing it
+
+```swift
+.package(url: "https://github.com/colyseus/colyseus-swift", from: "0.18.0")
+```
+
+[colyseus/colyseus-swift](https://github.com/colyseus/colyseus-swift) is this
+directory, generated on every release by [`mirror.sh`](./mirror.sh). SwiftPM
+resolves a package from a repository ROOT and only understands plain semver
+tags, so it can see neither a manifest under `platforms/` nor a `swift-v*`
+tag — and a consumer of this repo would clone 300 MB of submodules the Swift
+package never uses.
+
+Work on the SDK happens here. A commit pushed to the mirror is overwritten by
+the next release.
+
 ## Building it
 
 The core is Zig as much as it is C — msgpack, HTTP and the certificate store

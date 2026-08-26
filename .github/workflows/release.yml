@@ -198,6 +198,7 @@ jobs:
         run: |
           VERSION=$(grep -oP '\.version\s*=\s*"\K[^"]+' build.zig.zon)
           echo "version=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "semver=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Package source code
         run: |
@@ -297,18 +298,18 @@ jobs:
             ### Swift
             
             ```swift
+            .package(url: "https://github.com/colyseus/colyseus-swift", from: "${{ steps.version.outputs.semver }}")
+            ```
+            
+            That package resolves `Colyseus.xcframework.zip` below. Declare the
+            binary target yourself only to reach the C API directly:
+            
+            ```swift
             .binaryTarget(
                 name: "CColyseus",
                 url: "https://github.com/colyseus/native-sdk/releases/download/${{ steps.version.outputs.version }}/Colyseus.xcframework.zip",
                 checksum: "${{ steps.xcframework.outputs.checksum }}"
             )
-            ```
-            
-            Or point `platforms/swift` at it directly:
-            
-            ```sh
-            export COLYSEUS_XCFRAMEWORK_URL=https://github.com/colyseus/native-sdk/releases/download/${{ steps.version.outputs.version }}/Colyseus.xcframework.zip
-            export COLYSEUS_XCFRAMEWORK_CHECKSUM=${{ steps.xcframework.outputs.checksum }}
             ```
             
             ### Usage
@@ -330,3 +331,33 @@ jobs:
             exe.addObjectFile(.{ .cwd_relative = "path/to/lib/libcolyseus.a" });
             exe.addIncludePath(.{ .cwd_relative = "path/to/include" });
             ```
+
+  # SwiftPM resolves a package from a repository ROOT and only understands
+  # plain semver tags, so it can see neither platforms/swift/Package.swift nor
+  # a swift-v* tag. colyseus/colyseus-swift is that shape, generated from this
+  # one — see platforms/swift/mirror.sh.
+  publish-swift-mirror:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the xcframework
+        uses: actions/download-artifact@v4
+        with:
+          name: Colyseus.xcframework
+          path: xcframework
+
+      - name: Publish
+        env:
+          MIRROR_TOKEN: ${{ secrets.SWIFT_MIRROR_TOKEN }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "SWIFT_MIRROR_TOKEN is not set — skipping the Swift mirror" >&2
+            exit 0
+          fi
+          version=$(grep -oP '\.version\s*=\s*"\K[^"]+' build.zig.zon)
+          checksum=$(cat xcframework/Colyseus.xcframework.zip.sha256)
+          export MIRROR_REMOTE="https://x-access-token:${MIRROR_TOKEN}@github.com/colyseus/colyseus-swift.git"
+          ./platforms/swift/mirror.sh "$version" "$checksum"
