@@ -33,7 +33,15 @@ final class SpawnsIntegrationTests: XCTestCase {
         let store = try XCTUnwrap(predict.spawns(
             state.projectiles,
             owned: { $0.string("owner") == sessionId },
-            spawnTime: { $0["bornMs"] }
+            spawnTime: { $0["bornMs"] },
+            // Without this a confirmed entity reads its last decoded
+            // snapshot, a round trip behind where the prediction had flown
+            // it, and the handoff shows up as the trajectory changing.
+            reckon: .init(fields: ["x", "y"]) { projectile, dt, _ in
+                var body = PlaygroundSim.projectile(view: projectile)
+                PlaygroundSim.stepProjectile(&body, dt: dt)
+                PlaygroundSim.write(body, to: projectile)
+            }
         ))
         defer { store.dispose() }
 
@@ -77,6 +85,18 @@ final class SpawnsIntegrationTests: XCTestCase {
 
         // One render path across the handoff.
         XCTAssertFalse(store.value(confirmed, "x").isNaN)
+
+        // And the handoff is seamless: a reckoned confirmed entity reads
+        // AHEAD of its last decoded snapshot, by the snapshot's age plus the
+        // lead measured for this spawn. Reading level with the raw field is
+        // the symptom of the reckon descriptor never reaching the store —
+        // which is what made the trajectory visibly change on acknowledgement.
+        let server = try XCTUnwrap(confirmed.server)
+        let forwarded = store.value(confirmed, "x") - server["x"]
+        XCTAssertGreaterThan(
+            abs(forwarded), 1e-6,
+            "the confirmed entry read its raw snapshot rather than being forwarded"
+        )
     }
 
     func testAnUnmatchedPredictionIsEvicted() async throws {

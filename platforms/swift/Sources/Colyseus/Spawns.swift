@@ -49,6 +49,39 @@ public extension Colyseus {
         public var leadMs: Double { raw.pointee.lead_ms }
     }
 
+    /// How a CONFIRMED spawn keeps moving between snapshots.
+    ///
+    /// Without this, a confirmed entity reads its last decoded position, which
+    /// is a round trip behind where its prediction had already flown it — so
+    /// the handoff shows up as the trajectory changing. With it, the store
+    /// forwards each entity by the snapshot's age plus the lead it measured
+    /// for that spawn, and an owned projectile keeps flying the shooter's
+    /// timeline through the handoff.
+    struct SpawnReckon: Sendable {
+        /// The numeric fields the step reads and writes.
+        public var fields: [String]
+        /// Decay time constant, in milliseconds. 0 is raw projection, which is
+        /// right for a deterministic constant-velocity spawn — smoothing there
+        /// only adds lag.
+        public var smoothMs: Double
+        /// Integration granularity. 0 takes 16 ms.
+        public var substepMs: Double
+        /// The same motion the server integrates.
+        public var step: @Sendable (SchemaView, Double, Double) -> Void
+
+        public init(
+            fields: [String],
+            smoothMs: Double = 0,
+            substepMs: Double = 0,
+            step: @escaping @Sendable (SchemaView, Double, Double) -> Void
+        ) {
+            self.fields = fields
+            self.smoothMs = smoothMs
+            self.substepMs = substepMs
+            self.step = step
+        }
+    }
+
     /// Entities you create before the server does.
     ///
     /// Fire, and the projectile exists immediately; when the server's own
@@ -154,11 +187,16 @@ public extension Colyseus.Predict {
     ///   - ttlMs: how long an unmatched prediction survives before it is
     ///     dropped as a mispredict. 0 takes twice the round trip, floored at
     ///     600 ms.
+    ///   - reckon: how a confirmed entity keeps moving between snapshots.
+    ///     Omit it and the handoff is visible: a confirmed entity reads the
+    ///     last position the server sent, which is a round trip behind the
+    ///     prediction it is replacing.
     func spawns<Element: SchemaValue>(
         _ collection: MapSchema<Element>,
         owned: (@Sendable (SchemaView) -> Bool)? = nil,
         spawnTime: (@Sendable (SchemaView) -> Double)? = nil,
         ttlMs: Double = 0,
+        reckon: Colyseus.SpawnReckon? = nil,
         onReject: (@Sendable (Colyseus.SpawnLocal?, Int) -> Void)? = nil
     ) -> Colyseus.Spawns? {
         let hooks = SpawnHooks(owned: owned, spawnTime: spawnTime, onReject: onReject)
@@ -218,8 +256,42 @@ public extension Colyseus.Predict {
 
         let store = Colyseus.Spawns(raw: created, hooks: hooks, hooksPointer: pointer, predict: self)
 
-        collection.field.withCString { fieldPointer in
-            colyseus_predict_bind_spawns(raw, created, collection.owner.view.instance, fieldPointer, nil)
+        collection.field.withCString { collectionPointer in
+            guard let reckon else {
+                colyseus_predict_bind_spawns(
+                    raw, created, collection.owner.view.instance, collectionPointer, nil
+                )
+                return
+            }
+
+            // The step is called for the store's whole life and never handed
+            // back, so the Predict keeps the closure alive.
+            let box = ReckonBox(reckon.step)
+            retain(box)
+
+            withCStrings(reckon.fields) { fieldPointers in
+                var borrowed = fieldPointers
+                borrowed.withUnsafeMutableBufferPointer { buffer in
+                    var descriptor = colyseus_spawns_reckon_t()
+                    // NULL: each entry reckons with its own vtable, the only
+                    // option for a reflection-built schema.
+                    descriptor.entry_vtable = nil
+                    descriptor.fields = UnsafePointer(buffer.baseAddress)
+                    descriptor.field_count = Int32(reckon.fields.count)
+                    descriptor.smooth_ms = reckon.smoothMs
+                    descriptor.substep_ms = reckon.substepMs
+                    descriptor.userdata = retainedPointer(box)
+                    descriptor.step = { state, dt, elapsedMs, userdata in
+                        guard let state, let box = borrowObject(userdata, as: ReckonBox.self) else { return }
+                        box.body(SchemaView(state), dt, elapsedMs)
+                    }
+
+                    // The core copies the descriptor and strdups the names.
+                    colyseus_predict_bind_spawns(
+                        raw, created, collection.owner.view.instance, collectionPointer, &descriptor
+                    )
+                }
+            }
         }
         return store
     }

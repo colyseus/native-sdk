@@ -335,3 +335,35 @@ public final class BotsState: SchemaRef {
     public var players: MapSchema<MovePlayer> { mapOf("players") }
     public var bots: MapSchema<Bot> { mapOf("bots") }
 }
+
+// MARK: - lab-projectile flight
+
+extension PlaygroundSim {
+    struct Body {
+        var x = 0.0
+        var y = 0.0
+        var vx = 0.0
+        var vy = 0.0
+    }
+
+    static func projectile(view: SchemaView) -> Body {
+        Body(x: view["x"], y: view["y"], vx: view["vx"], vy: view["vy"])
+    }
+
+    static func write(_ body: Body, to view: SchemaView) {
+        view.set("x", to: body.x)
+        view.set("y", to: body.y)
+        if view.has("vx") { view.set("vx", to: body.vx) }
+        if view.has("vy") { view.set("vy", to: body.vy) }
+    }
+
+    /// Constant-velocity flight with wall bounces.
+    static func stepProjectile(_ body: inout Body, dt: Double) {
+        body.x += body.vx * dt
+        body.y += body.vy * dt
+        if body.x < 0 { body.x = 0; body.vx = abs(body.vx) }
+        else if body.x > arenaWidth { body.x = arenaWidth; body.vx = -abs(body.vx) }
+        if body.y < 0 { body.y = 0; body.vy = abs(body.vy) }
+        else if body.y > arenaHeight { body.y = arenaHeight; body.vy = -abs(body.vy) }
+    }
+}
