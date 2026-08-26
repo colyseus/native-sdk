@@ -1,4 +1,5 @@
 import Colyseus
+import Foundation
 
 /// The prediction playground's shared movement step, transliterated.
 ///
@@ -230,4 +231,107 @@ public final class HockeyState: SchemaRef {
     public var players: MapSchema<MovePlayer> { mapOf("players") }
     public var puck: Puck? { refOf("puck") }
     public var botEnabled: Bool { view.bool("botEnabled") }
+}
+
+// MARK: - lab-projectile
+
+extension PlaygroundSim {
+    static let projectileSpeed = 34.0
+    static let projectileTtlMs = 2600.0
+
+    /// Constant-velocity flight with wall bounces, shared by the server's
+    /// integrator and the client's predicted flight.
+    static func stepProjectile(
+        _ body: inout (x: Double, y: Double, vx: Double, vy: Double),
+        dt: Double
+    ) {
+        body.x += body.vx * dt
+        body.y += body.vy * dt
+        if body.x < 0 { body.x = 0; body.vx = abs(body.vx) }
+        else if body.x > arenaWidth { body.x = arenaWidth; body.vx = -abs(body.vx) }
+        if body.y < 0 { body.y = 0; body.vy = abs(body.vy) }
+        else if body.y > arenaHeight { body.y = arenaHeight; body.vy = -abs(body.vy) }
+    }
+}
+
+/// The optimistic projectile a client draws before the server has one.
+final class LocalProjectile: Colyseus.SpawnLocal {
+    private var body: (x: Double, y: Double, vx: Double, vy: Double)
+
+    init(x: Double, y: Double, vx: Double, vy: Double) {
+        body = (x: x, y: y, vx: vx, vy: vy)
+        super.init()
+    }
+
+    override func step(dt: Double) {
+        PlaygroundSim.stepProjectile(&body, dt: dt)
+    }
+
+    override func value(_ field: String) -> Double {
+        switch field {
+        case "x": return body.x
+        case "y": return body.y
+        case "vx": return body.vx
+        case "vy": return body.vy
+        default: return .nan
+        }
+    }
+}
+
+public final class Projectile: SchemaRef {
+    public var x: Double { view["x"] }
+    public var y: Double { view["y"] }
+    public var vx: Double { view["vx"] }
+    public var vy: Double { view["vy"] }
+    public var owner: String { view.string("owner") ?? "" }
+    public var bornMs: Double { view["bornMs"] }
+}
+
+public final class ProjectileState: SchemaRef {
+    public var players: MapSchema<MovePlayer> { mapOf("players") }
+    public var projectiles: MapSchema<Projectile> { mapOf("projectiles") }
+}
+
+// MARK: - lab-bots
+
+extension PlaygroundSim {
+    static let botRadius = 1.8
+    static let teleportPeriodMs = 3000.0
+    static let wanderTurnMs = 900.0
+
+    /// The bot movers, from `src/shared/movers.ts`.
+    ///
+    /// `patrol` and `circle` are pure functions of time, so a client can
+    /// compute them exactly. `wander` re-rolls its heading from a seed only
+    /// the server has, which is where dead reckoning honestly stops working.
+    static func stepBot(_ bot: SchemaView, dt: Double, elapsedMs: Double) {
+        switch bot.string("kind") ?? "patrol" {
+        case "circle":
+            let phase = (elapsedMs + bot["phaseMs"]) / 1000
+            let radiusX = (bot["maxX"] - bot["minX"]) / 2
+            let centreX = (bot["maxX"] + bot["minX"]) / 2
+            bot.set("x", to: centreX + radiusX * cos(phase * bot["speed"] / radiusX))
+            bot.set("y", to: bot["baseY"] + radiusX * 0.5 * sin(phase * bot["speed"] / radiusX))
+        default:
+            // patrol: bounce between minX and maxX at `speed`.
+            var x = bot["x"] + bot["vx"] * dt
+            var vx = bot["vx"]
+            if x < bot["minX"] { x = bot["minX"]; vx = abs(vx) }
+            else if x > bot["maxX"] { x = bot["maxX"]; vx = -abs(vx) }
+            bot.set("x", to: x)
+            bot.set("vx", to: vx)
+            bot.set("y", to: bot["baseY"])
+        }
+    }
+}
+
+public final class Bot: SchemaRef {
+    public var x: Double { view["x"] }
+    public var y: Double { view["y"] }
+    public var kind: String { view.string("kind") ?? "" }
+}
+
+public final class BotsState: SchemaRef {
+    public var players: MapSchema<MovePlayer> { mapOf("players") }
+    public var bots: MapSchema<Bot> { mapOf("bots") }
 }

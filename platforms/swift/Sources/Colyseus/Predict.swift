@@ -170,6 +170,96 @@ public extension Colyseus {
             colyseus_predict_detach(raw, instance.view.instance)
         }
 
+        // MARK: - Dead reckoning
+
+        /// Forward-simulate every entry of a collection through a step shared
+        /// with the server, instead of interpolating its snapshots.
+        ///
+        /// Where it applies this beats interpolation outright: there is no
+        /// render delay, because the client computes what the server is about
+        /// to send rather than waiting to be told. Where it does not — an
+        /// entity whose next move depends on something only the server knows —
+        /// it breaks honestly and visibly.
+        ///
+        /// The step runs on demand and its result is cached for the frame, so
+        /// a loop that ticks without reading ``value(_:_:)`` reckons nothing.
+        ///
+        /// - Parameters:
+        ///   - fields: the numeric fields the step reads and writes.
+        ///   - smoothMs: how fast a rebase onto a fresh snapshot eases in.
+        ///   - substepMs: integration granularity. 0 takes 16 ms.
+        ///   - snap: a rebase further than this cuts instead of gliding — for
+        ///     teleports, which are not reckoning failures.
+        @discardableResult
+        public func attachAllReckon<Element: SchemaValue>(
+            _ collection: MapSchema<Element>,
+            fields: [String],
+            smoothMs: Double = 0,
+            substepMs: Double = 0,
+            snap: Double = 0,
+            step: @escaping @Sendable (SchemaView, Double, Double) -> Void
+        ) -> Bool {
+            let box = ReckonBox(step)
+            adopt(box)
+
+            return withCStrings(fields) { fieldPointers in
+                var borrowed = fieldPointers
+                return borrowed.withUnsafeMutableBufferPointer { buffer in
+                    collection.field.withCString { collectionPointer in
+                        colyseus_predict_attach_all_reckon(
+                            raw,
+                            collection.owner.view.instance,
+                            collectionPointer,
+                            // Each entry reckons with its own vtable, which is
+                            // the only option for reflection-built schemas.
+                            nil,
+                            UnsafePointer(buffer.baseAddress),
+                            Int32(fields.count),
+                            { state, dt, elapsedMs, userdata in
+                                guard let state, let box = borrowObject(userdata, as: ReckonBox.self) else { return }
+                                box.body(SchemaView(state), dt, elapsedMs)
+                            },
+                            smoothMs, substepMs, snap,
+                            retainedPointer(box)
+                        ) == 0
+                    }
+                }
+            }
+        }
+
+        /// Dead-reckon one instance.
+        @discardableResult
+        public func attachReckon(
+            _ instance: SchemaRef,
+            fields: [String],
+            smoothMs: Double = 0,
+            substepMs: Double = 0,
+            snap: Double = 0,
+            step: @escaping @Sendable (SchemaView, Double, Double) -> Void
+        ) -> Bool {
+            let box = ReckonBox(step)
+            adopt(box)
+
+            return withCStrings(fields) { fieldPointers in
+                var borrowed = fieldPointers
+                return borrowed.withUnsafeMutableBufferPointer { buffer in
+                    colyseus_predict_attach_reckon(
+                        raw,
+                        instance.view.instance,
+                        instance.view.instance.pointee.__vtable,
+                        UnsafePointer(buffer.baseAddress),
+                        Int32(fields.count),
+                        { state, dt, elapsedMs, userdata in
+                            guard let state, let box = borrowObject(userdata, as: ReckonBox.self) else { return }
+                            box.body(SchemaView(state), dt, elapsedMs)
+                        },
+                        smoothMs, substepMs, snap,
+                        retainedPointer(box)
+                    ) == 0
+                }
+            }
+        }
+
         // MARK: - The frame
 
         /// Advance one render frame, and say how many fixed input steps are due.
@@ -243,5 +333,16 @@ public extension Colyseus {
                 }
             }
         }
+    }
+}
+
+/// The reckoning step is a C function pointer invoked per substep, so the
+/// closure lives in an object userdata can reach. There is no detach hook for
+/// it, so the Predict keeps it for its own lifetime.
+final class ReckonBox: @unchecked Sendable {
+    let body: (SchemaView, Double, Double) -> Void
+
+    init(_ body: @escaping (SchemaView, Double, Double) -> Void) {
+        self.body = body
     }
 }
