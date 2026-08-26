@@ -46,9 +46,12 @@ public extension Colyseus {
             /// The server's user record, as it sent it.
             public let data: MessagePackValue
 
+            /// Nil means signed out: that is how the core reports it, with a
+            /// change carrying no token rather than no change at all.
             init?(_ raw: UnsafePointer<colyseus_auth_data_t>?) {
-                guard let raw else { return nil }
-                token = String(nullableCString: raw.pointee.token) ?? ""
+                guard let raw, let token = String(nullableCString: raw.pointee.token), !token.isEmpty
+                else { return nil }
+                self.token = token
                 data = String(nullableCString: raw.pointee.user_json)
                     .flatMap { text in
                         text.data(using: .utf8)

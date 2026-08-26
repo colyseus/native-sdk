@@ -152,10 +152,12 @@ extension MessagePackValue {
     init(json: Any) {
         switch json {
         case is NSNull: self = .null
-        case let value as Bool: self = .bool(value)
         case let value as String: self = .string(value)
         case let value as NSNumber:
-            // NSNumber erases the distinction, so ask what it actually holds.
+            // `case let value as Bool` cannot come first: JSONSerialization
+            // hands back NSNumber, and an NSNumber holding 1 bridges to Bool
+            // happily — every 1 in the payload would decode as true. Only the
+            // CoreFoundation type tells them apart.
             if CFGetTypeID(value) == CFBooleanGetTypeID() {
                 self = .bool(value.boolValue)
             } else if value.doubleValue == value.doubleValue.rounded(),
