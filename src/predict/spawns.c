@@ -1,5 +1,5 @@
 #include "colyseus/predict/spawns.h"
-#include "field_access.h"
+#include "colyseus/schema/field_access.h"
 #include "uthash.h"
 
 #include <math.h>
@@ -233,9 +233,9 @@ double colyseus_spawns_value(colyseus_spawns_t* spawns,
         }
         const colyseus_schema_vtable_t* vt = entry->server->__vtable;
         if (!vt) return NAN;
-        predict_fref_t f;
-        if (predict_vt_find(vt, field, &f) && predict_fref_scalar(&f))
-            return predict_fread(entry->server, &f);
+        colyseus_field_ref_t f;
+        if (colyseus_vtable_find_field(vt, field, &f) && colyseus_field_ref_is_scalar(&f))
+            return colyseus_schema_read_field(entry->server, &f);
         return NAN;
     }
     if (entry->local && spawns->opts.local_read) {

@@ -3,7 +3,7 @@
 #include <colyseus/room.h>
 #include <colyseus/room_clock.h>
 #include <colyseus/schema/dynamic_schema.h>
-#include <predict/field_access.h>
+#include <colyseus/schema/field_access.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -155,9 +155,9 @@ void gdext_colyseus_input_set_field(void* p_method_userdata, GDExtensionClassIns
     if (!name) return;
     double value = *(const double*)p_args[1];
 
-    predict_fref_t f;
-    if (predict_vt_find(data->__vtable, name, &f) && predict_fref_scalar(&f)) {
-        predict_fwrite(data, &f, value);
+    colyseus_field_ref_t f;
+    if (colyseus_vtable_find_field(data->__vtable, name, &f) && colyseus_field_ref_is_scalar(&f)) {
+        colyseus_schema_write_field(data, &f, value);
     }
     free(name);
 }
@@ -172,9 +172,9 @@ void gdext_colyseus_input_get_field(void* p_method_userdata, GDExtensionClassIns
 
     char* name = input_string_to_utf8((const String*)p_args[0]);
     if (!name) return;
-    predict_fref_t f;
-    if (predict_vt_find(data->__vtable, name, &f) && predict_fref_scalar(&f)) {
-        *(double*)r_ret = predict_fread(data, &f);
+    colyseus_field_ref_t f;
+    if (colyseus_vtable_find_field(data->__vtable, name, &f) && colyseus_field_ref_is_scalar(&f)) {
+        *(double*)r_ret = colyseus_schema_read_field(data, &f);
     }
     free(name);
 }
@@ -218,9 +218,9 @@ static bool input_rewind_field_gate(void* data, void* userdata) {
     input_rewind_gate_t* g = (input_rewind_gate_t*)userdata;
     colyseus_schema_t* d = (colyseus_schema_t*)data;
     if (!g || !d || !d->__vtable) return true;
-    predict_fref_t f;
-    if (predict_vt_find(d->__vtable, g->field, &f) && predict_fref_scalar(&f)) {
-        return predict_fread(d, &f) != 0;
+    colyseus_field_ref_t f;
+    if (colyseus_vtable_find_field(d->__vtable, g->field, &f) && colyseus_field_ref_is_scalar(&f)) {
+        return colyseus_schema_read_field(d, &f) != 0;
     }
     return true;   /* unknown field: stamp everything rather than nothing */
 }

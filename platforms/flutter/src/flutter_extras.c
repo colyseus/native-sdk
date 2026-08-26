@@ -27,7 +27,7 @@
 #include "colyseus/predict/events.h"
 #include "colyseus/predict/spawns.h"
 
-#include "../../../src/predict/field_access.h"
+#include <colyseus/schema/field_access.h>
 #include "flutter_colyseus.h"
 
 #include <stdlib.h>
@@ -141,8 +141,8 @@ FLUTTER_EXPORT int colyseus_flutter_field_resolve(intptr_t instance, const char*
     colyseus_schema_t* inst = (colyseus_schema_t*)instance;
     if (!inst || !inst->__vtable || !name) return -1;
 
-    predict_fref_t f;
-    if (!predict_vt_find(inst->__vtable, name, &f)) return -1;
+    colyseus_field_ref_t f;
+    if (!colyseus_vtable_find_field(inst->__vtable, name, &f)) return -1;
 
     if (out_type) *out_type = (int)f.type;
     if (out_offset) *out_offset = (int)f.offset;
@@ -163,7 +163,7 @@ FLUTTER_EXPORT intptr_t colyseus_flutter_instance_vtable(intptr_t instance) {
 FLUTTER_EXPORT int colyseus_flutter_field_count(intptr_t instance) {
     colyseus_schema_t* inst = (colyseus_schema_t*)instance;
     if (!inst || !inst->__vtable) return 0;
-    return predict_vt_count(inst->__vtable);
+    return colyseus_vtable_field_count(inst->__vtable);
 }
 
 /* The i-th declared field's name (borrowed from the vtable), or "" for a hole. */
@@ -171,8 +171,8 @@ FLUTTER_EXPORT const char* colyseus_flutter_field_name_at(intptr_t instance, int
     colyseus_schema_t* inst = (colyseus_schema_t*)instance;
     if (!inst || !inst->__vtable) return "";
 
-    predict_fref_t f;
-    if (!predict_vt_at(inst->__vtable, i, &f)) return "";
+    colyseus_field_ref_t f;
+    if (!colyseus_vtable_field_at(inst->__vtable, i, &f)) return "";
     return f.name ? f.name : "";
 }
 
@@ -181,7 +181,7 @@ FLUTTER_EXPORT double colyseus_flutter_field_get_number(intptr_t instance,
 {
     colyseus_schema_t* inst = (colyseus_schema_t*)instance;
     if (!inst) return 0.0;
-    return predict_scalar_read(inst, (colyseus_field_type_t)type, (size_t)offset, index);
+    return colyseus_schema_read_scalar(inst, (colyseus_field_type_t)type, (size_t)offset, index);
 }
 
 FLUTTER_EXPORT void colyseus_flutter_field_set_number(intptr_t instance,
@@ -189,7 +189,7 @@ FLUTTER_EXPORT void colyseus_flutter_field_set_number(intptr_t instance,
 {
     colyseus_schema_t* inst = (colyseus_schema_t*)instance;
     if (!inst) return;
-    predict_scalar_write(inst, (colyseus_field_type_t)type, (size_t)offset, index, NULL, value);
+    colyseus_schema_write_scalar(inst, (colyseus_field_type_t)type, (size_t)offset, index, NULL, value);
 }
 
 /*

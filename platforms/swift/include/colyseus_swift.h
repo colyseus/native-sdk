@@ -32,6 +32,7 @@
 /* Schema */
 #include <colyseus/schema.h>
 #include <colyseus/schema/types.h>
+#include <colyseus/schema/field_access.h>
 #include <colyseus/schema/decode.h>
 #include <colyseus/schema/encode.h>
 #include <colyseus/schema/decoder.h>
