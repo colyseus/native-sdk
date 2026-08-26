@@ -2,7 +2,7 @@
 
 All notable changes to the Colyseus Swift SDK will be documented in this file.
 
-## 0.18.0
+## 0.18.1
 
 Initial release: Swift over the native C SDK, as a Swift package, for macOS,
 iOS and tvOS.

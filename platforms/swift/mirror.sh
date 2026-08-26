@@ -7,7 +7,7 @@
 # swift-v0.18.0. The mirror gives it both, and spares consumers a 300 MB clone
 # of a repo whose submodules the Swift package never uses.
 #
-# Generated, never edited by hand: every release replaces main wholesale.
+# Generated, never edited by hand: every release rewrites main.
 #
 #   ./mirror.sh 0.18.1 <sha256> [--dry-run]
 #
@@ -112,8 +112,8 @@ The frame loop, the prediction layer and the rest of the API are documented in
 
 > **This repository is generated.** It is published from
 > [colyseus/native-sdk](https://github.com/colyseus/native-sdk)'s
-> \`platforms/swift\` on every release, and \`main\` is replaced wholesale each
-> time — a commit made here would be overwritten.
+> \`platforms/swift\` on every release, and \`main\` is rewritten each time — a
+> commit made here would be overwritten.
 >
 > **Issues and pull requests belong in
 > [colyseus/native-sdk](https://github.com/colyseus/native-sdk/issues).**
@@ -156,8 +156,8 @@ jobs:
               '',
               'This repository is generated from [colyseus/native-sdk]' +
               '(https://github.com/colyseus/native-sdk) on every release, and',
-              '`main` is replaced wholesale each time — a merge here would not',
-              'survive the next one.',
+              '`main` is rewritten each time — a merge here would not survive',
+              'the next one.',
               '',
               'Please reopen this against `platforms/swift` in',
               '[colyseus/native-sdk](https://github.com/colyseus/native-sdk).',

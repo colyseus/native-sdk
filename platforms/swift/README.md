@@ -19,7 +19,7 @@ room.onMessage("score") { payload in
 ## Installing it
 
 ```swift
-.package(url: "https://github.com/colyseus/colyseus-swift", from: "0.18.0")
+.package(url: "https://github.com/colyseus/colyseus-swift", from: "0.18.1")
 ```
 
 [colyseus/colyseus-swift](https://github.com/colyseus/colyseus-swift) is this
