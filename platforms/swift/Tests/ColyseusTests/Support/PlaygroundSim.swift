@@ -20,9 +20,16 @@ enum PlaygroundSim {
     /// the same float.
     static let sqrt1_2 = 0.70710678118654752440
 
+    /// Step from a decoded input instance.
     static func stepEntity(_ entity: SchemaView, _ input: SchemaView, dt: Double) {
-        var ax = input["moveX"]
-        var ay = input["moveY"]
+        stepEntity(entity, moveX: input["moveX"], moveY: input["moveY"], dt: dt)
+    }
+
+    /// Step from a move the caller derived — the bot's, say, which is
+    /// computed rather than received and so has no input instance to read.
+    static func stepEntity(_ entity: SchemaView, moveX: Double, moveY: Double, dt: Double) {
+        var ax = moveX
+        var ay = moveY
         if ax != 0, ay != 0 {
             ax *= sqrt1_2
             ay *= sqrt1_2
@@ -117,4 +124,110 @@ public final class GoalPlayer: SchemaRef {
 public final class GoalState: SchemaRef {
     public var players: MapSchema<GoalPlayer> { mapOf("players") }
     public var denyRate: Double { view["denyRate"] }
+}
+
+// MARK: - lab-hockey
+
+extension PlaygroundSim {
+    static let paddleRadius = 2.2
+    static let puckRadius = 1.4
+    static let puckFriction = 0.985
+    static let puckRestitution = 0.92
+    static let puckPushMin = 14.0
+
+    /// The server-driven paddle's session id.
+    static let botId = "bot"
+
+    /// Where the bot steers. A decision the server owns, but a pure function
+    /// of synced state — which is what makes it predictable, unlike a human.
+    static func botInput(bot: SchemaView, puck: SchemaView, botEnabled: Bool) -> (x: Double, y: Double) {
+        let chase = botEnabled && puck["y"] < arenaHeight / 2
+        let target = chase
+            ? (x: puck["x"], y: puck["y"])
+            : (x: arenaWidth / 2, y: arenaHeight * 0.2)
+
+        let dx = target.x - bot["x"]
+        let dy = target.y - bot["y"]
+        return (
+            x: dx > 1 ? 1 : (dx < -1 ? -1 : 0),
+            y: dy > 1 ? 1 : (dy < -1 ? -1 : 0)
+        )
+    }
+
+    /// Puck free flight: integrate, bounce off the walls, bleed speed.
+    static func stepPuck(_ puck: SchemaView, dt: Double) {
+        var vx = puck["vx"] * puckFriction
+        var vy = puck["vy"] * puckFriction
+        var x = puck["x"] + vx * dt
+        var y = puck["y"] + vy * dt
+
+        let minimum = puckRadius
+        let maxX = arenaWidth - puckRadius
+        let maxY = arenaHeight - puckRadius
+        if x < minimum { x = minimum; vx = abs(vx) * puckRestitution }
+        else if x > maxX { x = maxX; vx = -abs(vx) * puckRestitution }
+        if y < minimum { y = minimum; vy = abs(vy) * puckRestitution }
+        else if y > maxY { y = maxY; vy = -abs(vy) * puckRestitution }
+
+        puck.set("x", to: x)
+        puck.set("y", to: y)
+        puck.set("vx", to: vx)
+        puck.set("vy", to: vy)
+    }
+
+    /// Paddle-puck contact. Order-dependent: both sides must resolve paddles
+    /// in the same order or they compute different worlds.
+    @discardableResult
+    static func collidePaddlePuck(
+        paddle: (x: Double, y: Double, vx: Double, vy: Double),
+        puck: SchemaView
+    ) -> Bool {
+        let dx = puck["x"] - paddle.x
+        let dy = puck["y"] - paddle.y
+        let radius = paddleRadius + puckRadius
+        let squared = dx * dx + dy * dy
+        if squared >= radius * radius { return false }
+
+        let root = squared.squareRoot()
+        let distance = root == 0 ? 1e-6 : root
+        let nx = dx / distance, ny = dy / distance
+
+        var x = paddle.x + nx * radius
+        var y = paddle.y + ny * radius
+        let along = paddle.vx * nx + paddle.vy * ny
+        let speed = along > puckPushMin ? along : puckPushMin
+        var vx = nx * speed + paddle.vx * 0.35
+        var vy = ny * speed + paddle.vy * 0.35
+
+        let minimum = puckRadius
+        let maxX = arenaWidth - puckRadius
+        let maxY = arenaHeight - puckRadius
+        if x < minimum { x = minimum; vx = abs(vx) * puckRestitution }
+        else if x > maxX { x = maxX; vx = -abs(vx) * puckRestitution }
+        if y < minimum { y = minimum; vy = abs(vy) * puckRestitution }
+        else if y > maxY { y = maxY; vy = -abs(vy) * puckRestitution }
+
+        puck.set("x", to: x)
+        puck.set("y", to: y)
+        puck.set("vx", to: vx)
+        puck.set("vy", to: vy)
+        return true
+    }
+
+    static func body(_ view: SchemaView) -> (x: Double, y: Double, vx: Double, vy: Double) {
+        (x: view["x"], y: view["y"], vx: view["vx"], vy: view["vy"])
+    }
+}
+
+public final class Puck: SchemaRef {
+    public var x: Double { view["x"] }
+    public var y: Double { view["y"] }
+    public var vx: Double { view["vx"] }
+    public var vy: Double { view["vy"] }
+}
+
+public final class HockeyState: SchemaRef {
+    public var players: MapSchema<MovePlayer> { mapOf("players") }
+    public var puck: Puck? { refOf("puck") }
+    public var botEnabled: Bool { view.bool("botEnabled") }
 }

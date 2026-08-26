@@ -208,6 +208,14 @@ public extension Colyseus {
             lock.unlock()
         }
 
+        /// As above, plus a companion object the C side only borrows.
+        func adoptChild(_ child: AnyObject, keeping companion: AnyObject) {
+            lock.lock()
+            children.append(child)
+            children.append(companion)
+            lock.unlock()
+        }
+
         func release(_ child: AnyObject) {
             lock.lock()
             children.removeAll { $0 === child }
