@@ -872,6 +872,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
+        .{ .name = "test_schema_reflection", .file = "tests/test_schema_reflection.zig", .description = "Run reflection-vtable decode tests (requires server)" },
         .{ .name = "test_messages", .file = "tests/test_messages.zig", .description = "Run message types tests (requires server)" },
         .{ .name = "test_view_callbacks", .file = "tests/test_view_callbacks.zig", .description = "Run StateView callback tests (requires server)" },
         .{ .name = "test_reconnect", .file = "tests/test_reconnect.zig", .description = "Run automatic reconnection tests (requires server)" },
@@ -884,6 +885,7 @@ pub fn build(b: *std.Build) void {
         if (skip_integration and
             (std.mem.eql(u8, test_file.name, "test_integration") or
                 std.mem.eql(u8, test_file.name, "test_schema_callbacks") or
+                std.mem.eql(u8, test_file.name, "test_schema_reflection") or
                 std.mem.eql(u8, test_file.name, "test_messages") or
                 std.mem.eql(u8, test_file.name, "test_view_callbacks") or
                 std.mem.eql(u8, test_file.name, "test_reconnect") or

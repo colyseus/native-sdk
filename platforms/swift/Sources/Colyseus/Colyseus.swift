@@ -34,8 +34,13 @@ public enum Colyseus {
     /// }
     /// ```
     public static func pump() {
-        // Order is load-bearing: frames must be decoded before the events they
-        // produce are drained, or a listener sees last frame's state.
+        // Serialized because the inbound queue pops under its own lock but
+        // DELIVERS outside it: two pumps at once would decode on two threads,
+        // which is the thing serialized inbound exists to prevent. Waiting on
+        // a join pumps too, and that can overlap an app's frame loop.
+        runtime.pumpLock.lock()
+        defer { runtime.pumpLock.unlock() }
+
         colyseus_netdelay_pump()
         colyseus_reconnect_poll()
     }
@@ -78,6 +83,7 @@ public enum Colyseus {
 
 /// Process-wide SDK state. One instance, held by ``Colyseus``.
 final class Runtime: @unchecked Sendable {
+    let pumpLock = NSLock()
     private let lock = NSLock()
     private var timer: DispatchSourceTimer?
     private var _callbackQueue: DispatchQueue = .main
