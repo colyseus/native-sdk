@@ -100,6 +100,7 @@ final class Runtime: @unchecked Sendable {
     private var _autoPump = true
     private var _autoPumpInterval: TimeInterval = 1.0 / 60.0
     private var _serializedInbound = true
+    private var _defaultRequestTimeout: TimeInterval = 10
 
     var callbackQueue: DispatchQueue {
         get { lock.withLock { _callbackQueue } }
@@ -128,6 +129,11 @@ final class Runtime: @unchecked Sendable {
     var serializedInbound: Bool {
         get { lock.withLock { _serializedInbound } }
         set { lock.withLock { _serializedInbound = newValue } }
+    }
+
+    var defaultRequestTimeout: TimeInterval {
+        get { lock.withLock { _defaultRequestTimeout } }
+        set { lock.withLock { _defaultRequestTimeout = max(newValue, 0) } }
     }
 
     /// Run `body` on the callback queue, or inline when already on it.

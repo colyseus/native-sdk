@@ -106,13 +106,38 @@ typedef void (*colyseus_room_on_response_fn)(bool ok, colyseus_message_reader_t*
     const char* error, void* userdata);
 
 /*
- * The same outcome model with the reply left as raw msgpack, for bindings that
- * decode in their own language — so a reply and an onMessage payload arrive as
- * one value type rather than two. `data` is NULL/0 for an empty reply, and is
- * only valid for the duration of the callback.
+ * How a request ended. A language binding switches on this rather than reading
+ * the outcome out of prose, so all of them agree on which failures a caller can
+ * branch on:
+ *
+ *   OK        the handler's return value, in `data` (empty when it returned
+ *             nothing — which is NOT a msgpack nil, though a binding may
+ *             surface both as its own null)
+ *   REJECTED  a deliberate `ctx.reject(reason)`; `data` is the reason the
+ *             server authored, to be handed on as-is rather than stringified
+ *   FAULTED   the handler threw, or the room had none registered; `data` is a
+ *             sanitized { name, message, code? }, never the raw reason — so a
+ *             crash cannot be mistaken for a rejection
+ *   CLOSED    the connection went away first; no `data`
  */
-typedef void (*colyseus_room_on_response_encoded_fn)(bool ok, const uint8_t* data, size_t length,
-    const char* error, void* userdata);
+typedef enum {
+    COLYSEUS_REQUEST_OK = 0,
+    COLYSEUS_REQUEST_REJECTED = 1,
+    COLYSEUS_REQUEST_FAULTED = 2,
+    COLYSEUS_REQUEST_CLOSED = 3
+} colyseus_request_outcome_t;
+
+/*
+ * The reply left as raw msgpack, for bindings that decode in their own
+ * language — so a reply and an onMessage payload arrive as one value type
+ * rather than two.
+ *
+ * `data` is NULL/0 when there is no payload, and is only valid for the
+ * duration of the callback. `reason` is the close reason for CLOSED and NULL
+ * otherwise; `outcome` is what to branch on.
+ */
+typedef void (*colyseus_room_on_response_encoded_fn)(colyseus_request_outcome_t outcome,
+    const uint8_t* data, size_t length, const char* reason, void* userdata);
 
 /* Reply to a colyseus_room_ping() — round-trip time in whole milliseconds. */
 typedef void (*colyseus_room_on_ping_fn)(int rtt_ms, void* userdata);
@@ -368,10 +393,15 @@ void colyseus_room_send_int_bytes(colyseus_room_t* room, int type, const uint8_t
  * Send a message and await the server's reply — the value the server
  * returns from its matching onMessage handler (ROOM_REQUEST/ROOM_RESPONSE).
  *
- * Returns the request id. The callback fires exactly once: on reply, or
- * with an error when the connection closes first. The C core has no timer
- * runtime, so there is NO automatic timeout — platforms wanting one should
- * schedule colyseus_room_cancel_request() with their own timer.
+ * Returns the request id, or 0 if nothing was sent. The callback fires exactly once: on reply, or with
+ * an error when the connection closes first — EXCEPT after
+ * colyseus_room_cancel_request(), which drops the entry silently and leaves
+ * any userdata the caller retained for it to release.
+ *
+ * There is no automatic timeout: nothing in the core is driving a deadline for
+ * pending requests yet, so a platform wanting one schedules
+ * colyseus_room_cancel_request() itself. Bindings settle on 10s, matching the
+ * JS SDK's Room.defaultRequestTimeout.
  */
 uint32_t colyseus_room_request(colyseus_room_t* room, const char* type, colyseus_message_t* payload,
     colyseus_room_on_response_fn callback, void* userdata);

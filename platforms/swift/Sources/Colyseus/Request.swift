@@ -5,9 +5,12 @@ public extension Colyseus {
     /// How long ``Colyseus/Room/request(_:_:timeout:)`` waits for a reply
     /// before giving up.
     ///
-    /// The C core has no timer runtime of its own, so the wait lives here.
-    /// Override it per call with the `timeout:` argument.
-    nonisolated(unsafe) static var defaultRequestTimeout: TimeInterval = 10
+    /// Nothing in the core drives a deadline for pending requests yet, so the
+    /// wait lives here. Override it per call with the `timeout:` argument.
+    static var defaultRequestTimeout: TimeInterval {
+        get { runtime.defaultRequestTimeout }
+        set { runtime.defaultRequestTimeout = newValue }
+    }
 }
 
 public extension Colyseus.Room {
@@ -25,20 +28,20 @@ public extension Colyseus.Room {
     /// back in time, and ``Colyseus/Error/roomClosed(code:reason:)`` when the
     /// connection went away first.
     ///
-    /// A handler with nothing to return answers `.null`.
+    /// A handler with nothing to return answers `.null`, the same as one that
+    /// returns nil — the wire keeps those apart, but a caller reading a value
+    /// cannot act on the difference.
     @discardableResult
     func request(
         _ type: String,
         _ payload: MessagePackValue = .null,
         timeout: TimeInterval = Colyseus.defaultRequestTimeout
     ) async throws -> MessagePackValue {
-        let pending = PendingRequest()
+        let pending = PendingRequest(room: raw, type: type)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                pending.arm(continuation)
-
+                let userdata = pending.arm(continuation)
                 let encoded = payload == .null ? Data() : MessagePack.encode(payload)
-                let userdata = pending.retainForCallback()
                 let id: UInt32 = encoded.withUnsafeBytes { buffer in
                     type.withCString { typePointer in
                         colyseus_room_request_encoded_reply(
@@ -48,150 +51,128 @@ public extension Colyseus.Room {
                         )
                     }
                 }
-
-                pending.armTimeout(timeout, room: raw, id: id, type: type)
+                pending.started(id: id, timeout: timeout)
             }
         } onCancel: {
-            pending.cancel()
+            pending.settle(.failure(CancellationError()))
         }
     }
 }
 
-/// One in-flight request: resumes its continuation exactly once, whichever of
-/// the reply, the timeout or a task cancellation gets there first, and drops
-/// the retain the C side holds at the same moment.
+/// One in-flight request. Whichever of the reply, the timeout or a task
+/// cancellation gets there first claims it, and that claim is what resumes the
+/// continuation, disarms the timer and drops the retain the C side holds —
+/// each exactly once.
 final class PendingRequest: @unchecked Sendable {
     private let lock = NSLock()
+    private let room: UnsafeMutablePointer<colyseus_room_t>
+    private let type: String
     private var continuation: CheckedContinuation<MessagePackValue, Swift.Error>?
-    private var selfRef: Unmanaged<PendingRequest>?
+    private var userdata: UnsafeMutableRawPointer?
     private var timer: DispatchSourceTimer?
-    private var room: UnsafeMutablePointer<colyseus_room_t>?
     private var requestId: UInt32 = 0
-    private var settled = false
 
-    func arm(_ continuation: CheckedContinuation<MessagePackValue, Swift.Error>) {
+    init(room: UnsafeMutablePointer<colyseus_room_t>, type: String) {
+        self.room = room
+        self.type = type
+    }
+
+    /// Take the continuation and the retain the C callback reads us back
+    /// through.
+    func arm(_ continuation: CheckedContinuation<MessagePackValue, Swift.Error>) -> UnsafeMutableRawPointer {
         lock.lock()
         defer { lock.unlock() }
         self.continuation = continuation
+        let pointer = retainedPointer(self)
+        userdata = pointer
+        return pointer
     }
 
-    func retainForCallback() -> UnsafeMutableRawPointer {
+    /// Record the id unconditionally — a request with no timeout can still be
+    /// dropped by a cancellation, and dropping it is what keeps the core from
+    /// calling back into a released object.
+    func started(id: UInt32, timeout: TimeInterval) {
         lock.lock()
-        defer { lock.unlock() }
-        let reference = Unmanaged.passRetained(self)
-        selfRef = reference
-        return reference.toOpaque()
-    }
-
-    func armTimeout(
-        _ seconds: TimeInterval,
-        room: UnsafeMutablePointer<colyseus_room_t>,
-        id: UInt32,
-        type: String
-    ) {
-        guard seconds > 0 else { return }
-        lock.lock()
-        self.room = room
-        self.requestId = id
-        if settled { lock.unlock(); return }
+        requestId = id
+        guard userdata != nil, timeout > 0 else { lock.unlock(); return }
         let timer = DispatchSource.makeTimerSource(queue: Colyseus.callbackQueue)
-        timer.schedule(deadline: .now() + seconds)
-        timer.setEventHandler { [weak self] in
-            self?.settle(.failure(Colyseus.Error.requestTimedOut(type: type, seconds: seconds)))
+        timer.schedule(deadline: .now() + timeout)
+        timer.setEventHandler { [weak self, type] in
+            self?.settle(.failure(Colyseus.Error.requestTimedOut(type: type, seconds: timeout)))
         }
         self.timer = timer
         lock.unlock()
         timer.resume()
     }
 
-    func cancel() {
-        settle(.failure(CancellationError()))
-    }
-
-    /// Resume once. The core is single-threaded around its pending table, so
-    /// dropping a request takes the same lock `pump()` delivers replies under —
-    /// otherwise a timeout could free the entry mid-callback.
+    /// Settle from outside the core's callback — a timeout or a cancellation.
+    ///
+    /// Takes the pump lock so the entry is not dropped while a reply is being
+    /// delivered through `pump()`. That covers the common race but not all of
+    /// it: the core's pending table has no lock of its own, and a close
+    /// rejects from the transport thread.
     func settle(_ result: Result<MessagePackValue, Swift.Error>) {
         Colyseus.runtime.pumpLock.lock()
-        lock.lock()
-        guard !settled, let continuation else {
-            lock.unlock()
-            Colyseus.runtime.pumpLock.unlock()
-            return
-        }
-        settled = true
-        self.continuation = nil
-        let reference = selfRef
-        selfRef = nil
-        let timer = self.timer
-        self.timer = nil
-        // Only a request still on the wire needs dropping; a delivered reply
-        // has already left the core's table.
-        if case .failure = result, let room, requestId != 0 {
-            colyseus_room_cancel_request(room, requestId)
-        }
-        lock.unlock()
-        Colyseus.runtime.pumpLock.unlock()
-
-        timer?.cancel()
-        continuation.resume(with: result)
-        reference?.release()
+        defer { Colyseus.runtime.pumpLock.unlock() }
+        claim(result) { room, id in colyseus_room_cancel_request(room, id) }
     }
 
-    /// Called from inside `pump()`, which already holds `pumpLock`.
+    /// Settle from the C callback, which has already taken the entry out of
+    /// the core's table — cancelling here would hash a spent id.
     func settleFromCallback(_ result: Result<MessagePackValue, Swift.Error>) {
+        claim(result, drop: nil)
+    }
+
+    /// The claim: whoever nils `userdata` under the lock owns the tidy-up.
+    private func claim(
+        _ result: Result<MessagePackValue, Swift.Error>,
+        drop: ((UnsafeMutablePointer<colyseus_room_t>, UInt32) -> Void)?
+    ) {
         lock.lock()
-        guard !settled, let continuation else { lock.unlock(); return }
-        settled = true
+        guard let pointer = userdata, let continuation else { lock.unlock(); return }
+        userdata = nil
         self.continuation = nil
-        let reference = selfRef
-        selfRef = nil
         let timer = self.timer
         self.timer = nil
-        // The entry is already gone from the core's table — cancelling here
-        // would hash a freed id.
-        requestId = 0
+        if let drop, requestId != 0 { drop(room, requestId) }
         lock.unlock()
 
+        // Outside the lock: resuming runs the caller's code, and the release
+        // can be the last one holding us.
         timer?.cancel()
-        continuation.resume(with: result)
-        reference?.release()
+        Colyseus.runtime.deliver { continuation.resume(with: result) }
+        releasePointer(pointer, as: PendingRequest.self)
     }
 }
 
 private let requestReplyTrampoline: @convention(c) (
-    Bool, UnsafePointer<UInt8>?, Int, UnsafePointer<CChar>?, UnsafeMutableRawPointer?
-) -> Void = { ok, data, length, error, userdata in
-    guard let userdata else { return }
-    let pending = Unmanaged<PendingRequest>.fromOpaque(userdata).takeUnretainedValue()
+    colyseus_request_outcome_t, UnsafePointer<UInt8>?, Int, UnsafePointer<CChar>?, UnsafeMutableRawPointer?
+) -> Void = { outcome, data, length, reason, userdata in
+    guard let pending = borrowObject(userdata, as: PendingRequest.self) else { return }
 
-    // An empty reply is not a msgpack nil on the wire, but a caller reading a
-    // value cannot act on the difference — both arrive as `.null`.
-    let reply: MessagePackValue = (data != nil && length > 0)
-        ? ((try? MessagePack.decode(Data(bytes: data!, count: length))) ?? .null)
-        : .null
-
-    if ok {
-        pending.settleFromCallback(.success(reply))
-        return
+    var reply = MessagePackValue.null
+    if let data, length > 0 {
+        reply = (try? MessagePack.decode(Data(bytes: data, count: length))) ?? .null
     }
 
-    // `error` set means a FAULT — the handler threw, or none was registered.
-    // Without it the server deliberately rejected, and `reply` is the reason
-    // it authored, which the caller gets verbatim rather than stringified.
-    if error == nil {
-        pending.settleFromCallback(.failure(Colyseus.Error.requestRejected(reason: reply)))
-        return
-    }
-
-    if let map = reply.map {
-        pending.settleFromCallback(.failure(Colyseus.Error.requestFailed(
+    let result: Result<MessagePackValue, Swift.Error>
+    switch outcome {
+    case COLYSEUS_REQUEST_OK:
+        result = .success(reply)
+    case COLYSEUS_REQUEST_REJECTED:
+        // The reason the server authored, handed on whole rather than
+        // stringified, so a caller can branch on it.
+        result = .failure(Colyseus.Error.requestRejected(reason: reply))
+    case COLYSEUS_REQUEST_CLOSED:
+        result = .failure(Colyseus.Error.roomClosed(
+            code: 0, reason: String(nullableCString: reason) ?? "connection closed"))
+    default:
+        // FAULTED: a sanitized { name, message, code }, never the raw reason.
+        let map = reply.map ?? [:]
+        result = .failure(Colyseus.Error.requestFailed(
             name: map["name"]?.string ?? "Error",
-            message: map["message"]?.string ?? String(cString: error!),
-            code: map["code"]
-        )))
-    } else {
-        pending.settleFromCallback(.failure(Colyseus.Error.roomClosed(
-            code: 0, reason: String(cString: error!))))
+            message: map["message"]?.string ?? "request failed",
+            code: map["code"]))
     }
+    pending.settleFromCallback(result)
 }

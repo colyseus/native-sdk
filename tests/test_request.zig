@@ -23,8 +23,7 @@ const TEST_PORT = "2567";
 /// One request's answer, captured off the transport thread.
 const Reply = struct {
     replied: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    ok: bool = false,
-    faulted: bool = false,
+    outcome: c.colyseus_request_outcome_t = c.COLYSEUS_REQUEST_OK,
     bytes: [256]u8 = undefined,
     len: usize = 0,
 
@@ -44,10 +43,10 @@ const Reply = struct {
     }
 };
 
-fn onReply(ok: bool, data: [*c]const u8, length: usize, err: [*c]const u8, userdata: ?*anyopaque) callconv(.c) void {
+fn onReply(outcome: c.colyseus_request_outcome_t, data: [*c]const u8, length: usize, reason: [*c]const u8, userdata: ?*anyopaque) callconv(.c) void {
+    _ = reason;
     const reply: *Reply = @ptrCast(@alignCast(userdata.?));
-    reply.ok = ok;
-    reply.faulted = (err != null);
+    reply.outcome = outcome;
     reply.len = 0;
     if (data != null and length > 0 and length <= reply.bytes.len) {
         @memcpy(reply.bytes[0..length], data[0..length]);
@@ -84,12 +83,20 @@ const Session = struct {
     settings: ?*c.colyseus_settings_t,
     room: [*c]c.colyseus_room_t,
 
-    fn close(self: *Session) void {
+    fn leave(self: *Session) void {
         c.colyseus_room_leave(self.room, true);
+    }
+
+    fn free(self: *Session) void {
         std.Thread.sleep(150 * std.time.ns_per_ms);
         c.colyseus_room_free(self.room);
         c.colyseus_client_free(self.client);
         c.colyseus_settings_free(self.settings);
+    }
+
+    fn close(self: *Session) void {
+        self.leave();
+        self.free();
     }
 };
 
@@ -129,8 +136,7 @@ test "request: OK carries the handler's return value" {
     _ = c.colyseus_room_request_encoded_reply(session.room, "request_sum", &payload, payload.len, onReply, &reply);
 
     try testing.expect(reply.wait(5));
-    try testing.expect(reply.ok);
-    try testing.expect(!reply.faulted);
+    try testing.expectEqual(@as(c.colyseus_request_outcome_t, c.COLYSEUS_REQUEST_OK), reply.outcome);
     try testing.expectEqualSlices(u8, &[_]u8{0x03}, reply.bytes[0..reply.len]);
 }
 
@@ -149,7 +155,7 @@ test "request: the reply is raw msgpack, so nesting survives" {
     _ = c.colyseus_room_request_encoded_reply(session.room, "request_echo", &payload, payload.len, onReply, &reply);
 
     try testing.expect(reply.wait(5));
-    try testing.expect(reply.ok);
+    try testing.expectEqual(@as(c.colyseus_request_outcome_t, c.COLYSEUS_REQUEST_OK), reply.outcome);
 
     const r = reply.reader() orelse return error.EmptyReply;
     defer c.colyseus_message_reader_free(r);
@@ -173,9 +179,9 @@ test "request: a side-effect-only handler replies OK with nothing" {
     _ = c.colyseus_room_request_encoded_reply(session.room, "request_ack", null, 0, onReply, &reply);
 
     try testing.expect(reply.wait(5));
-    try testing.expect(reply.ok);
-    // Empty, not a msgpack nil: a binding must not report a null reply value
-    // where the server sent no value at all.
+    try testing.expectEqual(@as(c.colyseus_request_outcome_t, c.COLYSEUS_REQUEST_OK), reply.outcome);
+    // Empty on the wire, not a msgpack nil — the core keeps them apart even
+    // though a binding may choose to surface both as its own null.
     try testing.expectEqual(@as(usize, 0), reply.len);
 }
 
@@ -187,11 +193,10 @@ test "request: a rejection is not a fault, and keeps the authored reason" {
     _ = c.colyseus_room_request_encoded_reply(session.room, "request_deny", null, 0, onReply, &reply);
 
     try testing.expect(reply.wait(5));
-    try testing.expect(!reply.ok);
     // The distinction the whole outcome model exists for: a deliberate reject
-    // is NOT faulted, so a binding can surface the reason verbatim instead of
+    // is not a fault, so a binding can surface the reason verbatim instead of
     // an error string.
-    try testing.expect(!reply.faulted);
+    try testing.expectEqual(@as(c.colyseus_request_outcome_t, c.COLYSEUS_REQUEST_REJECTED), reply.outcome);
 
     const r = reply.reader() orelse return error.NoReason;
     defer c.colyseus_message_reader_free(r);
@@ -208,8 +213,7 @@ test "request: a thrown handler faults, and cannot pose as a rejection" {
     _ = c.colyseus_room_request_encoded_reply(session.room, "request_boom", null, 0, onReply, &reply);
 
     try testing.expect(reply.wait(5));
-    try testing.expect(!reply.ok);
-    try testing.expect(reply.faulted);
+    try testing.expectEqual(@as(c.colyseus_request_outcome_t, c.COLYSEUS_REQUEST_FAULTED), reply.outcome);
 
     // Sanitized { name, message } rather than a raw reason.
     const r = reply.reader() orelse return error.NoErrorPayload;
@@ -230,8 +234,21 @@ test "request: an unregistered type faults rather than hanging" {
     // The failure this guards is a caller waiting out its whole timeout for a
     // reply the server was never going to send.
     try testing.expect(reply.wait(5));
-    try testing.expect(!reply.ok);
-    try testing.expect(reply.faulted);
+    try testing.expectEqual(@as(c.colyseus_request_outcome_t, c.COLYSEUS_REQUEST_FAULTED), reply.outcome);
+}
+
+test "request: an id is never 0, so a binding can tell 'sent' from 'not sent'" {
+    var session = try connect();
+    defer session.close();
+
+    // A binding cancels by id on the timeout path; if the first request in a
+    // room minted 0 — the same value every entry point returns for "not sent" —
+    // it would skip the cancel and leave the core calling back into an object
+    // it had already released.
+    var reply = Reply{};
+    const id = c.colyseus_room_request_encoded_reply(session.room, "request_ack", null, 0, onReply, &reply);
+    try testing.expect(id != 0);
+    try testing.expect(reply.wait(5));
 }
 
 test "request: cancelling drops the reply, which is what a timeout is built on" {
@@ -248,7 +265,8 @@ test "request: cancelling drops the reply, which is what a timeout is built on" 
 }
 
 test "request: a close answers everything still in flight" {
-    const session = try connect();
+    var session = try connect();
+    defer session.free();
 
     const payload = [_]u8{ 0x81, 0xa2, 'm', 's', 0xcd, 0x13, 0x88 }; // {"ms":5000}
     var reply = Reply{};
@@ -256,13 +274,7 @@ test "request: a close answers everything still in flight" {
 
     // Leaving must not strand the caller waiting for a reply that can no
     // longer arrive.
-    c.colyseus_room_leave(session.room, true);
+    session.leave();
     try testing.expect(reply.wait(5));
-    try testing.expect(!reply.ok);
-    try testing.expect(reply.faulted);
-
-    std.Thread.sleep(150 * std.time.ns_per_ms);
-    c.colyseus_room_free(session.room);
-    c.colyseus_client_free(session.client);
-    c.colyseus_settings_free(session.settings);
+    try testing.expectEqual(@as(c.colyseus_request_outcome_t, c.COLYSEUS_REQUEST_CLOSED), reply.outcome);
 }
