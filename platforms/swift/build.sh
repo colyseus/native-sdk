@@ -93,14 +93,6 @@ echo "=== Assembling xcframework ==="
 # tvOS device: single arm64
 # tvOS simulator: single arm64-sim
 
-# Merge all static libs in a slice's lib/ dir into one archive, then lipo.
-merge_slice_libs() {
-  local SLICE_DIR="$1"
-  local OUT_LIB="$2"
-  local ALL_LIBS=("$SLICE_DIR"/lib/*.a)
-  libtool -static -o "$OUT_LIB" "${ALL_LIBS[@]}"
-}
-
 lipo_or_copy() {
   local OUT_LIB="$1"; shift
   local INPUTS=("$@")
@@ -111,16 +103,11 @@ lipo_or_copy() {
   fi
 }
 
-# Copy headers from any slice (they're identical).
-# zig-out installs colyseus headers into include/colyseus/; we copy the
-# entire include tree plus our umbrella header and module map.
-HEADERS_SRC="$ZIG_OUT/macos-arm64/include"
+# Headers are identical across slices, and build.zig already staged the
+# umbrella header and module map alongside them.
 HEADERS_DST="$BUILD_DIR/Headers"
 rm -rf "$HEADERS_DST"
-cp -R "$HEADERS_SRC" "$HEADERS_DST"
-# Umbrella header and module map must live at the top of the Headers dir.
-cp "$SCRIPT_DIR/include/colyseus_swift.h" "$HEADERS_DST/"
-cp "$SCRIPT_DIR/include/module.modulemap" "$HEADERS_DST/"
+cp -R "$ZIG_OUT/macos-arm64/include" "$HEADERS_DST"
 
 build_variant() {
   local VARIANT_NAME="$1"; shift
@@ -129,18 +116,14 @@ build_variant() {
   mkdir -p "$LIB_DIR"
   local OUT_LIB="$LIB_DIR/libcolyseus.a"
 
-  # Merge all sub-libs per slice into one archive, then lipo across arches.
-  local MERGED_LIBS=()
-  local idx=0
+  # build.zig already merged each slice's whole static closure — core, wslay,
+  # mbedTLS and the Zig objects — into one archive. Only lipo is left.
+  local SLICE_LIBS=()
   for SLICE_DIR in "${SLICE_DIRS[@]}"; do
-    local MERGED="$LIB_DIR/merged_${idx}.a"
-    merge_slice_libs "$SLICE_DIR" "$MERGED"
-    MERGED_LIBS+=("$MERGED")
-    idx=$((idx + 1))
+    SLICE_LIBS+=("$SLICE_DIR/lib/libcolyseus.a")
   done
 
-  lipo_or_copy "$OUT_LIB" "${MERGED_LIBS[@]}"
-  rm -f "$LIB_DIR"/merged_*.a
+  lipo_or_copy "$OUT_LIB" "${SLICE_LIBS[@]}"
 
   # xcodebuild -create-xcframework expects the PARENT directory containing
   # the headers — it will create the Headers/ subdirectory itself.
