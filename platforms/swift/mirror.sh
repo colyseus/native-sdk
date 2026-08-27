@@ -119,7 +119,7 @@ The frame loop, the prediction layer and the rest of the API are documented in
 > [colyseus/native-sdk](https://github.com/colyseus/native-sdk/issues).**
 EOF
 
-mkdir -p "$STAGE/.github/workflows"
+mkdir -p "$STAGE/.github"
 cat > "$STAGE/.github/PULL_REQUEST_TEMPLATE.md" <<'EOF'
 > This repository is a generated mirror — `main` is replaced on every release,
 > so a change merged here would not survive the next one.
@@ -129,46 +129,6 @@ cat > "$STAGE/.github/PULL_REQUEST_TEMPLATE.md" <<'EOF'
 > `platforms/swift`. Thank you!
 EOF
 
-cat > "$STAGE/.github/workflows/redirect-pull-requests.yml" <<'EOF'
-# GitHub cannot switch pull requests off on a public repository, so this says
-# what the template says, on the way out.
-name: Redirect pull requests
-
-on:
-  pull_request_target:
-    types: [opened, reopened]
-
-# A pull-request conversation comment goes through the issues API, which needs
-# its own scope even on a repository with issues switched off.
-permissions:
-  pull-requests: write
-  issues: write
-
-jobs:
-  redirect:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            const body = [
-              'Thanks for the patch!',
-              '',
-              'This repository is generated from [colyseus/native-sdk]' +
-              '(https://github.com/colyseus/native-sdk) on every release, and',
-              '`main` is rewritten each time — a merge here would not survive',
-              'the next one.',
-              '',
-              'Please reopen this against `platforms/swift` in',
-              '[colyseus/native-sdk](https://github.com/colyseus/native-sdk).',
-            ].join('\n')
-            await github.rest.issues.createComment({
-              ...context.repo, issue_number: context.issue.number, body,
-            })
-            await github.rest.pulls.update({
-              ...context.repo, pull_number: context.issue.number, state: 'closed',
-            })
-EOF
 
 echo "staged $(find "$STAGE" -type f | wc -l | tr -d ' ') files in $STAGE"
 echo "  archive:  $ARCHIVE"
@@ -181,14 +141,30 @@ if [ "$DRY_RUN" = "--dry-run" ]; then
   exit 0
 fi
 
-cd "$STAGE"
-git init -q -b main
+# Update the mirror in place rather than force-pushing a fresh history: it
+# keeps a readable log across versions, and it leaves the repository's own
+# furniture — .github/workflows above all — untouched. GitHub refuses a push
+# that creates or updates a workflow unless the token carries `workflow`
+# scope, which a release token has no other reason to hold.
+WORK="$(mktemp -d)"
+trap 'rm -rf "$STAGE" "$WORK"' EXIT
+git clone -q --depth 1 "$REMOTE" "$WORK"
+
+cd "$WORK"
+rm -rf Sources Tests Package.swift README.md CHANGELOG.md LICENSE .gitignore \
+       .github/PULL_REQUEST_TEMPLATE.md
+cp -R "$STAGE/." .
+
 git add -A
-git -c user.name="colyseus-bot" -c user.email="bot@colyseus.io" \
-  commit -q -m "Colyseus Swift SDK ${VERSION}
+if git diff --cached --quiet; then
+  echo "mirror already matches ${VERSION}"
+else
+  git -c user.name="colyseus-bot" -c user.email="bot@colyseus.io" \
+    commit -q -m "Colyseus Swift SDK ${VERSION}
 
 Generated from colyseus/native-sdk platforms/swift."
-git tag "v${VERSION}"
-git push -q --force "$REMOTE" main
+fi
+git tag -f "v${VERSION}"
+git push -q "$REMOTE" HEAD:main
 git push -q --force "$REMOTE" "v${VERSION}"
 echo "pushed main and v${VERSION} to $REMOTE"
