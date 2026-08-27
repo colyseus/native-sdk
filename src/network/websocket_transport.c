@@ -263,16 +263,13 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
 
     data->running = false;
 
-    if (data->wslay_ctx && data->state == COLYSEUS_WS_CONNECTED) {
-        wslay_event_queue_close(data->wslay_ctx, code, (const uint8_t*)reason, reason ? strlen(reason) : 0);
-        wslay_event_send(data->wslay_ctx);
-    }
-
-    ws_tls_cleanup(data);
-    ws_socket_close(data);
-    ws_cleanup_wslay(data);
-
-    /* Wait for thread */
+    /* Join BEFORE touching anything the loop owns. `running` is only read at
+     * the top of an iteration, so the thread can be inside mbedtls_ssl_read
+     * right now — and the cleanup below frees the context it is reading
+     * through. That is the teardown crash: the loop takes a read error, tries
+     * to send an alert, and mbedtls_ssl_flush_output faults on an out_buf
+     * that was freed under it. This transport has no lock; the join is the
+     * handoff, so nothing may be released ahead of it. */
 #ifdef _WIN32
     if (data->tick_thread) {
         WaitForSingleObject(data->tick_thread, INFINITE);
@@ -287,6 +284,22 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
         data->tick_thread = NULL;
     }
 #endif
+
+    /* A read error makes the loop close on its own way out, which it has now
+     * finished — including on_close. Nothing left to tear down. */
+    if (data->state == COLYSEUS_WS_DISCONNECTED) {
+        return;
+    }
+
+    /* Sole owner from here. */
+    if (data->wslay_ctx && data->state == COLYSEUS_WS_CONNECTED) {
+        wslay_event_queue_close(data->wslay_ctx, code, (const uint8_t*)reason, reason ? strlen(reason) : 0);
+        wslay_event_send(data->wslay_ctx);
+    }
+
+    ws_tls_cleanup(data);
+    ws_socket_close(data);
+    ws_cleanup_wslay(data);
 
     data->state = COLYSEUS_WS_DISCONNECTED;
 
