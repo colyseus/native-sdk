@@ -159,3 +159,53 @@ test "tls: tls_skip_verification opens without any trusted CA" {
     c.colyseus_websocket_connect_with_settings(transport, URL, settings);
     try testing.expect(pollUntil(opened, 8 * std.time.ns_per_s));
 }
+
+// ─── teardown ───────────────────────────────────────────────────────────────
+
+// Closing from another thread while the tick thread is inside mbedtls_ssl_read.
+//
+// ws_close_impl used to signal the loop, free the TLS context, the socket and
+// the wslay context, and join LAST. `running` is only read at the top of an
+// iteration, so a read already in progress carried on through a context that
+// had just been freed: it took the error, tried to send an alert, and faulted
+// in mbedtls_ssl_flush_output. There is no lock in the transport — the join is
+// the handoff.
+//
+// Hitting that window needs the reader actually busy. A quiet socket leaves
+// the tick thread asleep 10 ms out of every 10 ms, so a teardown almost always
+// lands between reads and proves nothing. Megabytes of echo keep it inside
+// mbedtls_ssl_read instead, and the teardown goes in as the first bytes land.
+test "tls: destroy while the reader is busy joins before it frees" {
+    const ca = try loadPem("tests/tls/ca.pem");
+    defer testing.allocator.free(ca);
+
+    const payload = try testing.allocator.alloc(u8, 16 * 1024);
+    defer testing.allocator.free(payload);
+    @memset(payload, 'x');
+
+    var round: usize = 0;
+    while (round < 20) : (round += 1) {
+        reset();
+        const settings = makeSettings(ca, false);
+        defer c.colyseus_settings_free(settings);
+
+        var ev = makeEvents();
+        const transport = c.colyseus_websocket_transport_create(&ev);
+        c.colyseus_websocket_connect_with_settings(transport, URL, settings);
+        if (!pollUntil(opened, 8 * std.time.ns_per_s)) {
+            c.colyseus_transport_destroy(transport);
+            return error.SkipZigTest;
+        }
+
+        // Queued, not sent: the tick thread flushes, so it is saturated in
+        // both directions by the time the first echo comes back.
+        var i: usize = 0;
+        while (i < 128) : (i += 1) {
+            c.colyseus_transport_send(transport, payload.ptr, payload.len);
+        }
+
+        // Tear down mid-stream — the reader is inside the TLS read right now.
+        _ = pollUntil(echoed, 5 * std.time.ns_per_s);
+        c.colyseus_transport_destroy(transport);
+    }
+}
