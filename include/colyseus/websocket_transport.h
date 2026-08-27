@@ -76,6 +76,18 @@ extern "C" {
         char* pending_close_reason;  /* Close reason for deferred close (must free) */
         bool use_tls;                /* True for wss:// */
         bool tls_skip_verify;        /* Skip certificate verification */
+
+        /* Outbound messages wait here until the tick thread moves them into
+         * wslay, whose context is not thread-safe: the tick thread is its only
+         * caller. The lock guards these two pointers and nothing else, so a
+         * send from inside on_message cannot deadlock. */
+        struct colyseus_ws_outbox_msg* outbox_head;
+        struct colyseus_ws_outbox_msg* outbox_tail;
+#ifdef _WIN32
+        CRITICAL_SECTION outbox_lock;
+#else
+        pthread_mutex_t outbox_lock;
+#endif
     } colyseus_ws_transport_data_t;
 #endif /* !__EMSCRIPTEN__ */
 

@@ -33,6 +33,24 @@
     #define THREAD_CALL
 #endif
 
+#ifdef _WIN32
+    #define ws_lock_init(l)    InitializeCriticalSection(l)
+    #define ws_lock_destroy(l) DeleteCriticalSection(l)
+    #define ws_lock(l)         EnterCriticalSection(l)
+    #define ws_unlock(l)       LeaveCriticalSection(l)
+#else
+    #define ws_lock_init(l)    pthread_mutex_init((l), NULL)
+    #define ws_lock_destroy(l) pthread_mutex_destroy(l)
+    #define ws_lock(l)         pthread_mutex_lock(l)
+    #define ws_unlock(l)       pthread_mutex_unlock(l)
+#endif
+
+struct colyseus_ws_outbox_msg {
+    struct colyseus_ws_outbox_msg* next;
+    size_t length;
+    uint8_t data[];
+};
+
 /* Runtime-gated diagnostics: set COLYSEUS_WS_DEBUG=1 in the environment to enable.
  * This keeps pre-push hooks / non-CI runs quiet while still letting Windows CI
  * emit detailed frame-level tracing. */
@@ -90,6 +108,8 @@ static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, 
 static ssize_t ws_socket_send(colyseus_ws_transport_data_t* data, const uint8_t* buf, size_t len, int* would_block);
 static void ws_socket_close(colyseus_ws_transport_data_t* data);
 static void ws_cleanup_wslay(colyseus_ws_transport_data_t* data);
+static void ws_outbox_flush(colyseus_ws_transport_data_t* data);
+static void ws_outbox_clear(colyseus_ws_transport_data_t* data);
 
 /* wslay callbacks */
 static void ws_on_msg_recv_callback(wslay_event_context_ptr ctx, const struct wslay_event_on_msg_recv_arg* arg, void* user_data);
@@ -139,6 +159,7 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
     data->tls_ctx = NULL;
     data->ca_pem_data = NULL;
     data->ca_pem_len = 0;
+    ws_lock_init(&data->outbox_lock);
 
     transport->impl_data = data;
 
@@ -196,14 +217,51 @@ static void ws_send_impl(colyseus_transport_t* transport, const uint8_t* data, s
         return;
     }
 
-    struct wslay_event_msg msg = {
-        .opcode = WSLAY_BINARY_FRAME,
-        .msg = data,
-        .msg_length = length
-    };
+    struct colyseus_ws_outbox_msg* msg = malloc(sizeof(*msg) + length);
+    if (!msg) return;
+    msg->next = NULL;
+    msg->length = length;
+    memcpy(msg->data, data, length);
 
-    int qret = wslay_event_queue_msg(impl->wslay_ctx, &msg);
-    WS_LOG("wslay_event_queue_msg returned %d", qret);
+    ws_lock(&impl->outbox_lock);
+    if (impl->outbox_tail) impl->outbox_tail->next = msg;
+    else impl->outbox_head = msg;
+    impl->outbox_tail = msg;
+    ws_unlock(&impl->outbox_lock);
+}
+
+static struct colyseus_ws_outbox_msg* ws_outbox_take(colyseus_ws_transport_data_t* data) {
+    ws_lock(&data->outbox_lock);
+    struct colyseus_ws_outbox_msg* msg = data->outbox_head;
+    data->outbox_head = data->outbox_tail = NULL;
+    ws_unlock(&data->outbox_lock);
+    return msg;
+}
+
+/* Tick thread only (or the closer, once the tick thread is joined). */
+static void ws_outbox_flush(colyseus_ws_transport_data_t* data) {
+    struct colyseus_ws_outbox_msg* msg = ws_outbox_take(data);
+    while (msg) {
+        struct colyseus_ws_outbox_msg* next = msg->next;
+        struct wslay_event_msg wmsg = {
+            .opcode = WSLAY_BINARY_FRAME,
+            .msg = msg->data,
+            .msg_length = msg->length
+        };
+        int qret = wslay_event_queue_msg(data->wslay_ctx, &wmsg);
+        if (qret != 0) WS_LOG("wslay_event_queue_msg returned %d", qret);
+        free(msg);
+        msg = next;
+    }
+}
+
+static void ws_outbox_clear(colyseus_ws_transport_data_t* data) {
+    struct colyseus_ws_outbox_msg* msg = ws_outbox_take(data);
+    while (msg) {
+        struct colyseus_ws_outbox_msg* next = msg->next;
+        free(msg);
+        msg = next;
+    }
 }
 
 static void ws_send_unreliable_impl(colyseus_transport_t* transport, const uint8_t* data, size_t length) {
@@ -244,6 +302,7 @@ static void ws_finish_close(colyseus_transport_t* transport, int code, const cha
     ws_tls_cleanup(data);
     ws_socket_close(data);
     ws_cleanup_wslay(data);
+    ws_outbox_clear(data);
     data->state = COLYSEUS_WS_DISCONNECTED;
     if (transport->events.on_close) {
         transport->events.on_close(code, reason, transport->events.userdata);
@@ -288,6 +347,7 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
     if (data->state == COLYSEUS_WS_DISCONNECTED) return;
 
     if (data->wslay_ctx && data->state == COLYSEUS_WS_CONNECTED) {
+        ws_outbox_flush(data);
         wslay_event_queue_close(data->wslay_ctx, code, (const uint8_t*)reason, reason ? strlen(reason) : 0);
         wslay_event_send(data->wslay_ctx);
     }
@@ -313,6 +373,8 @@ static void ws_destroy_impl(colyseus_transport_t* transport) {
         free(data->client_key);
         free(data->buffer);
         free(data->pending_close_reason);
+        ws_outbox_clear(data);
+        ws_lock_destroy(&data->outbox_lock);
         free(data);
     }
 
@@ -373,6 +435,9 @@ static void ws_tick_once(colyseus_transport_t* transport) {
             ws_close_impl(transport, 1006, "Receive error");
             return;
         }
+
+        /* After recv so a send from an on_message handler leaves this tick. */
+        ws_outbox_flush(data);
 
         ret = wslay_event_send(data->wslay_ctx);
         if (ret != 0) {
