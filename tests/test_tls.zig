@@ -265,3 +265,39 @@ test "tls: every send from the app thread reaches the wire while the tick thread
         try testing.expectEqual(sends, got);
     }
 }
+
+// A remote/handshake failure closes from the tick thread, so on_close fires
+// there; destroying the transport in that handler is a normal thing to do.
+// Against the bug the tick thread then touches the freed struct. glibc trips
+// on the resulting double free; macOS's xzone malloc zeroes freed memory and
+// stays silent, so verify there under Guard Malloc:
+//   DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib .zig-cache/o/<hash>/test
+var g_close_target: ?*c.colyseus_transport_t = null;
+var g_destroyed_in_close = std.atomic.Value(bool).init(false);
+fn onCloseDestroy(_: c_int, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+    c.colyseus_transport_destroy(g_close_target);
+    g_destroyed_in_close.store(true, .seq_cst);
+}
+fn destroyedInClose() bool {
+    return g_destroyed_in_close.load(.seq_cst);
+}
+
+test "tls: destroying the transport from on_close on the tick thread" {
+    const other = try loadPem("tests/tls/other-ca.pem");
+    defer testing.allocator.free(other);
+    const settings = makeSettings(other, false);
+    defer c.colyseus_settings_free(settings);
+    var ev = makeEvents();
+    ev.on_close = onCloseDestroy;
+
+    for (0..4) |_| {
+        reset();
+        g_destroyed_in_close.store(false, .seq_cst);
+        const transport = c.colyseus_websocket_transport_create(&ev);
+        g_close_target = transport;
+        // verification fails on the tick thread -> deferred close -> on_close there
+        c.colyseus_websocket_connect_with_settings(transport, URL, settings);
+        try testing.expect(pollUntil(destroyedInClose, 8 * std.time.ns_per_s));
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+    }
+}
