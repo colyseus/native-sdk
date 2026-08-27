@@ -293,6 +293,22 @@ static void ws_join_tick_thread(colyseus_ws_transport_data_t* data) {
     free(thread);
 #endif
     data->tick_thread = NULL;
+    data->tick_thread_id_valid = false;
+}
+
+/* Let the OS handle go without waiting: for a destroy from inside on_close,
+ * where the caller IS the tick thread. */
+static void ws_detach_tick_thread(colyseus_ws_transport_data_t* data) {
+    if (!data->tick_thread) return;
+#ifdef _WIN32
+    CloseHandle(data->tick_thread);
+#else
+    pthread_t* thread = (pthread_t*)data->tick_thread;
+    pthread_detach(*thread);
+    free(thread);
+#endif
+    data->tick_thread = NULL;
+    data->tick_thread_id_valid = false;
 }
 
 /* The teardown both owners share: the closer below, and the loop finishing a
@@ -313,11 +329,13 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
     if (data->state == COLYSEUS_WS_DISCONNECTED) {
-        /* Already disconnected via deferred close from the tick thread.
-         * The tick thread function has returned by now (or is about to),
-         * but the OS handle hasn't been reaped yet — join it before
-         * destroy() releases the surrounding struct. */
-        ws_join_tick_thread(data);
+        /* The loop closed on its way out and on_close has fired. Reap the
+         * thread before destroy() frees the struct, unless this IS the tick
+         * thread (destroy from inside on_close): it can't join itself, and
+         * the loop touches nothing after the callback, so it is safe to free
+         * under it. */
+        if (ws_on_tick_thread(data)) ws_detach_tick_thread(data);
+        else ws_join_tick_thread(data);
         return;
     }
 
@@ -403,19 +421,19 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
 #endif
     }
 
-    data->tick_thread_id_valid = false;
-
-    /* Handle deferred close (was requested from within tick thread) */
+    /* Deferred close: on_close fires here, on the tick thread, and the handler
+     * may destroy the transport. Nothing after the callback may touch `data`,
+     * and the thread id stays valid so that destroy detaches instead of
+     * joining itself. */
     if (data->pending_close) {
-        WS_LOG("Handling deferred close: code=%d, reason=%s",
-               data->pending_close_code,
-               data->pending_close_reason ? data->pending_close_reason : "(null)");
-
-        ws_finish_close(transport, data->pending_close_code, data->pending_close_reason);
-
-        free(data->pending_close_reason);
+        int code = data->pending_close_code;
+        char* reason = data->pending_close_reason;
         data->pending_close_reason = NULL;
         data->pending_close = false;
+        WS_LOG("Handling deferred close: code=%d, reason=%s", code, reason ? reason : "(null)");
+
+        ws_finish_close(transport, code, reason);
+        free(reason);
     }
 
 #ifdef _WIN32
