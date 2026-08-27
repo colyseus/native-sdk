@@ -148,9 +148,37 @@ jobs:
           name: colyseus-wasm32
           path: colyseus-wasm32.tar.gz
 
+  # The Apple xcframework, for SwiftPM consumers: one binary target covering
+  # macOS, iOS, iOS simulator, tvOS and tvOS simulator.
+  build-xcframework:
+    name: Build Colyseus.xcframework
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build xcframework
+        working-directory: platforms/swift
+        run: bash build.sh release
+
+      - name: Upload xcframework
+        uses: actions/upload-artifact@v4
+        with:
+          name: Colyseus.xcframework
+          path: |
+            platforms/swift/build/Colyseus.xcframework.zip
+            platforms/swift/build/Colyseus.xcframework.zip.sha256
+
   # Create GitHub release with all artifacts
   release:
-    needs: [build, build-wasm]
+    needs: [build, build-wasm, build-xcframework]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -170,6 +198,7 @@ jobs:
         run: |
           VERSION=$(grep -oP '\.version\s*=\s*"\K[^"]+' build.zig.zon)
           echo "version=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "semver=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Package source code
         run: |
@@ -183,6 +212,12 @@ jobs:
             --exclude='*.tar.gz' \
             .
           mv "${RUNNER_TEMP}/colyseus-source-${{ steps.version.outputs.version }}.tar.gz" .
+
+      - name: Read the xcframework checksum
+        id: xcframework
+        run: |
+          checksum=$(cat artifacts/Colyseus.xcframework/Colyseus.xcframework.zip.sha256 2>/dev/null || echo "")
+          echo "checksum=${checksum}" >> $GITHUB_OUTPUT
 
       - name: Package all-targets bundle
         run: |
@@ -258,6 +293,24 @@ jobs:
             | Windows | x86_64 | `colyseus-windows-x86_64.zip` |
             | iOS | arm64 | `colyseus-ios-arm64.tar.gz` |
             | WebAssembly | wasm32 | `colyseus-wasm32.tar.gz` |
+            | Apple (SwiftPM) | macOS, iOS, tvOS | `Colyseus.xcframework.zip` |
+            
+            ### Swift
+            
+            ```swift
+            .package(url: "https://github.com/colyseus/colyseus-swift", from: "${{ steps.version.outputs.semver }}")
+            ```
+            
+            That package resolves `Colyseus.xcframework.zip` below. Declare the
+            binary target yourself only to reach the C API directly:
+            
+            ```swift
+            .binaryTarget(
+                name: "CColyseus",
+                url: "https://github.com/colyseus/native-sdk/releases/download/${{ steps.version.outputs.version }}/Colyseus.xcframework.zip",
+                checksum: "${{ steps.xcframework.outputs.checksum }}"
+            )
+            ```
             
             ### Usage
             
@@ -278,3 +331,33 @@ jobs:
             exe.addObjectFile(.{ .cwd_relative = "path/to/lib/libcolyseus.a" });
             exe.addIncludePath(.{ .cwd_relative = "path/to/include" });
             ```
+
+  # SwiftPM resolves a package from a repository ROOT and only understands
+  # plain semver tags, so it can see neither platforms/swift/Package.swift nor
+  # a swift-v* tag. colyseus/colyseus-swift is that shape, generated from this
+  # one — see platforms/swift/mirror.sh.
+  publish-swift-mirror:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the xcframework
+        uses: actions/download-artifact@v4
+        with:
+          name: Colyseus.xcframework
+          path: xcframework
+
+      - name: Publish
+        env:
+          MIRROR_TOKEN: ${{ secrets.SWIFT_MIRROR_TOKEN }}
+        run: |
+          if [ -z "$MIRROR_TOKEN" ]; then
+            echo "SWIFT_MIRROR_TOKEN is not set — skipping the Swift mirror" >&2
+            exit 0
+          fi
+          version=$(grep -oP '\.version\s*=\s*"\K[^"]+' build.zig.zon)
+          checksum=$(cat xcframework/Colyseus.xcframework.zip.sha256)
+          export MIRROR_REMOTE="https://x-access-token:${MIRROR_TOKEN}@github.com/colyseus/colyseus-swift.git"
+          ./platforms/swift/mirror.sh "$version" "$checksum"

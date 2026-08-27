@@ -1247,6 +1247,7 @@ void colyseus_room_send(colyseus_room_t* room, const char* type, colyseus_messag
 
     if (encoded_data && encoded_len > 0) {
         colyseus_room_send_encoded(room, type, encoded_data, encoded_len);
+        colyseus_message_encoded_free(encoded_data, encoded_len);
     }
 }
 
@@ -1258,6 +1259,7 @@ void colyseus_room_send_int(colyseus_room_t* room, int type, colyseus_message_t*
 
     if (encoded_data && encoded_len > 0) {
         colyseus_room_send_int_encoded(room, type, encoded_data, encoded_len);
+        colyseus_message_encoded_free(encoded_data, encoded_len);
     }
 }
 
@@ -1323,13 +1325,18 @@ void colyseus_room_send_int_encoded(colyseus_room_t* room, int type, const uint8
  * Request/response (ROOM_REQUEST / ROOM_RESPONSE)
  * ============================================================================ */
 
-uint32_t colyseus_room_request_encoded(colyseus_room_t* room, const char* type,
+/* One send path for both reply shapes: exactly one callback is non-NULL. */
+static uint32_t room_request_send(colyseus_room_t* room, const char* type,
     const uint8_t* payload, size_t payload_length,
-    colyseus_room_on_response_fn callback, void* userdata)
+    colyseus_room_on_response_fn callback,
+    colyseus_room_on_response_encoded_fn callback_encoded, void* userdata)
 {
-    if (!room || !type || !callback) return 0;
+    if (!room || !type || (!callback && !callback_encoded)) return 0;
 
-    uint32_t request_id = room->next_request_id++;
+    /* Ids run from 1: every entry point already returns 0 for "not sent", and
+     * a binding needs to tell that apart from a real id to know whether it has
+     * anything to cancel. */
+    uint32_t request_id = ++room->next_request_id;
 
     /* Build frame: [ROOM_REQUEST][requestId varint][type string][payload?] */
     uint8_t request_id_buffer[5];
@@ -1357,6 +1364,7 @@ uint32_t colyseus_room_request_encoded(colyseus_room_t* room, const char* type,
     if (!entry) { free(data); return 0; }
     entry->request_id = request_id;
     entry->callback = callback;
+    entry->callback_encoded = callback_encoded;
     entry->userdata = userdata;
     HASH_ADD(hh, room->pending_requests, request_id, sizeof(uint32_t), entry);
 
@@ -1367,6 +1375,20 @@ uint32_t colyseus_room_request_encoded(colyseus_room_t* room, const char* type,
     return request_id;
 }
 
+uint32_t colyseus_room_request_encoded(colyseus_room_t* room, const char* type,
+    const uint8_t* payload, size_t payload_length,
+    colyseus_room_on_response_fn callback, void* userdata)
+{
+    return room_request_send(room, type, payload, payload_length, callback, NULL, userdata);
+}
+
+uint32_t colyseus_room_request_encoded_reply(colyseus_room_t* room, const char* type,
+    const uint8_t* payload, size_t payload_length,
+    colyseus_room_on_response_encoded_fn callback, void* userdata)
+{
+    return room_request_send(room, type, payload, payload_length, NULL, callback, userdata);
+}
+
 uint32_t colyseus_room_request(colyseus_room_t* room, const char* type, colyseus_message_t* payload,
     colyseus_room_on_response_fn callback, void* userdata)
 {
@@ -1375,7 +1397,9 @@ uint32_t colyseus_room_request(colyseus_room_t* room, const char* type, colyseus
     size_t encoded_len = 0;
     uint8_t* encoded_data = payload ? colyseus_message_encode(payload, &encoded_len) : NULL;
 
-    return colyseus_room_request_encoded(room, type, encoded_data, encoded_len, callback, userdata);
+    uint32_t request_id = colyseus_room_request_encoded(room, type, encoded_data, encoded_len, callback, userdata);
+    colyseus_message_encoded_free(encoded_data, encoded_len);
+    return request_id;
 }
 
 void colyseus_room_cancel_request(colyseus_room_t* room, uint32_t request_id) {
@@ -1389,11 +1413,29 @@ void colyseus_room_cancel_request(colyseus_room_t* room, uint32_t request_id) {
     }
 }
 
+/* The one place an answer reaches a caller, whichever reply shape it asked
+ * for. The reader is built here so the encoded path never pays for it. */
+static void room_deliver_response(colyseus_pending_request_t* entry,
+    colyseus_request_outcome_t outcome, const uint8_t* data, size_t length, const char* reason)
+{
+    if (entry->callback_encoded) {
+        entry->callback_encoded(outcome, data, length, reason, entry->userdata);
+        return;
+    }
+    colyseus_message_reader_t* reader = (data && length > 0)
+        ? colyseus_message_reader_create(data, length)
+        : NULL;
+    entry->callback(outcome == COLYSEUS_REQUEST_OK, reader,
+        outcome == COLYSEUS_REQUEST_FAULTED ? "request faulted" : reason,
+        entry->userdata);
+    if (reader) colyseus_message_reader_free(reader);
+}
+
 static void room_reject_all_pending_requests(colyseus_room_t* room, const char* reason) {
     colyseus_pending_request_t *entry, *tmp;
     HASH_ITER(hh, room->pending_requests, entry, tmp) {
         HASH_DEL(room->pending_requests, entry);
-        entry->callback(false, NULL, reason, entry->userdata);
+        room_deliver_response(entry, COLYSEUS_REQUEST_CLOSED, NULL, 0, reason);
         free(entry);
     }
 }
@@ -1763,19 +1805,21 @@ static void room_on_transport_message(const uint8_t* data, size_t length, void* 
             if (entry) {
                 HASH_DEL(room->pending_requests, entry);
 
-                colyseus_message_reader_t* reader = (length > offset)
-                    ? colyseus_message_reader_create(data + offset, length - offset)
-                    : NULL;
+                /* the ONE place the wire's statuses become the caller's
+                 * outcome — see colyseus_request_outcome_t */
+                colyseus_request_outcome_t outcome =
+                    status == COLYSEUS_RESPONSE_OK ? COLYSEUS_REQUEST_OK :
+                    status == COLYSEUS_RESPONSE_REJECTED ? COLYSEUS_REQUEST_REJECTED :
+                    COLYSEUS_REQUEST_FAULTED;
 
-                /* the ONE place the wire's three statuses collapse into the
-                 * (ok, reader, error) outcome — see colyseus_room_on_response_fn */
-                entry->callback(
-                    status == COLYSEUS_RESPONSE_OK,
-                    reader,
-                    status == COLYSEUS_RESPONSE_ERROR ? "request faulted" : NULL,
-                    entry->userdata);
+                const uint8_t* reply = NULL;
+                size_t reply_length = 0;
+                if (length > offset) {
+                    reply = data + offset;
+                    reply_length = length - offset;
+                }
 
-                if (reader) colyseus_message_reader_free(reader);
+                room_deliver_response(entry, outcome, reply, reply_length, NULL);
                 free(entry);
             }
             break;

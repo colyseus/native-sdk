@@ -1,0 +1,11 @@
+.{
+    .name = .colyseus_swift,
+    .version = "0.18.0",
+    .fingerprint = 0x4820f20cdd762ba,
+    .dependencies = .{
+        .native_sdk = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{""},
+}

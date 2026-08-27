@@ -29,7 +29,7 @@
 #include "../../../include/colyseus/predict/spawns.h"
 #include "../../../include/colyseus/predict/drift.h"
 #include "../../../include/colyseus/schema/dynamic_schema.h"
-#include "../../../src/predict/field_access.h"
+#include <colyseus/schema/field_access.h>
 #include "cJSON.h"
 
 #include <math.h>
@@ -176,16 +176,16 @@ static int gm_split_csv(const char* csv, char storage[][GM_NAME_MAX],
  * unknown fields — never a plausible 0. */
 static double gm_field_read(const colyseus_schema_t* inst, const char* field) {
     if (!inst || !inst->__vtable || !field) return NAN;
-    predict_fref_t f;
-    if (!predict_vt_find(inst->__vtable, field, &f) || !predict_fref_scalar(&f)) return NAN;
-    return predict_fread(inst, &f);
+    colyseus_field_ref_t f;
+    if (!colyseus_vtable_find_field(inst->__vtable, field, &f) || !colyseus_field_ref_is_scalar(&f)) return NAN;
+    return colyseus_schema_read_field(inst, &f);
 }
 
 static bool gm_field_write(colyseus_schema_t* inst, const char* field, double v) {
     if (!inst || !inst->__vtable || !field) return false;
-    predict_fref_t f;
-    if (!predict_vt_find(inst->__vtable, field, &f) || !predict_fref_scalar(&f)) return false;
-    predict_fwrite(inst, &f, v);
+    colyseus_field_ref_t f;
+    if (!colyseus_vtable_find_field(inst->__vtable, field, &f) || !colyseus_field_ref_is_scalar(&f)) return false;
+    colyseus_schema_write_field(inst, &f, v);
     return true;
 }
 
@@ -1156,8 +1156,8 @@ static bool gm_spawns_owned(colyseus_schema_t* server, void* userdata) {
     gm_spawns_entry_t* e = (gm_spawns_entry_t*)userdata;
     if (!e->owned_field[0]) return true;   /* everything correlatable */
     if (!server || !server->__vtable) return false;
-    predict_fref_t f;
-    if (!predict_vt_find(server->__vtable, e->owned_field, &f)) return false;
+    colyseus_field_ref_t f;
+    if (!colyseus_vtable_find_field(server->__vtable, e->owned_field, &f)) return false;
     if (f.type == COLYSEUS_FIELD_STRING) {
         /* string compare via the dynamic/static string read */
         if (colyseus_vtable_is_dynamic(server->__vtable)) {
@@ -1168,8 +1168,8 @@ static bool gm_spawns_owned(colyseus_schema_t* server, void* userdata) {
         const char* str = *(const char**)((const char*)server + f.offset);
         return str && strcmp(str, e->owned_value) == 0;
     }
-    if (!predict_fref_scalar(&f)) return false;
-    return predict_fread(server, &f) == atof(e->owned_value);
+    if (!colyseus_field_ref_is_scalar(&f)) return false;
+    return colyseus_schema_read_field(server, &f) == atof(e->owned_value);
 }
 
 static double gm_spawns_spawn_time(colyseus_schema_t* server, void* userdata) {

@@ -1,7 +1,45 @@
 # Changelog
 
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
-Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md) and [platforms/flutter/CHANGELOG.md](platforms/flutter/CHANGELOG.md).
+Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
+
+## 0.18.1
+
+### Added
+
+- A Swift binding — [platforms/swift](platforms/swift), published to
+  [colyseus/colyseus-swift](https://github.com/colyseus/colyseus-swift) for
+  SwiftPM.
+- `colyseus_room_request_encoded_reply()` — a request's reply, undecoded. Every
+  binding decodes msgpack in its own language so an `onMessage` payload lands as
+  one native value type, and the reply only came out through
+  `colyseus_message_reader_t`; that would have made `request()` the one call in
+  a binding answering in a second value type. The reader form stays for C
+  callers, and the encoded callback carries `colyseus_request_outcome_t` so a
+  binding branches on an outcome rather than comparing the error string against
+  `"request faulted"`.
+- The field-slot walk is public API, in `include/colyseus/schema/` under
+  `colyseus_`-prefixed names. Reading a field by name is how a binding turns a
+  decoded instance into something its users can touch; it lived under
+  `src/predict/`, so every port reached it through `../../../src/` and Flutter
+  wrapped each accessor in C glue because Dart cannot call a `static inline`.
+- `-Dstrip`, which is what lets the Zig modules target tvOS: 0.15's DWARF
+  unwinder has no mcontext layout for the platform, and anything that can panic
+  pulls the stack-trace machinery in.
+
+### Fixed
+
+- `colyseus_room_get_state()` handed out freed memory while a room was closing.
+  Teardown cleared the ref tracker, destroying the state tree, but left the
+  decoder pointing at it — reading state during a failed reconnect read the
+  freed tree.
+- Encoding a message freed its buffer twice for anyone following the header:
+  `colyseus_message_encoded_free()` was published while the builder kept the
+  buffer and freed it itself. Encoding now hands back a buffer to free and
+  leaves the message intact, so the same message can be sent more than once.
+- Request ids start at 1. Every entry point returns 0 for "not sent", so the
+  first request in a room minted an id a caller could not tell apart from
+  failure.
 
 ## 0.18.0
 

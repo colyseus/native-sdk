@@ -2,7 +2,7 @@
 #include "colyseus/predict/sim_reconciler.h"
 #include "colyseus/predict/predict.h"
 #include "colyseus/schema/dynamic_schema.h"
-#include "field_access.h"
+#include "colyseus/schema/field_access.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -141,11 +141,11 @@ struct colyseus_reconciler {
 /* ── value access on schema instances (either storage model) ─────────── */
 
 static double read_num(const colyseus_schema_t* instance, const recon_field_t* f) {
-    return predict_scalar_read(instance, f->type, f->offset, f->index);
+    return colyseus_schema_read_scalar(instance, f->type, f->offset, f->index);
 }
 
 static void write_num(colyseus_schema_t* instance, const recon_field_t* f, double v) {
-    predict_scalar_write(instance, f->type, f->offset, f->index, f->name, v);
+    colyseus_schema_write_scalar(instance, f->type, f->offset, f->index, f->name, v);
 }
 
 /* Mirror of the codec's dynamic `number` wire rule (see schema.ts's
@@ -469,12 +469,12 @@ colyseus_reconciler_t* colyseus_reconciler_create(
     /* resolve the field view: explicit names, or every numeric/boolean field */
     const char* const* names = options ? options->fields : NULL;
     int name_count = options ? options->field_count : 0;
-    int declared = predict_vt_count(vtable);
+    int declared = colyseus_vtable_field_count(vtable);
     r->fields = calloc((size_t)(declared > 0 ? declared : 1), sizeof(recon_field_t));
     for (int i = 0; i < declared; i++) {
-        predict_fref_t field;
-        if (!predict_vt_at(vtable, i, &field)) continue;
-        bool scalar = predict_fref_scalar(&field);
+        colyseus_field_ref_t field;
+        if (!colyseus_vtable_field_at(vtable, i, &field)) continue;
+        bool scalar = colyseus_field_ref_is_scalar(&field);
         if (names != NULL) {
             bool listed = false;
             for (int k = 0; k < name_count; k++) {
@@ -944,12 +944,12 @@ colyseus_reconciler_t* colyseus_sim_reconciler_create(
         }
         part->source = spec->source;
         part->vtable = spec->vtable;
-        int part_declared = predict_vt_count(spec->vtable);
+        int part_declared = colyseus_vtable_field_count(spec->vtable);
         part->fields = calloc((size_t)(part_declared > 0 ? part_declared : 1), sizeof(recon_field_t));
         for (int f = 0; f < part_declared; f++) {
-            predict_fref_t field;
-            if (!predict_vt_at(spec->vtable, f, &field)) continue;
-            if (!predict_fref_scalar(&field) || field.type == COLYSEUS_FIELD_BOOLEAN) continue;
+            colyseus_field_ref_t field;
+            if (!colyseus_vtable_field_at(spec->vtable, f, &field)) continue;
+            if (!colyseus_field_ref_is_scalar(&field) || field.type == COLYSEUS_FIELD_BOOLEAN) continue;
             recon_field_t* rf = &part->fields[part->field_count++];
             rf->type = field.type;
             rf->offset = field.offset;

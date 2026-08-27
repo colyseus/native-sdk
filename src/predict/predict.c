@@ -3,7 +3,7 @@
 #include "colyseus/room.h"
 #include "colyseus/schema.h"
 #include "colyseus/schema/dynamic_schema.h"
-#include "field_access.h"
+#include "colyseus/schema/field_access.h"
 #include "uthash.h"
 
 #include <stdio.h>
@@ -27,7 +27,7 @@
 typedef struct predict_slot {
     char* field;                    /* owned */
     colyseus_schema_t* instance;
-    predict_fref_t fref;            /* resolved storage (either model) */
+    colyseus_field_ref_t fref;            /* resolved storage (either model) */
     colyseus_field_type_t type;
 
     colyseus_predict_field_options_t opts;
@@ -71,10 +71,10 @@ typedef struct predict_sim {
     double snap;
 
     /* the reckoned field view (names borrowed from the vtable) */
-    predict_fref_t* fields;
+    colyseus_field_ref_t* fields;
     int field_count;
     /* all scalar fields of the vtable (the scratch refill set) */
-    predict_fref_t* copy_fields;
+    colyseus_field_ref_t* copy_fields;
     int copy_count;
 
     double* smoothed;               /* displayed = out + offset */
@@ -450,8 +450,8 @@ static double compute_extrapolate(colyseus_predict_t* p, predict_slot_t* slot) {
 static void sim_advance(predict_sim_t* sim, double forward_ms, double* out, double end_elapsed) {
     /* refill the scratch from the live instance (all scalar fields) */
     for (int i = 0; i < sim->copy_count; i++) {
-        predict_fwrite(sim->scratch, &sim->copy_fields[i],
-            predict_fread(sim->instance, &sim->copy_fields[i]));
+        colyseus_schema_write_field(sim->scratch, &sim->copy_fields[i],
+            colyseus_schema_read_field(sim->instance, &sim->copy_fields[i]));
     }
     double remaining = forward_ms;
     double elapsed = end_elapsed - forward_ms; /* last substep lands ON end_elapsed */
@@ -462,7 +462,7 @@ static void sim_advance(predict_sim_t* sim, double forward_ms, double* out, doub
         remaining -= step_ms;
     }
     for (int k = 0; k < sim->field_count; k++) {
-        out[k] = predict_fread(sim->scratch, &sim->fields[k]);
+        out[k] = colyseus_schema_read_field(sim->scratch, &sim->fields[k]);
     }
 }
 
@@ -559,10 +559,10 @@ static void attach_all_on_add(void* value, void* key, void* userdata) {
     /* No explicit list: every numeric field of the entry. */
     const colyseus_schema_vtable_t* vt = instance->__vtable;
     if (!vt) return;
-    for (int i = 0; i < predict_vt_count(vt); i++) {
-        predict_fref_t f;
-        if (!predict_vt_at(vt, i, &f)) continue;
-        if (!predict_fref_scalar(&f) || f.type == COLYSEUS_FIELD_BOOLEAN) continue;
+    for (int i = 0; i < colyseus_vtable_field_count(vt); i++) {
+        colyseus_field_ref_t f;
+        if (!colyseus_vtable_field_at(vt, i, &f)) continue;
+        if (!colyseus_field_ref_is_scalar(&f) || f.type == COLYSEUS_FIELD_BOOLEAN) continue;
         colyseus_predict_track(a->p, instance, f.name, &a->opts);
     }
 }
@@ -581,8 +581,8 @@ int colyseus_predict_attach(
     for (int i = 0; i < count; i++) {
         if (!config[i].field) continue;
         /* Drop what this type doesn't declare: one config, many entry types. */
-        predict_fref_t f;
-        if (instance->__vtable && !predict_vt_find(instance->__vtable, config[i].field, &f)) {
+        colyseus_field_ref_t f;
+        if (instance->__vtable && !colyseus_vtable_find_field(instance->__vtable, config[i].field, &f)) {
             continue;
         }
         colyseus_predict_track(p, instance, config[i].field, config[i].opts);
@@ -736,8 +736,8 @@ int colyseus_predict_track(
     const char* field,
     const colyseus_predict_field_options_t* options) {
     if (!p || !instance || !field || !instance->__vtable) return -1;
-    predict_fref_t meta;
-    if (!predict_vt_find(instance->__vtable, field, &meta)) return -1;
+    colyseus_field_ref_t meta;
+    if (!colyseus_vtable_find_field(instance->__vtable, field, &meta)) return -1;
 
     predict_slot_t* slot = calloc(1, sizeof(predict_slot_t));
     slot->field = strdup(field);
@@ -762,7 +762,7 @@ int colyseus_predict_track(
     slot->opts.snap = options && options->snap > 0 ? options->snap : 0;
     slot->opts.angle = options ? options->angle : false;
 
-    double initial = predict_fread(instance, &slot->fref);
+    double initial = colyseus_schema_read_field(instance, &slot->fref);
     slot->v1 = initial;
     slot->aux_v = initial;
     slot->lerp_prev = initial;
@@ -826,15 +826,15 @@ int colyseus_predict_attach_reckon(
     sim->fields = calloc(field_count, sizeof(*sim->fields));
     sim->field_count = field_count;
     for (int k = 0; k < field_count; k++) {
-        if (!predict_vt_find(vtable, fields[k], &sim->fields[k])) { free_sim(sim); return -1; }
+        if (!colyseus_vtable_find_field(vtable, fields[k], &sim->fields[k])) { free_sim(sim); return -1; }
     }
 
     /* scratch refill set: every scalar field of the vtable */
-    int declared = predict_vt_count(vtable);
+    int declared = colyseus_vtable_field_count(vtable);
     sim->copy_fields = calloc((size_t)(declared > 0 ? declared : 1), sizeof(*sim->copy_fields));
     for (int i = 0; i < declared; i++) {
-        predict_fref_t meta;
-        if (!predict_vt_at(vtable, i, &meta) || !predict_fref_scalar(&meta)) continue;
+        colyseus_field_ref_t meta;
+        if (!colyseus_vtable_field_at(vtable, i, &meta) || !colyseus_field_ref_is_scalar(&meta)) continue;
         sim->copy_fields[sim->copy_count++] = meta;
     }
 
@@ -849,7 +849,7 @@ int colyseus_predict_attach_reckon(
     sim->out_prev = calloc(field_count, sizeof(double));
     sim->frame_vel = calloc(field_count, sizeof(double));
     for (int k = 0; k < field_count; k++) {
-        sim->smoothed[k] = predict_fread(instance, &sim->fields[k]);
+        sim->smoothed[k] = colyseus_schema_read_field(instance, &sim->fields[k]);
     }
 
     predict_sim_t* existing = NULL;
@@ -1221,9 +1221,9 @@ double colyseus_predict_value(colyseus_predict_t* p, colyseus_schema_t* instance
         /* Untracked is FINE — read the decoded field verbatim. A field that
          * doesn't exist is not: NAN, so a typo can't render as a plausible 0. */
         if (instance->__vtable) {
-            predict_fref_t meta;
-            if (predict_vt_find(instance->__vtable, field, &meta) && predict_fref_scalar(&meta))
-                return predict_fread(instance, &meta);
+            colyseus_field_ref_t meta;
+            if (colyseus_vtable_find_field(instance->__vtable, field, &meta) && colyseus_field_ref_is_scalar(&meta))
+                return colyseus_schema_read_field(instance, &meta);
         }
         return NAN;
     }

@@ -11,6 +11,7 @@ Cross-platform Native SDK for [Colyseus](https://colyseus.io/). Aimed to be used
 | [Godot](https://github.com/colyseus/native-sdk/releases?q=%22Godot+SDK%22&expanded=true) | GDExtension plugin for Godot 4.x | Windows, macOS, Linux, iOS, Android, Web |
 | [GameMaker](https://github.com/colyseus/native-sdk/releases?q=%22GameMaker+SDK%22&expanded=true) | Native extension for GameMaker | Windows, macOS, Linux, iOS, Android, HTML5 (WASM) |
 | [Static Binaries](https://github.com/colyseus/native-sdk/releases?q=%22Colyseus+Native+SDK+-+Static+Library%22&expanded=true) | Pre-built static libraries (C API) | Windows, macOS, Linux, iOS, WebAssembly |
+| [Swift](https://github.com/colyseus/colyseus-swift) | Swift package (SwiftPM) | macOS, iOS, tvOS |
 
 ## Building
 

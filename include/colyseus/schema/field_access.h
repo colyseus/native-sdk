@@ -9,11 +9,15 @@
 /*
  * Scalar field access across BOTH storage models.
  *
+ * Public because every binding needs it: reading a field by name is how a
+ * language wrapper turns a decoded instance into something its users can
+ * touch, and each of the four ports had been reaching into src/ for it.
+ *
  * Static (codegen'd) instances store fields at struct offsets; dynamic
  * instances (GDScript / reflection vtables) store them in a per-instance
  * hash keyed by field index. The predict layer treats every field as a
  * double either way, so this is the one seam it needs: resolve a field
- * once into a predict_fref_t, then read/write through it without caring
+ * once into a colyseus_field_ref_t, then read/write through it without caring
  * which model the instance uses.
  *
  * Writes on the dynamic path mutate the value cell IN PLACE and never
@@ -27,21 +31,21 @@ typedef struct {
     size_t offset;      /* static instances: offsetof() into the struct */
     int index;          /* dynamic instances: the field-hash key */
     const char* name;   /* borrowed from the vtable definition */
-} predict_fref_t;
+} colyseus_field_ref_t;
 
-static inline bool predict_fref_scalar(const predict_fref_t* f) {
+static inline bool colyseus_field_ref_is_scalar(const colyseus_field_ref_t* f) {
     return f->type != COLYSEUS_FIELD_REF && f->type != COLYSEUS_FIELD_ARRAY
         && f->type != COLYSEUS_FIELD_MAP && f->type != COLYSEUS_FIELD_STRING;
 }
 
 /* Declared-field count, either model. */
-static inline int predict_vt_count(const colyseus_schema_vtable_t* vt) {
+static inline int colyseus_vtable_field_count(const colyseus_schema_vtable_t* vt) {
     const colyseus_dynamic_vtable_t* dv = colyseus_vtable_as_dynamic(vt);
     return dv ? dv->dyn_field_count : vt->field_count;
 }
 
 /* The i-th declared field. False when out of range / hole. */
-static inline bool predict_vt_at(const colyseus_schema_vtable_t* vt, int i, predict_fref_t* out) {
+static inline bool colyseus_vtable_field_at(const colyseus_schema_vtable_t* vt, int i, colyseus_field_ref_t* out) {
     const colyseus_dynamic_vtable_t* dv = colyseus_vtable_as_dynamic(vt);
     if (dv) {
         if (i < 0 || i >= dv->dyn_field_count || !dv->dyn_fields[i]) return false;
@@ -55,7 +59,7 @@ static inline bool predict_vt_at(const colyseus_schema_vtable_t* vt, int i, pred
     return true;
 }
 
-static inline bool predict_vt_find(const colyseus_schema_vtable_t* vt, const char* name, predict_fref_t* out) {
+static inline bool colyseus_vtable_find_field(const colyseus_schema_vtable_t* vt, const char* name, colyseus_field_ref_t* out) {
     const colyseus_dynamic_vtable_t* dv = colyseus_vtable_as_dynamic(vt);
     if (dv) {
         const colyseus_dynamic_field_t* f = colyseus_dynamic_vtable_find_field_by_name(dv, name);
@@ -74,7 +78,7 @@ static inline bool predict_vt_find(const colyseus_schema_vtable_t* vt, const cha
 }
 
 /* Low-level pair, shared by the fref calls and reconciler.c's cached view. */
-static inline double predict_scalar_read(const colyseus_schema_t* inst,
+static inline double colyseus_schema_read_scalar(const colyseus_schema_t* inst,
     colyseus_field_type_t type, size_t offset, int index) {
     if (colyseus_vtable_is_dynamic(inst->__vtable)) {
         colyseus_dynamic_value_t* v =
@@ -110,7 +114,7 @@ static inline double predict_scalar_read(const colyseus_schema_t* inst,
     }
 }
 
-static inline void predict_scalar_write(colyseus_schema_t* inst,
+static inline void colyseus_schema_write_scalar(colyseus_schema_t* inst,
     colyseus_field_type_t type, size_t offset, int index, const char* name, double val) {
     if (colyseus_vtable_is_dynamic(inst->__vtable)) {
         (void)name;
@@ -148,12 +152,12 @@ static inline void predict_scalar_write(colyseus_schema_t* inst,
     }
 }
 
-static inline double predict_fread(const colyseus_schema_t* inst, const predict_fref_t* f) {
-    return predict_scalar_read(inst, f->type, f->offset, f->index);
+static inline double colyseus_schema_read_field(const colyseus_schema_t* inst, const colyseus_field_ref_t* f) {
+    return colyseus_schema_read_scalar(inst, f->type, f->offset, f->index);
 }
 
-static inline void predict_fwrite(colyseus_schema_t* inst, const predict_fref_t* f, double val) {
-    predict_scalar_write(inst, f->type, f->offset, f->index, f->name, val);
+static inline void colyseus_schema_write_field(colyseus_schema_t* inst, const colyseus_field_ref_t* f, double val) {
+    colyseus_schema_write_scalar(inst, f->type, f->offset, f->index, f->name, val);
 }
 
 /*

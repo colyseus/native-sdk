@@ -23,6 +23,14 @@ pub fn build(b: *std.Build) void {
     // Linux and Emscripten need gnu11 for POSIX functions (strdup, strndup, etc.)
     const c_std = if (os_tag == .linux or is_emscripten) "-std=gnu11" else "-std=c11";
 
+    // Zig 0.15's DWARF unwinder has no mcontext layout for tvOS, so every Zig
+    // module that can panic fails to COMPILE for it. Stripping debug info drops
+    // the stack-trace machinery that reaches for it.
+    const strip_zig_modules: ?bool = if (os_tag == .tvos)
+        true
+    else
+        b.option(bool, "strip", "Strip debug info from the Zig modules");
+
     // Build options
     const build_shared = b.option(bool, "shared", "Build shared library") orelse false;
     const build_examples = b.option(bool, "examples", "Build example programs") orelse (if (is_emscripten) false else true);
@@ -203,6 +211,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/network/http.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip_zig_modules,
         });
         http_zig_module.addIncludePath(b.path("include"));
         http_zig_module.addIncludePath(b.path("third_party/uthash/src"));
@@ -222,6 +231,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/certs/system_certs.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip_zig_modules,
         });
 
         system_certs_object = b.addLibrary(.{
@@ -237,6 +247,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/utils/strUtil.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip_zig_modules,
         // WASM-specific flags for emscripten
         .stack_check = if (is_emscripten) false else null,
         .pic = if (is_emscripten) true else null,
@@ -273,6 +284,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/msgpack/msgpack_builder.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip_zig_modules,
         .stack_check = if (is_emscripten) false else null,
         .pic = if (is_emscripten) true else null,
         .omit_frame_pointer = if (is_emscripten) true else null,
@@ -854,12 +866,15 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_input", .file = "tests/test_input.zig", .description = "Run input layer + RoomClock tests (byte fixtures)" },
         .{ .name = "test_predict", .file = "tests/test_predict.zig", .description = "Run Predict layer tests (behavior fixtures)" },
         .{ .name = "test_netdelay", .file = "tests/test_netdelay.zig", .description = "Run network-delay injector tests (offline)" },
+        .{ .name = "test_msgpack_builder", .file = "tests/test_msgpack_builder.zig", .description = "Run message builder ownership tests (offline)" },
         .{ .name = "test_gamemaker_predict", .file = "tests/test_gamemaker_predict.zig", .description = "Run GameMaker predict-bridge tests (offline, drives the GML FFI surface)" },
         .{ .name = "test_gamemaker_schema", .file = "tests/test_gamemaker_schema.zig", .description = "Run GameMaker schema-bridge tests (offline)" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
         .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
         .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
+        .{ .name = "test_schema_reflection", .file = "tests/test_schema_reflection.zig", .description = "Run reflection-vtable decode tests (requires server)" },
         .{ .name = "test_messages", .file = "tests/test_messages.zig", .description = "Run message types tests (requires server)" },
+        .{ .name = "test_request", .file = "tests/test_request.zig", .description = "Run room.request() outcome tests (requires server)" },
         .{ .name = "test_view_callbacks", .file = "tests/test_view_callbacks.zig", .description = "Run StateView callback tests (requires server)" },
         .{ .name = "test_reconnect", .file = "tests/test_reconnect.zig", .description = "Run automatic reconnection tests (requires server)" },
         .{ .name = "test_tls", .file = "tests/test_tls.zig", .description = "Run WSS/TLS verification tests (requires wss echo server)" },
@@ -871,7 +886,9 @@ pub fn build(b: *std.Build) void {
         if (skip_integration and
             (std.mem.eql(u8, test_file.name, "test_integration") or
                 std.mem.eql(u8, test_file.name, "test_schema_callbacks") or
+                std.mem.eql(u8, test_file.name, "test_schema_reflection") or
                 std.mem.eql(u8, test_file.name, "test_messages") or
+                std.mem.eql(u8, test_file.name, "test_request") or
                 std.mem.eql(u8, test_file.name, "test_view_callbacks") or
                 std.mem.eql(u8, test_file.name, "test_reconnect") or
                 std.mem.eql(u8, test_file.name, "test_tls")))

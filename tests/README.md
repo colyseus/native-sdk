@@ -6,23 +6,27 @@ All tests are written in Zig, taking advantage of Zig's built-in testing framewo
 
 ## Running Tests
 
-### Run All Tests
+### Full suite (`zig build test`)
+
+Integration tests need **example-server** on `http://localhost:2567` (same as CI). Terminal A:
+
+```bash
+cd example-server
+npm install
+npx tsx src/index.ts
+# or: npm start   (tsx watch)
+```
+
+Terminal B, from the **repository root**:
 
 ```bash
 zig build test
 ```
 
-This runs:
-- **22 Zig tests** across 6 test suites
-- Most tests run without requiring a server
-- Integration test requires a running Colyseus server
-
-### Run Tests Without Integration Test
-
-If you don't have a Colyseus server running:
+### Without a server (unit tests only)
 
 ```bash
-zig build test -Dskip-integration
+zig build test -Dskip-integration=true
 ```
 
 ### Run Individual Tests
@@ -91,20 +95,12 @@ All tests are written in **idiomatic Zig** using the built-in test framework:
 - No running server needed
 - Run in milliseconds
 
-### Integration Test
-To run the full integration test (`test_integration.zig`), you need:
+### Integration tests
 
-1. A running Colyseus server on `localhost:2567`
-2. A room named `my_room` available
+`zig build test` runs `test_integration`, `test_schema_callbacks`, and `test_messages` against **example-server** (`localhost:2567`, room `my_room`). Start the server as in **Full suite** above.
 
-Start the example server:
-```bash
-cd example-server
-npm install
-npm start
-```
+Single integration binary:
 
-Then run:
 ```bash
 zig build test_integration
 ```
@@ -137,10 +133,10 @@ test "my new test" {
 
 ## Test Output
 
-When running `zig build test -Dskip-integration`:
+Example success output:
 
 ```
-Build Summary: 17/17 steps succeeded; 22/22 tests passed
+Build Summary: … steps succeeded; … tests passed
 test success
 ```
 
@@ -158,10 +154,5 @@ All HTTP tests passed!
 
 ## Continuous Integration
 
-For CI/CD pipelines, use:
-```bash
-zig build test -Dskip-integration
-```
-
-This ensures tests run without requiring a live server.
+CI starts **example-server**, waits until `localhost:2567` responds, then runs `zig build test`.
 

@@ -3,7 +3,7 @@
 #include "colyseus_input.h"
 
 #include <colyseus/room.h>
-#include <predict/field_access.h>
+#include <colyseus/schema/field_access.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -86,9 +86,9 @@ GDExtensionBool gdext_colyseus_sim_state_set(GDExtensionClassInstancePtr p_insta
     if (!w || !w->target || !w->target->__vtable) return false;
     char* name = rc_string_name_to_c_str(p_name);
     if (!name) return false;
-    predict_fref_t f;
-    bool ok = predict_vt_find(w->target->__vtable, name, &f) && predict_fref_scalar(&f);
-    if (ok) predict_fwrite(w->target, &f, rc_to_double(p_value));
+    colyseus_field_ref_t f;
+    bool ok = colyseus_vtable_find_field(w->target->__vtable, name, &f) && colyseus_field_ref_is_scalar(&f);
+    if (ok) colyseus_schema_write_field(w->target, &f, rc_to_double(p_value));
     free(name);
     return ok;
 }
@@ -98,10 +98,10 @@ GDExtensionBool gdext_colyseus_sim_state_get(GDExtensionClassInstancePtr p_insta
     if (!w || !w->target || !w->target->__vtable) return false;
     char* name = rc_string_name_to_c_str(p_name);
     if (!name) return false;
-    predict_fref_t f;
-    bool ok = predict_vt_find(w->target->__vtable, name, &f);
-    if (ok && predict_fref_scalar(&f)) {
-        double v = predict_fread(w->target, &f);
+    colyseus_field_ref_t f;
+    bool ok = colyseus_vtable_find_field(w->target->__vtable, name, &f);
+    if (ok && colyseus_field_ref_is_scalar(&f)) {
+        double v = colyseus_schema_read_field(w->target, &f);
         constructors.variant_from_float_constructor(r_ret, &v);
     } else if (ok && f.type == COLYSEUS_FIELD_STRING) {
         /* string fields read-only (owner ids etc.) */
@@ -1083,8 +1083,8 @@ void gdext_colyseus_spawns_server_string_method(void* p_method_userdata, GDExten
         char* field = rc_string_to_c_str(p_args[1]);
         const colyseus_spawn_entry_t* entry = colyseus_spawns_entry(w->native, (int)id);
         if (entry && entry->server && entry->server->__vtable && field) {
-            predict_fref_t f;
-            if (predict_vt_find(entry->server->__vtable, field, &f) && f.type == COLYSEUS_FIELD_STRING) {
+            colyseus_field_ref_t f;
+            if (colyseus_vtable_find_field(entry->server->__vtable, field, &f) && f.type == COLYSEUS_FIELD_STRING) {
                 if (colyseus_vtable_is_dynamic(entry->server->__vtable)) {
                     colyseus_dynamic_value_t* dv =
                         colyseus_dynamic_schema_get((colyseus_dynamic_schema_t*)entry->server, f.index);

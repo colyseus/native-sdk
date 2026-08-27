@@ -1,0 +1,7 @@
+build/
+.build/
+zig-out/
+zig-cache/
+*.xcframework.zip
+*.xcframework.zip.sha256
+.zig-cache/

@@ -32,6 +32,11 @@ void colyseus_message_map_put_uint(colyseus_message_t* map, const char* key, uin
 void colyseus_message_map_put_float(colyseus_message_t* map, const char* key, double value);
 void colyseus_message_map_put_bool(colyseus_message_t* map, const char* key, bool value);
 void colyseus_message_map_put_nil(colyseus_message_t* map, const char* key);
+/**
+ * Nest `value` under `key`. The map ADOPTS the value's contents, leaving
+ * `value` an empty shell: freeing it afterwards is safe but optional, and
+ * putting it a second time stores nothing.
+ */
 void colyseus_message_map_put_msg(colyseus_message_t* map, const char* key, colyseus_message_t* value);
 
 /* Array operations */
@@ -41,9 +46,18 @@ void colyseus_message_array_push_uint(colyseus_message_t* arr, uint64_t value);
 void colyseus_message_array_push_float(colyseus_message_t* arr, double value);
 void colyseus_message_array_push_bool(colyseus_message_t* arr, bool value);
 void colyseus_message_array_push_nil(colyseus_message_t* arr);
+/** Adopts `value` the same way colyseus_message_map_put_msg() does. */
 void colyseus_message_array_push_msg(colyseus_message_t* arr, colyseus_message_t* value);
 
 /* Encoding */
+
+/**
+ * Encode to msgpack. The message is left intact and can be encoded again.
+ *
+ * The returned buffer belongs to the CALLER — release it with
+ * colyseus_message_encoded_free(). Returns NULL (and sets *out_len to 0) if
+ * the message is empty or encoding fails.
+ */
 uint8_t* colyseus_message_encode(colyseus_message_t* message, size_t* out_len);
 
 /* Cleanup */
