@@ -27,7 +27,14 @@ typedef struct {
     void* userdata;  /* User data passed to all callbacks */
 } colyseus_transport_events_t;
 
-/* Transport interface (vtable pattern) */
+/**
+ * Transport interface (vtable pattern).
+ *
+ * Threading contract: connect/send/close/destroy may be called from any
+ * thread. Callbacks fire on the transport's driving thread (the native
+ * WebSocket tick thread; the event loop on web), and close/destroy are safe
+ * to call from inside any of them.
+ */
 struct colyseus_transport {
     /* Function pointers (vtable) */
     void (*connect)(colyseus_transport_t* transport, const char* url);

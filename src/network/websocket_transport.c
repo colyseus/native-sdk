@@ -108,8 +108,6 @@ static ssize_t ws_socket_recv(colyseus_ws_transport_data_t* data, uint8_t* buf, 
 static ssize_t ws_socket_send(colyseus_ws_transport_data_t* data, const uint8_t* buf, size_t len, int* would_block);
 static void ws_socket_close(colyseus_ws_transport_data_t* data);
 static void ws_cleanup_wslay(colyseus_ws_transport_data_t* data);
-static void ws_outbox_flush(colyseus_ws_transport_data_t* data);
-static void ws_outbox_clear(colyseus_ws_transport_data_t* data);
 
 /* wslay callbacks */
 static void ws_on_msg_recv_callback(wslay_event_context_ptr ctx, const struct wslay_event_on_msg_recv_arg* arg, void* user_data);
@@ -230,35 +228,25 @@ static void ws_send_impl(colyseus_transport_t* transport, const uint8_t* data, s
     ws_unlock(&impl->outbox_lock);
 }
 
-static struct colyseus_ws_outbox_msg* ws_outbox_take(colyseus_ws_transport_data_t* data) {
+/* Move queued sends into wslay; with no context (teardown) they are dropped.
+ * Tick thread only, or the closer once the tick thread is joined. */
+static void ws_outbox_drain(colyseus_ws_transport_data_t* data) {
     ws_lock(&data->outbox_lock);
     struct colyseus_ws_outbox_msg* msg = data->outbox_head;
     data->outbox_head = data->outbox_tail = NULL;
     ws_unlock(&data->outbox_lock);
-    return msg;
-}
 
-/* Tick thread only (or the closer, once the tick thread is joined). */
-static void ws_outbox_flush(colyseus_ws_transport_data_t* data) {
-    struct colyseus_ws_outbox_msg* msg = ws_outbox_take(data);
     while (msg) {
         struct colyseus_ws_outbox_msg* next = msg->next;
-        struct wslay_event_msg wmsg = {
-            .opcode = WSLAY_BINARY_FRAME,
-            .msg = msg->data,
-            .msg_length = msg->length
-        };
-        int qret = wslay_event_queue_msg(data->wslay_ctx, &wmsg);
-        if (qret != 0) WS_LOG("wslay_event_queue_msg returned %d", qret);
-        free(msg);
-        msg = next;
-    }
-}
-
-static void ws_outbox_clear(colyseus_ws_transport_data_t* data) {
-    struct colyseus_ws_outbox_msg* msg = ws_outbox_take(data);
-    while (msg) {
-        struct colyseus_ws_outbox_msg* next = msg->next;
+        if (data->wslay_ctx) {
+            struct wslay_event_msg wmsg = {
+                .opcode = WSLAY_BINARY_FRAME,
+                .msg = msg->data,
+                .msg_length = msg->length
+            };
+            int qret = wslay_event_queue_msg(data->wslay_ctx, &wmsg);
+            if (qret != 0) WS_LOG("wslay_event_queue_msg returned %d", qret);
+        }
         free(msg);
         msg = next;
     }
@@ -281,30 +269,19 @@ static bool ws_on_tick_thread(const colyseus_ws_transport_data_t* data) {
 #endif
 }
 
-/* Reap the tick thread's OS handle. Never call from the tick thread itself. */
-static void ws_join_tick_thread(colyseus_ws_transport_data_t* data) {
+/* Reap the tick thread's OS handle: join it, or, when the caller IS the tick
+ * thread (a destroy from inside on_close), detach since it can't join itself.
+ * The loop touches nothing after that callback, so freeing under it is safe. */
+static void ws_reap_tick_thread(colyseus_ws_transport_data_t* data) {
     if (!data->tick_thread) return;
+    bool self = ws_on_tick_thread(data);
 #ifdef _WIN32
-    WaitForSingleObject(data->tick_thread, INFINITE);
+    if (!self) WaitForSingleObject(data->tick_thread, INFINITE);
     CloseHandle(data->tick_thread);
 #else
     pthread_t* thread = (pthread_t*)data->tick_thread;
-    pthread_join(*thread, NULL);
-    free(thread);
-#endif
-    data->tick_thread = NULL;
-    data->tick_thread_id_valid = false;
-}
-
-/* Let the OS handle go without waiting: for a destroy from inside on_close,
- * where the caller IS the tick thread. */
-static void ws_detach_tick_thread(colyseus_ws_transport_data_t* data) {
-    if (!data->tick_thread) return;
-#ifdef _WIN32
-    CloseHandle(data->tick_thread);
-#else
-    pthread_t* thread = (pthread_t*)data->tick_thread;
-    pthread_detach(*thread);
+    if (self) pthread_detach(*thread);
+    else pthread_join(*thread, NULL);
     free(thread);
 #endif
     data->tick_thread = NULL;
@@ -318,7 +295,7 @@ static void ws_finish_close(colyseus_transport_t* transport, int code, const cha
     ws_tls_cleanup(data);
     ws_socket_close(data);
     ws_cleanup_wslay(data);
-    ws_outbox_clear(data);
+    ws_outbox_drain(data);
     data->state = COLYSEUS_WS_DISCONNECTED;
     if (transport->events.on_close) {
         transport->events.on_close(code, reason, transport->events.userdata);
@@ -329,13 +306,9 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
     if (data->state == COLYSEUS_WS_DISCONNECTED) {
-        /* The loop closed on its way out and on_close has fired. Reap the
-         * thread before destroy() frees the struct, unless this IS the tick
-         * thread (destroy from inside on_close): it can't join itself, and
-         * the loop touches nothing after the callback, so it is safe to free
-         * under it. */
-        if (ws_on_tick_thread(data)) ws_detach_tick_thread(data);
-        else ws_join_tick_thread(data);
+        /* The loop closed on its way out and on_close has fired; reap the
+         * thread before destroy() frees the struct. */
+        ws_reap_tick_thread(data);
         return;
     }
 
@@ -359,13 +332,13 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
     /* Join before releasing anything the loop reads: `running` is only checked
      * at the top of an iteration, so the thread can still be inside
      * mbedtls_ssl_read. No lock here — the join is the handoff. */
-    ws_join_tick_thread(data);
+    ws_reap_tick_thread(data);
 
     /* The loop closed on its own way out; on_close has already fired. */
     if (data->state == COLYSEUS_WS_DISCONNECTED) return;
 
     if (data->wslay_ctx && data->state == COLYSEUS_WS_CONNECTED) {
-        ws_outbox_flush(data);
+        ws_outbox_drain(data);
         wslay_event_queue_close(data->wslay_ctx, code, (const uint8_t*)reason, reason ? strlen(reason) : 0);
         wslay_event_send(data->wslay_ctx);
     }
@@ -391,7 +364,7 @@ static void ws_destroy_impl(colyseus_transport_t* transport) {
         free(data->client_key);
         free(data->buffer);
         free(data->pending_close_reason);
-        ws_outbox_clear(data);
+        ws_outbox_drain(data);
         ws_lock_destroy(&data->outbox_lock);
         free(data);
     }
@@ -455,7 +428,7 @@ static void ws_tick_once(colyseus_transport_t* transport) {
         }
 
         /* After recv so a send from an on_message handler leaves this tick. */
-        ws_outbox_flush(data);
+        ws_outbox_drain(data);
 
         ret = wslay_event_send(data->wslay_ctx);
         if (ret != 0) {

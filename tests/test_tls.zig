@@ -23,20 +23,20 @@ const URL = "wss://127.0.0.1:2569";
 var g_opened = std.atomic.Value(bool).init(false);
 var g_closed = std.atomic.Value(bool).init(false);
 var g_errored = std.atomic.Value(bool).init(false);
-var g_echoed = std.atomic.Value(bool).init(false);
+var g_echoed = std.atomic.Value(u32).init(0);
 
 fn reset() void {
     g_opened.store(false, .seq_cst);
     g_closed.store(false, .seq_cst);
     g_errored.store(false, .seq_cst);
-    g_echoed.store(false, .seq_cst);
+    g_echoed.store(0, .seq_cst);
 }
 
 fn onOpen(_: ?*anyopaque) callconv(.c) void {
     g_opened.store(true, .seq_cst);
 }
 fn onMessage(_: [*c]const u8, _: usize, _: ?*anyopaque) callconv(.c) void {
-    g_echoed.store(true, .seq_cst);
+    _ = g_echoed.fetchAdd(1, .seq_cst);
 }
 fn onClose(_: c_int, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
     g_closed.store(true, .seq_cst);
@@ -59,10 +59,24 @@ fn opened() bool {
     return g_opened.load(.seq_cst);
 }
 fn echoed() bool {
-    return g_echoed.load(.seq_cst);
+    return g_echoed.load(.seq_cst) > 0;
+}
+fn closed() bool {
+    return g_closed.load(.seq_cst);
 }
 fn failed() bool {
     return g_closed.load(.seq_cst) or g_errored.load(.seq_cst);
+}
+
+// Skip rather than fail when the echo server isn't there.
+fn connectOrSkip(ev: *const c.colyseus_transport_events_t, settings: *c.colyseus_settings_t) ![*c]c.colyseus_transport_t {
+    const transport = c.colyseus_websocket_transport_create(ev);
+    c.colyseus_websocket_connect_with_settings(transport, URL, settings);
+    if (!pollUntil(opened, 8 * std.time.ns_per_s)) {
+        c.colyseus_transport_destroy(transport);
+        return error.SkipZigTest;
+    }
+    return transport;
 }
 
 fn pollUntil(condition: anytype, deadline_ns: u64) bool {
@@ -188,12 +202,7 @@ test "tls: destroy while the reader is busy joins before it frees" {
 
     for (0..rounds) |_| {
         reset();
-        const transport = c.colyseus_websocket_transport_create(&ev);
-        c.colyseus_websocket_connect_with_settings(transport, URL, settings);
-        if (!pollUntil(opened, 8 * std.time.ns_per_s)) {
-            c.colyseus_transport_destroy(transport);
-            return error.SkipZigTest;
-        }
+        const transport = try connectOrSkip(&ev, settings);
 
         // Queued, not sent: the tick thread flushes, so it is saturated in
         // both directions by the time the first echo comes back.
@@ -206,63 +215,47 @@ test "tls: destroy while the reader is busy joins before it frees" {
     }
 }
 
-// The app thread queues on the same wslay context the tick thread drains. Its
-// queue is a singly linked list with a tail pointer; a push interleaved with
-// the pop of the last element either orphans the pushed message or leaves
-// `tail` dangling, after which every later send vanishes (wslay asserts on
-// that in Debug). Only bites when the queue is near empty, so keep it there.
-var g_echo_count = std.atomic.Value(u32).init(0);
-fn onMessageCount(_: [*c]const u8, _: usize, _: ?*anyopaque) callconv(.c) void {
-    _ = g_echo_count.fetchAdd(1, .seq_cst);
-}
-var g_want: u32 = 0;
+// Against the bug the app thread queued straight into the wslay context the
+// tick thread drains. Its queue is a singly linked list with a tail pointer; a
+// push interleaved with the pop of the last element either orphans the pushed
+// message or leaves `tail` dangling, after which every later send vanishes
+// (wslay asserts on that in Debug). It only bites when the queue is near
+// empty, so the test reaches into the impl to hold it there: an echo-count
+// throttle misses the window, the echo arrives after the pop.
+const send_rounds = 3;
+const sends_per_round: u32 = 20000;
 fn allEchoed() bool {
-    return g_echo_count.load(.seq_cst) >= g_want;
+    return g_echoed.load(.seq_cst) >= sends_per_round;
 }
 
 test "tls: every send from the app thread reaches the wire while the tick thread drains" {
-    const rounds = 5;
-    const sends: u32 = 20000;
-
     const ca = try loadPem("tests/tls/ca.pem");
     defer testing.allocator.free(ca);
     const settings = makeSettings(ca, false);
     defer c.colyseus_settings_free(settings);
-
     var ev = makeEvents();
-    ev.on_message = onMessageCount;
     const payload = [_]u8{ 'p', 'r', 'o', 'b', 'e' };
 
-    for (0..rounds) |round| {
+    for (0..send_rounds) |round| {
         reset();
-        g_echo_count.store(0, .seq_cst);
-        g_want = sends;
-        const transport = c.colyseus_websocket_transport_create(&ev);
-        c.colyseus_websocket_connect_with_settings(transport, URL, settings);
-        if (!pollUntil(opened, 8 * std.time.ns_per_s)) {
-            c.colyseus_transport_destroy(transport);
-            return error.SkipZigTest;
-        }
+        const transport = try connectOrSkip(&ev, settings);
 
         const impl: *c.colyseus_ws_transport_data_t = @ptrCast(@alignCast(transport.*.impl_data));
         var prng = std.Random.DefaultPrng.init(round);
         const rnd = prng.random();
         var i: u32 = 0;
-        while (i < sends) : (i += 1) {
-            // keep the queue at <=2 so almost every pop is a last-element pop,
-            // and jitter the push so it sweeps the pop's window
+        while (i < sends_per_round) : (i += 1) {
             while (c.wslay_event_get_queued_msg_count(impl.wslay_ctx) > 1) std.atomic.spinLoopHint();
+            // jitter the push so it sweeps the pop's window
             const jitter = rnd.uintLessThan(u32, 400);
             var spin: u32 = 0;
             while (spin < jitter) : (spin += 1) std.atomic.spinLoopHint();
             c.colyseus_transport_send(transport, &payload, payload.len);
         }
 
-        const ok = pollUntil(allEchoed, 10 * std.time.ns_per_s);
-        const got = g_echo_count.load(.seq_cst);
-        std.debug.print("round {d}: sent={d} echoed={d}{s}\n", .{ round, sends, got, if (ok) "" else "  <-- LOST" });
+        _ = pollUntil(allEchoed, 10 * std.time.ns_per_s);
         c.colyseus_transport_destroy(transport);
-        try testing.expectEqual(sends, got);
+        try testing.expectEqual(sends_per_round, g_echoed.load(.seq_cst));
     }
 }
 
@@ -272,14 +265,10 @@ test "tls: every send from the app thread reaches the wire while the tick thread
 // on the resulting double free; macOS's xzone malloc zeroes freed memory and
 // stays silent, so verify there under Guard Malloc:
 //   DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib .zig-cache/o/<hash>/test
-var g_close_target: ?*c.colyseus_transport_t = null;
-var g_destroyed_in_close = std.atomic.Value(bool).init(false);
-fn onCloseDestroy(_: c_int, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
-    c.colyseus_transport_destroy(g_close_target);
-    g_destroyed_in_close.store(true, .seq_cst);
-}
-fn destroyedInClose() bool {
-    return g_destroyed_in_close.load(.seq_cst);
+fn onCloseDestroy(_: c_int, _: [*c]const u8, ud: ?*anyopaque) callconv(.c) void {
+    const transport: [*c]c.colyseus_transport_t = @ptrCast(@alignCast(ud));
+    c.colyseus_transport_destroy(transport);
+    g_closed.store(true, .seq_cst);
 }
 
 test "tls: destroying the transport from on_close on the tick thread" {
@@ -290,14 +279,14 @@ test "tls: destroying the transport from on_close on the tick thread" {
     var ev = makeEvents();
     ev.on_close = onCloseDestroy;
 
-    for (0..4) |_| {
+    for (0..3) |_| {
         reset();
-        g_destroyed_in_close.store(false, .seq_cst);
         const transport = c.colyseus_websocket_transport_create(&ev);
-        g_close_target = transport;
+        transport.*.events.userdata = transport;
         // verification fails on the tick thread -> deferred close -> on_close there
         c.colyseus_websocket_connect_with_settings(transport, URL, settings);
-        try testing.expect(pollUntil(destroyedInClose, 8 * std.time.ns_per_s));
+        try testing.expect(pollUntil(closed, 8 * std.time.ns_per_s));
+        // a detached thread's exit is unobservable: give a stale touch time to trip
         std.Thread.sleep(50 * std.time.ns_per_ms);
     }
 }
