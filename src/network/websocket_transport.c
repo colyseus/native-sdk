@@ -96,6 +96,7 @@ static void ws_send_unreliable_impl(colyseus_transport_t* transport, const uint8
 static void ws_close_impl(colyseus_transport_t* transport, int code, const char* reason);
 static bool ws_is_open_impl(const colyseus_transport_t* transport);
 static void ws_destroy_impl(colyseus_transport_t* transport);
+static void ws_free(colyseus_transport_t* transport);
 static bool ws_tls_init(colyseus_ws_transport_data_t* data, const char** out_err);
 static void ws_tls_cleanup(colyseus_ws_transport_data_t* data);
 
@@ -302,7 +303,8 @@ static void ws_finish_close(colyseus_transport_t* transport, int code, const cha
     ws_cleanup_wslay(data);
     ws_outbox_drain(data);
     ws_store(&data->state, COLYSEUS_WS_DISCONNECTED);
-    if (transport->events.on_close) {
+    /* A destroy from inside a callback ends the callbacks. */
+    if (transport->events.on_close && ws_load(&data->destroy_owner) != COLYSEUS_WS_DESTROY_LOOP) {
         transport->events.on_close(code, reason, transport->events.userdata);
     }
 }
@@ -312,8 +314,9 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
 
     if (ws_load(&data->state) == COLYSEUS_WS_DISCONNECTED) {
         /* The loop closed on its way out and on_close has fired; reap the
-         * thread before destroy() frees the struct. */
-        ws_reap_tick_thread(data);
+         * thread before destroy() frees the struct. The tick thread itself
+         * reaps and frees on its way out (see ws_tick_thread_func). */
+        if (!ws_on_tick_thread(data)) ws_reap_tick_thread(data);
         return;
     }
 
@@ -358,22 +361,33 @@ static bool ws_is_open_impl(const colyseus_transport_t* transport) {
 
 static void ws_destroy_impl(colyseus_transport_t* transport) {
     if (!transport) return;
+    colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
+
+    /* Nested (destroy from inside on_close of a destroy): the outer one frees. */
+    if (ws_load(&data->destroy_owner) != COLYSEUS_WS_DESTROY_NONE) return;
+
+    bool by_loop = ws_on_tick_thread(data);
+    ws_store(&data->destroy_owner, by_loop ? COLYSEUS_WS_DESTROY_LOOP : COLYSEUS_WS_DESTROY_CALLER);
 
     ws_close_impl(transport, 1000, "Normal closure");
 
-    colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
-    if (data) {
-        free(data->url);
-        free(data->url_host);
-        sdsfree(data->url_path);
-        free(data->client_key);
-        free(data->buffer);
-        free(data->pending_close_reason);
-        ws_outbox_drain(data);
-        ws_lock_destroy(&data->outbox_lock);
-        free(data);
-    }
+    /* From inside a callback on the tick thread the loop may still be
+     * mid-iteration; it frees on its way out. */
+    if (by_loop) return;
+    ws_free(transport);
+}
 
+static void ws_free(colyseus_transport_t* transport) {
+    colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
+    free(data->url);
+    free(data->url_host);
+    sdsfree(data->url_path);
+    free(data->client_key);
+    free(data->buffer);
+    free(data->pending_close_reason);
+    ws_outbox_drain(data);
+    ws_lock_destroy(&data->outbox_lock);
+    free(data);
     free(transport);
 }
 
@@ -394,8 +408,7 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
 #endif
     }
 
-    /* Deferred close: on_close fires here, on the tick thread, and the handler
-     * may destroy the transport. Nothing after the callback may touch `data`. */
+    /* Deferred close: on_close fires here, on the tick thread. */
     if (data->pending_close) {
         int code = data->pending_close_code;
         char* reason = data->pending_close_reason;
@@ -405,6 +418,12 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
 
         ws_finish_close(transport, code, reason);
         free(reason);
+    }
+
+    /* A destroy from inside a callback on this thread left the free to us. */
+    if (ws_load(&data->destroy_owner) == COLYSEUS_WS_DESTROY_LOOP) {
+        ws_reap_tick_thread(data);
+        ws_free(transport);
     }
 
 #ifdef _WIN32

@@ -32,6 +32,14 @@ extern "C" {
         COLYSEUS_WS_REMOTE_DISCONNECT
     } colyseus_ws_state_t;
 
+    /* Who frees the transport. A destroy from inside a callback on the tick
+     * thread hands the free to the loop's exit; a nested destroy returns. */
+    typedef enum {
+        COLYSEUS_WS_DESTROY_NONE,
+        COLYSEUS_WS_DESTROY_CALLER,
+        COLYSEUS_WS_DESTROY_LOOP
+    } colyseus_ws_destroy_owner_t;
+
     /* WebSocket transport implementation data */
     typedef struct {
         /* Pointers first (8-byte aligned on 64-bit) */
@@ -53,6 +61,7 @@ extern "C" {
 
         /* 4-byte fields */
         colyseus_ws_state_t state;
+        colyseus_ws_destroy_owner_t destroy_owner;
         int url_port;
         int socket_fd;
 
