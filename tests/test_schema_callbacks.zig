@@ -527,7 +527,12 @@ test "callbacks: nested property listening" {
         true,
     );
 
-    std.Thread.sleep(50 * std.time.ns_per_ms);
+    // Poll rather than sleep a constant: this waits on the join patch landing,
+    // and 50 ms was a bet on how fast the machine is that CI kept winning.
+    for (0..200) |_| {
+        if (on_add_callback_count >= 1) break;
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
 
     // Should have registered nested listener when player was added
     try testing.expect(on_add_callback_count >= 1);
