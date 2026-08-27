@@ -56,19 +56,6 @@ extern "C" {
         int url_port;
         int socket_fd;
 
-        /* Identity of the tick thread, valid while `tick_thread` is set. A
-         * close has to know whether IT is the tick thread — joining yourself
-         * deadlocks — and "a tick thread exists" is not the same question.
-         * Answering the second one defers a close that nobody will ever
-         * complete, and the caller then frees this struct out from under the
-         * still-running loop. */
-#ifdef _WIN32
-        unsigned long tick_thread_id;
-#else
-        pthread_t tick_thread_id;
-#endif
-        bool tick_thread_id_valid;
-
         /* 1-byte fields */
         bool running;
         bool pending_close;          /* Close requested from within tick thread */

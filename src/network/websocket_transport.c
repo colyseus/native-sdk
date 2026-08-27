@@ -45,6 +45,16 @@
     #define ws_unlock(l)       pthread_mutex_unlock(l)
 #endif
 
+/* The transport whose tick loop runs on this thread. A close has to know
+ * whether IT is the tick thread (joining yourself deadlocks), and "a tick
+ * thread exists" is not the same question. */
+static _Thread_local const colyseus_ws_transport_data_t* ws_current_tick = NULL;
+
+/* `running` and `state` cross threads. The header keeps them plain so Zig's
+ * translate-c still sees the struct; the ordering lives here. */
+#define ws_load(p)     __atomic_load_n((p), __ATOMIC_ACQUIRE)
+#define ws_store(p, v) __atomic_store_n((p), (v), __ATOMIC_RELEASE)
+
 struct colyseus_ws_outbox_msg {
     struct colyseus_ws_outbox_msg* next;
     size_t length;
@@ -143,9 +153,8 @@ colyseus_transport_t* colyseus_websocket_transport_create(const colyseus_transpo
     }
 
     memset(data, 0, sizeof(colyseus_ws_transport_data_t));
-    data->state = COLYSEUS_WS_DISCONNECTED;
+    ws_store(&data->state, COLYSEUS_WS_DISCONNECTED);
     data->running = false;
-    data->tick_thread_id_valid = false;
     data->pending_close = false;
     data->pending_close_code = 0;
     data->pending_close_reason = NULL;
@@ -171,7 +180,7 @@ static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
 
     WS_LOG("Connect called: %s (TLS=%d, skip_verify=%d)", url, data->use_tls, data->tls_skip_verify);
 
-    if (data->state != COLYSEUS_WS_DISCONNECTED) {
+    if (ws_load(&data->state) != COLYSEUS_WS_DISCONNECTED) {
         WS_LOG("Already connecting/connected, state=%d", data->state);
         return;
     }
@@ -189,16 +198,17 @@ static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
     }
 
     WS_LOG("Socket initialized, starting state machine");
-    data->state = COLYSEUS_WS_CONNECTING;
+    ws_store(&data->state, COLYSEUS_WS_CONNECTING);
     data->running = true;
 
     /* Create tick thread */
 #ifdef _WIN32
     data->tick_thread = CreateThread(NULL, 0, ws_tick_thread_func, transport, 0, NULL);
 #else
+    /* Published before the thread exists: its first tick may already close. */
     pthread_t* thread = malloc(sizeof(pthread_t));
-    pthread_create(thread, NULL, ws_tick_thread_func, transport);
     data->tick_thread = thread;
+    pthread_create(thread, NULL, ws_tick_thread_func, transport);
 #endif
 
     WS_LOG("Tick thread created");
@@ -207,11 +217,12 @@ static void ws_connect_impl(colyseus_transport_t* transport, const char* url) {
 static void ws_send_impl(colyseus_transport_t* transport, const uint8_t* data, size_t length) {
     colyseus_ws_transport_data_t* impl = (colyseus_ws_transport_data_t*)transport->impl_data;
 
-    WS_LOG("ws_send_impl called: state=%d length=%zu", impl->state, length);
     ws_hex_dump("ws_send_impl_payload", data, length);
 
-    if (impl->state != COLYSEUS_WS_CONNECTED) {
-        WS_LOG("ws_send_impl: DROPPING - not connected (state=%d)", impl->state);
+    colyseus_ws_state_t state = ws_load(&impl->state);
+    WS_LOG("ws_send_impl called: state=%d length=%zu", state, length);
+    if (state != COLYSEUS_WS_CONNECTED) {
+        WS_LOG("ws_send_impl: DROPPING - not connected (state=%d)", state);
         return;
     }
 
@@ -261,12 +272,7 @@ static void ws_send_unreliable_impl(colyseus_transport_t* transport, const uint8
 
 /* Whether the calling thread IS this transport's tick thread. */
 static bool ws_on_tick_thread(const colyseus_ws_transport_data_t* data) {
-    if (!data->tick_thread_id_valid) return false;
-#ifdef _WIN32
-    return data->tick_thread_id == GetCurrentThreadId();
-#else
-    return pthread_equal(data->tick_thread_id, pthread_self()) != 0;
-#endif
+    return ws_current_tick == data;
 }
 
 /* Reap the tick thread's OS handle: join it, or, when the caller IS the tick
@@ -280,12 +286,11 @@ static void ws_reap_tick_thread(colyseus_ws_transport_data_t* data) {
     CloseHandle(data->tick_thread);
 #else
     pthread_t* thread = (pthread_t*)data->tick_thread;
-    if (self) pthread_detach(*thread);
+    if (self) pthread_detach(pthread_self());
     else pthread_join(*thread, NULL);
     free(thread);
 #endif
     data->tick_thread = NULL;
-    data->tick_thread_id_valid = false;
 }
 
 /* The teardown both owners share: the closer below, and the loop finishing a
@@ -296,7 +301,7 @@ static void ws_finish_close(colyseus_transport_t* transport, int code, const cha
     ws_socket_close(data);
     ws_cleanup_wslay(data);
     ws_outbox_drain(data);
-    data->state = COLYSEUS_WS_DISCONNECTED;
+    ws_store(&data->state, COLYSEUS_WS_DISCONNECTED);
     if (transport->events.on_close) {
         transport->events.on_close(code, reason, transport->events.userdata);
     }
@@ -305,7 +310,7 @@ static void ws_finish_close(colyseus_transport_t* transport, int code, const cha
 static void ws_close_impl(colyseus_transport_t* transport, int code, const char* reason) {
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
-    if (data->state == COLYSEUS_WS_DISCONNECTED) {
+    if (ws_load(&data->state) == COLYSEUS_WS_DISCONNECTED) {
         /* The loop closed on its way out and on_close has fired; reap the
          * thread before destroy() frees the struct. */
         ws_reap_tick_thread(data);
@@ -323,11 +328,11 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
         data->pending_close_code = code;
         free(data->pending_close_reason);
         data->pending_close_reason = reason ? strdup(reason) : NULL;
-        data->running = false;  /* Signal thread to exit */
+        ws_store(&data->running, false);
         return;
     }
 
-    data->running = false;
+    ws_store(&data->running, false);
 
     /* Join before releasing anything the loop reads: `running` is only checked
      * at the top of an iteration, so the thread can still be inside
@@ -348,7 +353,7 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
 
 static bool ws_is_open_impl(const colyseus_transport_t* transport) {
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
-    return data->state == COLYSEUS_WS_CONNECTED;
+    return ws_load(&data->state) == COLYSEUS_WS_CONNECTED;
 }
 
 static void ws_destroy_impl(colyseus_transport_t* transport) {
@@ -377,14 +382,9 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
     colyseus_transport_t* transport = (colyseus_transport_t*)arg;
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
-#ifdef _WIN32
-    data->tick_thread_id = GetCurrentThreadId();
-#else
-    data->tick_thread_id = pthread_self();
-#endif
-    data->tick_thread_id_valid = true;
+    ws_current_tick = data;
 
-    while (data->running) {
+    while (ws_load(&data->running)) {
         ws_tick_once(transport);
 
 #ifdef _WIN32
@@ -395,9 +395,7 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
     }
 
     /* Deferred close: on_close fires here, on the tick thread, and the handler
-     * may destroy the transport. Nothing after the callback may touch `data`,
-     * and the thread id stays valid so that destroy detaches instead of
-     * joining itself. */
+     * may destroy the transport. Nothing after the callback may touch `data`. */
     if (data->pending_close) {
         int code = data->pending_close_code;
         char* reason = data->pending_close_reason;
@@ -457,9 +455,9 @@ static void ws_tick_once(colyseus_transport_t* transport) {
                     ws_close_impl(transport, 1006, tls_err);
                     return;
                 }
-                data->state = COLYSEUS_WS_TLS_HANDSHAKE;
+                ws_store(&data->state, COLYSEUS_WS_TLS_HANDSHAKE);
             } else {
-                data->state = COLYSEUS_WS_HANDSHAKE_SENDING;
+                ws_store(&data->state, COLYSEUS_WS_HANDSHAKE_SENDING);
                 ws_http_handshake_init(data);
             }
         }
@@ -468,7 +466,7 @@ static void ws_tick_once(colyseus_transport_t* transport) {
         int hs = ws_tls_handshake_tick(data);
         if (hs == WS_TLS_HS_DONE) {
             WS_LOG("TLS handshake complete");
-            data->state = COLYSEUS_WS_HANDSHAKE_SENDING;
+            ws_store(&data->state, COLYSEUS_WS_HANDSHAKE_SENDING);
             ws_http_handshake_init(data);
         } else if (hs == WS_TLS_HS_CERT_FAILED) {
             ws_close_impl(transport, 1015, "TLS certificate verification failed");
@@ -481,13 +479,13 @@ static void ws_tick_once(colyseus_transport_t* transport) {
     else if (data->state == COLYSEUS_WS_HANDSHAKE_SENDING) {
         if (ws_http_handshake_send(data)) {
             WS_LOG("Handshake sent");
-            data->state = COLYSEUS_WS_HANDSHAKE_RECEIVING;
+            ws_store(&data->state, COLYSEUS_WS_HANDSHAKE_RECEIVING);
         }
     }
     else if (data->state == COLYSEUS_WS_HANDSHAKE_RECEIVING) {
         if (ws_http_handshake_receive(data)) {
             WS_LOG("Handshake received, WS connected");
-            data->state = COLYSEUS_WS_CONNECTED;
+            ws_store(&data->state, COLYSEUS_WS_CONNECTED);
 
             /* Initialize wslay */
             struct wslay_event_callbacks callbacks = {
@@ -791,7 +789,7 @@ static void ws_on_msg_recv_callback(wslay_event_context_ptr ctx, const struct ws
                 fflush(stderr);
             }
             ws_hex_dump("close_payload", arg->msg, arg->msg_length);
-            data->state = COLYSEUS_WS_REMOTE_DISCONNECT;
+            ws_store(&data->state, COLYSEUS_WS_REMOTE_DISCONNECT);
         }
         // wslay handles ping/pong automatically
     } else {
