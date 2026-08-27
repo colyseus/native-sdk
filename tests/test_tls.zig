@@ -205,3 +205,63 @@ test "tls: destroy while the reader is busy joins before it frees" {
         c.colyseus_transport_destroy(transport);
     }
 }
+
+// The app thread queues on the same wslay context the tick thread drains. Its
+// queue is a singly linked list with a tail pointer; a push interleaved with
+// the pop of the last element either orphans the pushed message or leaves
+// `tail` dangling, after which every later send vanishes (wslay asserts on
+// that in Debug). Only bites when the queue is near empty, so keep it there.
+var g_echo_count = std.atomic.Value(u32).init(0);
+fn onMessageCount(_: [*c]const u8, _: usize, _: ?*anyopaque) callconv(.c) void {
+    _ = g_echo_count.fetchAdd(1, .seq_cst);
+}
+var g_want: u32 = 0;
+fn allEchoed() bool {
+    return g_echo_count.load(.seq_cst) >= g_want;
+}
+
+test "tls: every send from the app thread reaches the wire while the tick thread drains" {
+    const rounds = 5;
+    const sends: u32 = 20000;
+
+    const ca = try loadPem("tests/tls/ca.pem");
+    defer testing.allocator.free(ca);
+    const settings = makeSettings(ca, false);
+    defer c.colyseus_settings_free(settings);
+
+    var ev = makeEvents();
+    ev.on_message = onMessageCount;
+    const payload = [_]u8{ 'p', 'r', 'o', 'b', 'e' };
+
+    for (0..rounds) |round| {
+        reset();
+        g_echo_count.store(0, .seq_cst);
+        g_want = sends;
+        const transport = c.colyseus_websocket_transport_create(&ev);
+        c.colyseus_websocket_connect_with_settings(transport, URL, settings);
+        if (!pollUntil(opened, 8 * std.time.ns_per_s)) {
+            c.colyseus_transport_destroy(transport);
+            return error.SkipZigTest;
+        }
+
+        const impl: *c.colyseus_ws_transport_data_t = @ptrCast(@alignCast(transport.*.impl_data));
+        var prng = std.Random.DefaultPrng.init(round);
+        const rnd = prng.random();
+        var i: u32 = 0;
+        while (i < sends) : (i += 1) {
+            // keep the queue at <=2 so almost every pop is a last-element pop,
+            // and jitter the push so it sweeps the pop's window
+            while (c.wslay_event_get_queued_msg_count(impl.wslay_ctx) > 1) std.atomic.spinLoopHint();
+            const jitter = rnd.uintLessThan(u32, 400);
+            var spin: u32 = 0;
+            while (spin < jitter) : (spin += 1) std.atomic.spinLoopHint();
+            c.colyseus_transport_send(transport, &payload, payload.len);
+        }
+
+        const ok = pollUntil(allEchoed, 10 * std.time.ns_per_s);
+        const got = g_echo_count.load(.seq_cst);
+        std.debug.print("round {d}: sent={d} echoed={d}{s}\n", .{ round, sends, got, if (ok) "" else "  <-- LOST" });
+        c.colyseus_transport_destroy(transport);
+        try testing.expectEqual(sends, got);
+    }
+}
