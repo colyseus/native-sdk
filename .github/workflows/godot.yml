@@ -37,13 +37,21 @@ jobs:
         with:
           fetch-depth: 2
 
+      # Not EndBug/version-check: it walks the event's commit list, which
+      # GitHub truncates at 30, and then crashes outright on the diff search
+      # ("TypeError: Cannot read properties of undefined (reading 'split')").
+      # HEAD^ is the previous commit on a push and the base branch on a
+      # pull_request, so one comparison answers it without a commit list.
       - name: Check version changes
         if: github.event_name != 'workflow_dispatch'
-        uses: EndBug/version-check@v2
         id: version-check
-        with:
-          file-name: platforms/godot/addons/colyseus/version.json
-          diff-search: true
+        run: |
+          file=platforms/godot/addons/colyseus/version.json
+          version=$(jq -r .version "$file")
+          before=$(git show "HEAD^:$file" 2>/dev/null | jq -r .version || true)
+          if [ "$version" = "$before" ]; then changed=false; else changed=true; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
       - name: Read version (manual run)
         if: github.event_name == 'workflow_dispatch'
