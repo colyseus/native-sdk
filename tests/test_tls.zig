@@ -71,6 +71,7 @@ fn failed() bool {
 // Skip rather than fail when the echo server isn't there.
 fn connectOrSkip(ev: *const c.colyseus_transport_events_t, settings: *c.colyseus_settings_t) ![*c]c.colyseus_transport_t {
     const transport = c.colyseus_websocket_transport_create(ev);
+    transport.*.events.userdata = transport;
     c.colyseus_websocket_connect_with_settings(transport, URL, settings);
     if (!pollUntil(opened, 8 * std.time.ns_per_s)) {
         c.colyseus_transport_destroy(transport);
@@ -291,9 +292,10 @@ test "tls: destroying the transport from on_close on the tick thread" {
     }
 }
 
-// on_message fires from inside wslay's recv, mid-tick. A destroy there must
-// leave the loop to finish the iteration and free on its way out, and end the
-// callbacks: no on_close after the app said it is done.
+// on_message fires from inside wslay's recv, mid-tick, and wslay dispatches
+// every buffered frame in that one call. A destroy there must leave the loop
+// to finish the iteration and free on its way out, and end the callbacks: no
+// further message and no on_close after the app said it is done.
 fn onMessageDestroy(_: [*c]const u8, _: usize, ud: ?*anyopaque) callconv(.c) void {
     const transport: [*c]c.colyseus_transport_t = @ptrCast(@alignCast(ud));
     c.colyseus_transport_destroy(transport);
@@ -308,20 +310,32 @@ test "tls: destroying the transport from on_message on the tick thread" {
     var ev = makeEvents();
     ev.on_message = onMessageDestroy;
 
-    for (0..3) |_| {
+    for (0..2) |_| {
         reset();
-        const transport = c.colyseus_websocket_transport_create(&ev);
-        transport.*.events.userdata = transport;
-        c.colyseus_websocket_connect_with_settings(transport, URL, settings);
-        if (!pollUntil(opened, 8 * std.time.ns_per_s)) {
-            c.colyseus_transport_destroy(transport);
-            return error.SkipZigTest;
-        }
-        c.colyseus_transport_send(transport, "x", 1);
+        const transport = try connectOrSkip(&ev, settings);
+        // a burst, so the echoes land in one recv
+        for (0..64) |_| c.colyseus_transport_send(transport, "x", 1);
         try testing.expect(pollUntil(echoed, 8 * std.time.ns_per_s));
-        // the loop finishes its iteration and frees; nothing observable but a
-        // crash, and the callbacks must have ended
-        std.Thread.sleep(100 * std.time.ns_per_ms);
-        try testing.expect(!g_closed.load(.seq_cst));
+        // the loop frees ~10 ms later, unobservably; let a wrong callback land
+        try testing.expect(!pollUntil(closed, 50 * std.time.ns_per_ms));
+        try testing.expectEqual(@as(u32, 1), g_echoed.load(.seq_cst));
+    }
+}
+
+// destroy() off the tick thread fires on_close inside itself; a destroy from
+// that handler must be a no-op, not a second free.
+test "tls: a destroy nested inside a destroy's on_close is a no-op" {
+    const ca = try loadPem("tests/tls/ca.pem");
+    defer testing.allocator.free(ca);
+    const settings = makeSettings(ca, false);
+    defer c.colyseus_settings_free(settings);
+    var ev = makeEvents();
+    ev.on_close = onCloseDestroy;
+
+    for (0..2) |_| {
+        reset();
+        const transport = try connectOrSkip(&ev, settings);
+        c.colyseus_transport_destroy(transport);
+        try testing.expect(closed());
     }
 }

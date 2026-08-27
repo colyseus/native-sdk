@@ -50,8 +50,8 @@
  * thread exists" is not the same question. */
 static _Thread_local const colyseus_ws_transport_data_t* ws_current_tick = NULL;
 
-/* `running` and `state` cross threads. The header keeps them plain so Zig's
- * translate-c still sees the struct; the ordering lives here. */
+/* `running`, `state` and `destroy_owner` cross threads. The header keeps them
+ * plain so Zig's translate-c still sees the struct; the ordering lives here. */
 #define ws_load(p)     __atomic_load_n((p), __ATOMIC_ACQUIRE)
 #define ws_store(p, v) __atomic_store_n((p), (v), __ATOMIC_RELEASE)
 
@@ -96,7 +96,6 @@ static void ws_send_unreliable_impl(colyseus_transport_t* transport, const uint8
 static void ws_close_impl(colyseus_transport_t* transport, int code, const char* reason);
 static bool ws_is_open_impl(const colyseus_transport_t* transport);
 static void ws_destroy_impl(colyseus_transport_t* transport);
-static void ws_free(colyseus_transport_t* transport);
 static bool ws_tls_init(colyseus_ws_transport_data_t* data, const char** out_err);
 static void ws_tls_cleanup(colyseus_ws_transport_data_t* data);
 
@@ -276,26 +275,23 @@ static bool ws_on_tick_thread(const colyseus_ws_transport_data_t* data) {
     return ws_current_tick == data;
 }
 
-/* Reap the tick thread's OS handle: join it, or, when the caller IS the tick
- * thread (a destroy from inside on_close), detach since it can't join itself.
- * The loop touches nothing after that callback, so freeing under it is safe. */
-static void ws_reap_tick_thread(colyseus_ws_transport_data_t* data) {
+/* Join the tick thread. Never from the tick thread itself: after a destroy
+ * from one of its callbacks the loop detaches and frees itself on exit. */
+static void ws_join_tick_thread(colyseus_ws_transport_data_t* data) {
     if (!data->tick_thread) return;
-    bool self = ws_on_tick_thread(data);
 #ifdef _WIN32
-    if (!self) WaitForSingleObject(data->tick_thread, INFINITE);
+    WaitForSingleObject(data->tick_thread, INFINITE);
     CloseHandle(data->tick_thread);
 #else
     pthread_t* thread = (pthread_t*)data->tick_thread;
-    if (self) pthread_detach(pthread_self());
-    else pthread_join(*thread, NULL);
+    pthread_join(*thread, NULL);
     free(thread);
 #endif
     data->tick_thread = NULL;
 }
 
-/* The teardown both owners share: the closer below, and the loop finishing a
- * deferred close on its way out. */
+/* The teardown both closers share: ws_close_impl below, and the loop finishing
+ * a deferred close on its way out. */
 static void ws_finish_close(colyseus_transport_t* transport, int code, const char* reason) {
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
     ws_tls_cleanup(data);
@@ -313,10 +309,9 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
     if (ws_load(&data->state) == COLYSEUS_WS_DISCONNECTED) {
-        /* The loop closed on its way out and on_close has fired; reap the
-         * thread before destroy() frees the struct. The tick thread itself
-         * reaps and frees on its way out (see ws_tick_thread_func). */
-        if (!ws_on_tick_thread(data)) ws_reap_tick_thread(data);
+        /* The loop closed on its way out and on_close has fired; a caller
+         * reaps the thread before destroy() frees the struct. */
+        if (!ws_on_tick_thread(data)) ws_join_tick_thread(data);
         return;
     }
 
@@ -327,6 +322,8 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
      * loop is still reading it. */
     if (ws_on_tick_thread(data)) {
         WS_LOG("Close called from tick thread - deferring");
+        /* wslay dispatches every buffered frame in one recv: no message after close */
+        if (data->wslay_ctx) wslay_event_shutdown_read(data->wslay_ctx);
         data->pending_close = true;
         data->pending_close_code = code;
         free(data->pending_close_reason);
@@ -340,7 +337,7 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
     /* Join before releasing anything the loop reads: `running` is only checked
      * at the top of an iteration, so the thread can still be inside
      * mbedtls_ssl_read. No lock here — the join is the handoff. */
-    ws_reap_tick_thread(data);
+    ws_join_tick_thread(data);
 
     /* The loop closed on its own way out; on_close has already fired. */
     if (data->state == COLYSEUS_WS_DISCONNECTED) return;
@@ -359,24 +356,6 @@ static bool ws_is_open_impl(const colyseus_transport_t* transport) {
     return ws_load(&data->state) == COLYSEUS_WS_CONNECTED;
 }
 
-static void ws_destroy_impl(colyseus_transport_t* transport) {
-    if (!transport) return;
-    colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
-
-    /* Nested (destroy from inside on_close of a destroy): the outer one frees. */
-    if (ws_load(&data->destroy_owner) != COLYSEUS_WS_DESTROY_NONE) return;
-
-    bool by_loop = ws_on_tick_thread(data);
-    ws_store(&data->destroy_owner, by_loop ? COLYSEUS_WS_DESTROY_LOOP : COLYSEUS_WS_DESTROY_CALLER);
-
-    ws_close_impl(transport, 1000, "Normal closure");
-
-    /* From inside a callback on the tick thread the loop may still be
-     * mid-iteration; it frees on its way out. */
-    if (by_loop) return;
-    ws_free(transport);
-}
-
 static void ws_free(colyseus_transport_t* transport) {
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
     free(data->url);
@@ -389,6 +368,22 @@ static void ws_free(colyseus_transport_t* transport) {
     ws_lock_destroy(&data->outbox_lock);
     free(data);
     free(transport);
+}
+
+static void ws_destroy_impl(colyseus_transport_t* transport) {
+    if (!transport) return;
+    colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
+
+    /* Nested (destroy from inside on_close of a destroy): the outer one frees. */
+    if (ws_load(&data->destroy_owner) != COLYSEUS_WS_DESTROY_NONE) return;
+
+    bool by_loop = ws_on_tick_thread(data);
+    ws_store(&data->destroy_owner, by_loop ? COLYSEUS_WS_DESTROY_LOOP : COLYSEUS_WS_DESTROY_CALLER);
+
+    ws_close_impl(transport, 1000, "Normal closure");
+
+    /* From a callback on the tick thread the loop frees on its way out. */
+    if (!by_loop) ws_free(transport);
 }
 
 /* Tick thread */
@@ -408,7 +403,7 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
 #endif
     }
 
-    /* Deferred close: on_close fires here, on the tick thread. */
+    /* Deferred close finishes here, on the tick thread. */
     if (data->pending_close) {
         int code = data->pending_close_code;
         char* reason = data->pending_close_reason;
@@ -422,7 +417,12 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
 
     /* A destroy from inside a callback on this thread left the free to us. */
     if (ws_load(&data->destroy_owner) == COLYSEUS_WS_DESTROY_LOOP) {
-        ws_reap_tick_thread(data);
+#ifdef _WIN32
+        CloseHandle(data->tick_thread);
+#else
+        pthread_detach(pthread_self());
+        free(data->tick_thread);
+#endif
         ws_free(transport);
     }
 
