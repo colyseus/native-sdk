@@ -290,3 +290,38 @@ test "tls: destroying the transport from on_close on the tick thread" {
         std.Thread.sleep(50 * std.time.ns_per_ms);
     }
 }
+
+// on_message fires from inside wslay's recv, mid-tick. A destroy there must
+// leave the loop to finish the iteration and free on its way out, and end the
+// callbacks: no on_close after the app said it is done.
+fn onMessageDestroy(_: [*c]const u8, _: usize, ud: ?*anyopaque) callconv(.c) void {
+    const transport: [*c]c.colyseus_transport_t = @ptrCast(@alignCast(ud));
+    c.colyseus_transport_destroy(transport);
+    _ = g_echoed.fetchAdd(1, .seq_cst);
+}
+
+test "tls: destroying the transport from on_message on the tick thread" {
+    const ca = try loadPem("tests/tls/ca.pem");
+    defer testing.allocator.free(ca);
+    const settings = makeSettings(ca, false);
+    defer c.colyseus_settings_free(settings);
+    var ev = makeEvents();
+    ev.on_message = onMessageDestroy;
+
+    for (0..3) |_| {
+        reset();
+        const transport = c.colyseus_websocket_transport_create(&ev);
+        transport.*.events.userdata = transport;
+        c.colyseus_websocket_connect_with_settings(transport, URL, settings);
+        if (!pollUntil(opened, 8 * std.time.ns_per_s)) {
+            c.colyseus_transport_destroy(transport);
+            return error.SkipZigTest;
+        }
+        c.colyseus_transport_send(transport, "x", 1);
+        try testing.expect(pollUntil(echoed, 8 * std.time.ns_per_s));
+        // the loop finishes its iteration and frees; nothing observable but a
+        // crash, and the callbacks must have ended
+        std.Thread.sleep(100 * std.time.ns_per_ms);
+        try testing.expect(!g_closed.load(.seq_cst));
+    }
+}
