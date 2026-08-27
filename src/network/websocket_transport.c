@@ -223,6 +223,33 @@ static bool ws_on_tick_thread(const colyseus_ws_transport_data_t* data) {
 #endif
 }
 
+/* Reap the tick thread's OS handle. Never call from the tick thread itself. */
+static void ws_join_tick_thread(colyseus_ws_transport_data_t* data) {
+    if (!data->tick_thread) return;
+#ifdef _WIN32
+    WaitForSingleObject(data->tick_thread, INFINITE);
+    CloseHandle(data->tick_thread);
+#else
+    pthread_t* thread = (pthread_t*)data->tick_thread;
+    pthread_join(*thread, NULL);
+    free(thread);
+#endif
+    data->tick_thread = NULL;
+}
+
+/* The teardown both owners share: the closer below, and the loop finishing a
+ * deferred close on its way out. */
+static void ws_finish_close(colyseus_transport_t* transport, int code, const char* reason) {
+    colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
+    ws_tls_cleanup(data);
+    ws_socket_close(data);
+    ws_cleanup_wslay(data);
+    data->state = COLYSEUS_WS_DISCONNECTED;
+    if (transport->events.on_close) {
+        transport->events.on_close(code, reason, transport->events.userdata);
+    }
+}
+
 static void ws_close_impl(colyseus_transport_t* transport, int code, const char* reason) {
     colyseus_ws_transport_data_t* data = (colyseus_ws_transport_data_t*)transport->impl_data;
 
@@ -231,18 +258,7 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
          * The tick thread function has returned by now (or is about to),
          * but the OS handle hasn't been reaped yet — join it before
          * destroy() releases the surrounding struct. */
-        if (data->tick_thread) {
-#ifdef _WIN32
-            WaitForSingleObject(data->tick_thread, INFINITE);
-            CloseHandle(data->tick_thread);
-            data->tick_thread = NULL;
-#else
-            pthread_t* thread = (pthread_t*)data->tick_thread;
-            pthread_join(*thread, NULL);
-            free(thread);
-            data->tick_thread = NULL;
-#endif
-        }
+        ws_join_tick_thread(data);
         return;
     }
 
@@ -263,49 +279,20 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
 
     data->running = false;
 
-    /* Join BEFORE touching anything the loop owns. `running` is only read at
-     * the top of an iteration, so the thread can be inside mbedtls_ssl_read
-     * right now — and the cleanup below frees the context it is reading
-     * through. That is the teardown crash: the loop takes a read error, tries
-     * to send an alert, and mbedtls_ssl_flush_output faults on an out_buf
-     * that was freed under it. This transport has no lock; the join is the
-     * handoff, so nothing may be released ahead of it. */
-#ifdef _WIN32
-    if (data->tick_thread) {
-        WaitForSingleObject(data->tick_thread, INFINITE);
-        CloseHandle(data->tick_thread);
-        data->tick_thread = NULL;
-    }
-#else
-    if (data->tick_thread) {
-        pthread_t* thread = (pthread_t*)data->tick_thread;
-        pthread_join(*thread, NULL);
-        free(thread);
-        data->tick_thread = NULL;
-    }
-#endif
+    /* Join before releasing anything the loop reads: `running` is only checked
+     * at the top of an iteration, so the thread can still be inside
+     * mbedtls_ssl_read. No lock here — the join is the handoff. */
+    ws_join_tick_thread(data);
 
-    /* A read error makes the loop close on its own way out, which it has now
-     * finished — including on_close. Nothing left to tear down. */
-    if (data->state == COLYSEUS_WS_DISCONNECTED) {
-        return;
-    }
+    /* The loop closed on its own way out; on_close has already fired. */
+    if (data->state == COLYSEUS_WS_DISCONNECTED) return;
 
-    /* Sole owner from here. */
     if (data->wslay_ctx && data->state == COLYSEUS_WS_CONNECTED) {
         wslay_event_queue_close(data->wslay_ctx, code, (const uint8_t*)reason, reason ? strlen(reason) : 0);
         wslay_event_send(data->wslay_ctx);
     }
 
-    ws_tls_cleanup(data);
-    ws_socket_close(data);
-    ws_cleanup_wslay(data);
-
-    data->state = COLYSEUS_WS_DISCONNECTED;
-
-    if (transport->events.on_close) {
-        transport->events.on_close(code, reason, transport->events.userdata);
-    }
+    ws_finish_close(transport, code, reason);
 }
 
 static bool ws_is_open_impl(const colyseus_transport_t* transport) {
@@ -362,17 +349,7 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
                data->pending_close_code,
                data->pending_close_reason ? data->pending_close_reason : "(null)");
 
-        ws_tls_cleanup(data);
-        ws_socket_close(data);
-        ws_cleanup_wslay(data);
-
-        data->state = COLYSEUS_WS_DISCONNECTED;
-
-        if (transport->events.on_close) {
-            transport->events.on_close(data->pending_close_code,
-                                       data->pending_close_reason,
-                                       transport->events.userdata);
-        }
+        ws_finish_close(transport, data->pending_close_code, data->pending_close_reason);
 
         free(data->pending_close_reason);
         data->pending_close_reason = NULL;

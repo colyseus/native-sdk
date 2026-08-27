@@ -162,34 +162,32 @@ test "tls: tls_skip_verification opens without any trusted CA" {
 
 // ─── teardown ───────────────────────────────────────────────────────────────
 
-// Closing from another thread while the tick thread is inside mbedtls_ssl_read.
+// Tears the transport down from another thread while the tick thread is inside
+// mbedtls_ssl_read — the window ws_close_impl's join-before-free exists to
+// close. Reverting that ordering fails this in signal 6.
 //
-// ws_close_impl used to signal the loop, free the TLS context, the socket and
-// the wslay context, and join LAST. `running` is only read at the top of an
-// iteration, so a read already in progress carried on through a context that
-// had just been freed: it took the error, tried to send an alert, and faulted
-// in mbedtls_ssl_flush_output. There is no lock in the transport — the join is
-// the handoff.
-//
-// Hitting that window needs the reader actually busy. A quiet socket leaves
-// the tick thread asleep 10 ms out of every 10 ms, so a teardown almost always
-// lands between reads and proves nothing. Megabytes of echo keep it inside
-// mbedtls_ssl_read instead, and the teardown goes in as the first bytes land.
+// The saturation is the load-bearing part: on a quiet socket the tick thread
+// sleeps 10 ms out of every 10 ms, so a teardown lands between reads and the
+// test passes against the bug.
 test "tls: destroy while the reader is busy joins before it frees" {
+    const rounds = 20;
+    const frames = 128;
+    const frame_bytes = 16 * 1024;   // frames * frame_bytes = 2 MB of echo
+
     const ca = try loadPem("tests/tls/ca.pem");
     defer testing.allocator.free(ca);
 
-    const payload = try testing.allocator.alloc(u8, 16 * 1024);
+    const payload = try testing.allocator.alloc(u8, frame_bytes);
     defer testing.allocator.free(payload);
     @memset(payload, 'x');
 
-    var round: usize = 0;
-    while (round < 20) : (round += 1) {
-        reset();
-        const settings = makeSettings(ca, false);
-        defer c.colyseus_settings_free(settings);
+    // Loop-invariant: the transport copies the events struct on create.
+    const settings = makeSettings(ca, false);
+    defer c.colyseus_settings_free(settings);
+    var ev = makeEvents();
 
-        var ev = makeEvents();
+    for (0..rounds) |_| {
+        reset();
         const transport = c.colyseus_websocket_transport_create(&ev);
         c.colyseus_websocket_connect_with_settings(transport, URL, settings);
         if (!pollUntil(opened, 8 * std.time.ns_per_s)) {
@@ -199,13 +197,11 @@ test "tls: destroy while the reader is busy joins before it frees" {
 
         // Queued, not sent: the tick thread flushes, so it is saturated in
         // both directions by the time the first echo comes back.
-        var i: usize = 0;
-        while (i < 128) : (i += 1) {
+        for (0..frames) |_| {
             c.colyseus_transport_send(transport, payload.ptr, payload.len);
         }
 
-        // Tear down mid-stream — the reader is inside the TLS read right now.
-        _ = pollUntil(echoed, 5 * std.time.ns_per_s);
+        _ = pollUntil(echoed, 3 * std.time.ns_per_s);
         c.colyseus_transport_destroy(transport);
     }
 }

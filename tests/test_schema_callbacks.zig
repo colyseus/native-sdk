@@ -527,9 +527,8 @@ test "callbacks: nested property listening" {
         true,
     );
 
-    // Poll rather than sleep a constant: this waits on the join patch landing,
-    // and 50 ms was a bet on how fast the machine is that CI kept winning.
-    for (0..200) |_| {
+    // Poll, not a fixed sleep: a constant is a bet on how fast the machine is.
+    for (0..200) |_| {   // 2 s
         if (on_add_callback_count >= 1) break;
         std.Thread.sleep(10 * std.time.ns_per_ms);
     }
