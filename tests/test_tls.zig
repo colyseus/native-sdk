@@ -13,9 +13,9 @@ const std = @import("std");
 const testing = std.testing;
 
 const c = @cImport({
-    @cInclude("colyseus/transport.h");
-    @cInclude("colyseus/websocket_transport.h");
-    @cInclude("colyseus/settings.h");
+    @cInclude("colyseus.h");
+    // impl_data and the wslay queue depth below are the transport's own state.
+    @cInclude("network/websocket_transport_internal.h");
 });
 
 const URL = "wss://127.0.0.1:2569";

@@ -1,4 +1,4 @@
-#include "colyseus/websocket_transport.h"
+#include "websocket_transport_internal.h"
 #include "colyseus/utils/strUtil.h"
 #include "sds.h"
 #include <wslay/wslay.h>
@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
-#include "../../include/colyseus/tls_context.h"
+#include "tls_context.h"
 #include "colyseus/settings.h"
 #include "certs/system_certs.h"
 #include "certs/ca_bundle.h"

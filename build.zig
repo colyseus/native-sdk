@@ -177,27 +177,7 @@ pub fn build(b: *std.Build) void {
                 "-DHAVE_CONFIG_H",
             },
         });
-
-        // Install wslay headers (only for native)
-        const wslay_install = b.addInstallHeaderFile(
-            b.path("third_party/wslay/lib/includes/wslay/wslay.h"),
-            "wslay/wslay.h",
-        );
-        b.getInstallStep().dependOn(&wslay_install.step);
-
-        const wslay_ver_install = b.addInstallHeaderFile(
-            wslay_version_h.getOutput(),
-            "wslay/wslayver.h",
-        );
-        b.getInstallStep().dependOn(&wslay_ver_install.step);
     }
-
-    // Install uthash header (used by public colyseus headers)
-    const uthash_install = b.addInstallHeaderFile(
-        b.path("third_party/uthash/src/uthash.h"),
-        "uthash.h",
-    );
-    b.getInstallStep().dependOn(&uthash_install.step);
 
     // ========================================================================
     // Build Zig modules for HTTP and URL parsing
@@ -609,64 +589,40 @@ pub fn build(b: *std.Build) void {
     // Link wslay (native only)
     if (wslay) |w| colyseus.linkLibrary(w);
 
-    // Link system libraries based on platform
-    if (os_tag == .linux and !is_android) {
-        colyseus.linkSystemLibrary("pthread");
-        colyseus.linkSystemLibrary("m");
-    } else if (os_tag == .macos) {
-        colyseus.linkSystemLibrary("pthread");
-        colyseus.linkFramework("CoreFoundation");
-        colyseus.linkFramework("Security");
-    } else if (os_tag == .ios or os_tag == .tvos) {
-        colyseus.linkFramework("CoreFoundation");
-        colyseus.linkFramework("Security");
-    } else if (os_tag == .windows) {
-        colyseus.linkSystemLibrary("ws2_32");
-        colyseus.linkSystemLibrary("crypt32");
-        colyseus.linkSystemLibrary("bcrypt");
-    }
     // Note: emscripten links are handled by emcc at final link time
+    linkPlatformSystemLibs(colyseus, os_tag, is_android);
+
+    // The whole public tree ships, and ships to consumers: installHeadersDirectory
+    // both fills zig-out/include and puts the tree on the include path of anything
+    // that links this artifact, so `#include <colyseus.h>` needs no -I of its own.
+    // The hand-written list this replaced had drifted 16 headers behind the tree,
+    // schema/dynamic_schema.h among them, so zig-out/include did not self-compile.
+    colyseus.installHeadersDirectory(b.path("include"), "", .{ .include_extensions = &.{".h"} });
+
+    // settings.h, room.h and three schema headers include "uthash.h" unqualified,
+    // so it sits at the root of the tree next to colyseus/. It has to go through
+    // the artifact, not b.addInstallHeaderFile — only installed_headers propagate.
+    colyseus.installHeader(b.path("third_party/uthash/src/uthash.h"), "uthash.h");
+
+    const umbrella_step = checkUmbrellaIsComplete(b);
+    b.getInstallStep().dependOn(umbrella_step);
+
+    const vendored_step = checkVendoredSchemasMatch(b);
+    b.getInstallStep().dependOn(vendored_step);
 
     // Install the library
     b.installArtifact(colyseus);
 
-    // Install sub-libraries for emscripten (needed by external emcc linking)
-    if (is_emscripten) {
-        b.installArtifact(strutil_object);
-        b.installArtifact(msgpack_builder_object);
-        b.installArtifact(msgpack_reader_object);
-    }
-
-    // Install colyseus headers
-    const headers = .{
-        "client.h",
-        "http.h",
-        "latency.h",
-        "protocol.h",
-        "room.h",
-        "settings.h",
-        "transport.h",
-        "websocket_transport.h",
-        "schema.h",
-        "schema/types.h",
-        "schema/decode.h",
-        "schema/ref_tracker.h",
-        "schema/collections.h",
-        "schema/decoder.h",
-        "schema/callbacks.h",
-        "utils/sha1_c.h",
-        "utils/strUtil.h",
-        "auth/auth.h",
-        "auth/secure_storage.h",
-        "messages.h",
-    };
-
-    inline for (headers) |header| {
-        const install_header = b.addInstallHeaderFile(
-            b.path("include/colyseus/" ++ header),
-            "colyseus/" ++ header,
-        );
-        b.getInstallStep().dependOn(&install_header.step);
+    // A static archive does not absorb what it links against, so `-lcolyseus`
+    // alone resolves nothing from mbedTLS, wslay or the Zig modules. Zig
+    // consumers never notice — linkLibrary carries the whole graph — but a
+    // plain `cc` needs every member of the closure on the link line, and a
+    // release archive that omits them cannot be linked at all.
+    // A shared build has already absorbed them, so it ships on its own.
+    if (linkage == .static) {
+        for (colyseus.getCompileDependencies(false)) |dep| {
+            if (dep != colyseus and dep.isStaticLibrary()) b.installArtifact(dep);
+        }
     }
 
     // ========================================================================
@@ -847,6 +803,62 @@ pub fn build(b: *std.Build) void {
     if (is_emscripten) return;
 
     const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(umbrella_step);
+
+    // The SDK's promise is "one include, one linkLibrary". Assert it literally,
+    // so it breaks here rather than in someone else's project: a header that
+    // stops being self-contained, or an include path the artifact fails to
+    // propagate, fails this and nothing else.
+    for ([_]struct { name: []const u8, ext: []const u8, flags: []const []const u8 }{
+        .{ .name = "umbrella_smoke_c", .ext = "c", .flags = &.{ "-Wall", "-Wextra", "-Werror", c_std } },
+        .{ .name = "umbrella_smoke_cpp", .ext = "cpp", .flags = &.{ "-Wall", "-Wextra", "-Werror", "-std=c++17" } },
+    }) |smoke| {
+        const src = b.addWriteFiles().add(
+            b.fmt("umbrella_smoke.{s}", .{smoke.ext}),
+            "#include <colyseus.h>\nint main(void) { return 0; }\n",
+        );
+        const exe = b.addExecutable(.{
+            .name = smoke.name,
+            .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
+        });
+        configurePlatformLibc(exe, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
+        if (std.mem.eql(u8, smoke.ext, "cpp")) exe.linkLibCpp();
+        exe.addCSourceFile(.{ .file = src, .flags = smoke.flags });
+        exe.linkLibrary(colyseus); // and nothing else — no addIncludePath
+        test_step.dependOn(&b.addRunArtifact(exe).step);
+    }
+
+    // The smoke tests above prove the Zig half only: linkLibrary pulls the whole
+    // closure through the build graph, so they still pass when the *installed*
+    // archives are unlinkable on their own. This one links them by path, the way
+    // `cc app.c zig-out/lib/*.a` does, and is what catches a dependency that
+    // stops being installed.
+    if (linkage == .static) {
+        const consumer_src = b.addWriteFiles().add(
+            "c_consumer.c",
+            \\#include <colyseus.h>
+            \\int main(void) {
+            \\    colyseus_settings_t* s = colyseus_settings_create();
+            \\    colyseus_client_t* c = colyseus_client_create(s);
+            \\    colyseus_client_free(c);
+            \\    return 0;
+            \\}
+            \\
+            ,
+        );
+        const consumer = b.addExecutable(.{
+            .name = "c_consumer_smoke",
+            .root_module = b.createModule(.{ .target = target, .optimize = optimize }),
+        });
+        configurePlatformLibc(consumer, is_android, android_ndk_path, target.result, apple_sdk_path, is_emscripten, emscripten_sysroot);
+        consumer.addCSourceFile(.{ .file = consumer_src, .flags = &.{ "-Wall", "-Wextra", "-Werror", c_std } });
+        consumer.addIncludePath(colyseus.getEmittedIncludeTree());
+        for (colyseus.getCompileDependencies(false)) |dep| {
+            if (dep.isStaticLibrary()) consumer.addObjectFile(dep.getEmittedBin());
+        }
+        linkPlatformSystemLibs(consumer, os_tag, is_android);
+        test_step.dependOn(&b.addRunArtifact(consumer).step);
+    }
 
     // Define all Zig test files
     const zig_test_files = [_]struct {
@@ -923,6 +935,8 @@ pub fn build(b: *std.Build) void {
         test_exe.addIncludePath(b.path("third_party/cJSON"));
         test_exe.addIncludePath(b.path("third_party/wslay/lib/includes"));
         test_exe.addIncludePath(wslay_version_h.getOutput().dirname().dirname());
+        // test_tls drives the transport's own state, which is not public.
+        test_exe.addIncludePath(b.path("src"));
         test_exe.linkLibrary(colyseus);
 
         // The GM bridge isn't part of libcolyseus — compile it into its test
@@ -1061,4 +1075,116 @@ fn addAppleSdkPaths(compile_step: *std.Build.Step.Compile, sdk_path: ?[]const u8
             .{sdk},
         ) catch return });
     }
+}
+
+/// A public header that reaches no umbrella reaches no binding, and nothing
+/// else notices — the library still builds, the symbol just isn't there.
+/// Clang's -Wincomplete-umbrella does not cover the nested directories this
+/// tree uses, so the check lives here instead.
+fn checkUmbrellaIsComplete(b: *std.Build) *std.Build.Step {
+    const step = b.step("check-umbrella", "Verify include/colyseus.h reaches every public header");
+
+    // Only the root package owns this invariant; a consumer's b.dependency()
+    // should neither pay for it nor fail on it.
+    if (b.pkg_hash.len != 0) return step;
+
+    const umbrella = b.build_root.handle.readFileAlloc(
+        b.allocator,
+        "include/colyseus.h",
+        1 << 20,
+    ) catch |err| {
+        step.dependOn(&b.addFail(b.fmt("cannot read include/colyseus.h: {s}", .{@errorName(err)})).step);
+        return step;
+    };
+
+    // Walk all of include/, not just include/colyseus/: installHeadersDirectory
+    // ships the whole tree, so a header at the root would otherwise reach
+    // consumers without ever being checked against the umbrella.
+    var dir = b.build_root.handle.openDir("include", .{ .iterate = true }) catch |err| {
+        step.dependOn(&b.addFail(b.fmt("cannot open include/: {s}", .{@errorName(err)})).step);
+        return step;
+    };
+    defer dir.close();
+
+    var walker = dir.walk(b.allocator) catch @panic("OOM");
+    defer walker.deinit();
+
+    var missing: std.ArrayList(u8) = .empty;
+    var count: usize = 0;
+    while (walker.next() catch @panic("walk failed")) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.basename, ".h")) continue;
+        if (std.mem.eql(u8, entry.path, "colyseus.h")) continue; // the umbrella itself
+
+        // Walker paths use the host separator; the includes never do.
+        const include_path = b.fmt("<{s}>", .{entry.path});
+        const normalized = std.mem.replaceOwned(u8, b.allocator, include_path, "\\", "/") catch @panic("OOM");
+        if (std.mem.indexOf(u8, umbrella, normalized) == null) {
+            missing.print(b.allocator, "  #include {s}\n", .{normalized}) catch @panic("OOM");
+            count += 1;
+        }
+    }
+
+    if (count > 0) {
+        step.dependOn(&b.addFail(b.fmt(
+            "include/colyseus.h is missing {d} public header(s):\n{s}",
+            .{ count, missing.items },
+        )).step);
+    }
+
+    return step;
+}
+
+/// The system libraries the core needs. Anything that links libcolyseus.a
+/// statically needs the same set, so it lives in one place — the platform
+/// build files each restate it, and have already drifted (Flutter and
+/// GameMaker omit bcrypt on Windows).
+fn linkPlatformSystemLibs(compile: *std.Build.Step.Compile, os_tag: std.Target.Os.Tag, is_android: bool) void {
+    if (os_tag == .linux and !is_android) {
+        compile.linkSystemLibrary("pthread");
+        compile.linkSystemLibrary("m");
+    } else if (os_tag == .macos) {
+        compile.linkSystemLibrary("pthread");
+        compile.linkFramework("CoreFoundation");
+        compile.linkFramework("Security");
+    } else if (os_tag == .ios or os_tag == .tvos) {
+        compile.linkFramework("CoreFoundation");
+        compile.linkFramework("Security");
+    } else if (os_tag == .windows) {
+        compile.linkSystemLibrary("ws2_32");
+        compile.linkSystemLibrary("crypt32");
+        compile.linkSystemLibrary("bcrypt");
+    }
+}
+
+/// The raylib example carries its own copy of a generated schema header so it
+/// reads like something a user generated, rather than reaching into the SDK's
+/// test fixtures. Both come from the same room, and a drifted copy would
+/// misdecode silently rather than fail to build — so they must stay identical.
+fn checkVendoredSchemasMatch(b: *std.Build) *std.Build.Step {
+    const step = b.step("check-vendored-schemas", "Verify vendored example schemas match their fixture");
+    if (b.pkg_hash.len != 0) return step;
+
+    const pairs = [_]struct { fixture: []const u8, copy: []const u8 }{
+        .{ .fixture = "tests/schema/test_room_state.h", .copy = "platforms/raylib/src/test_room_state.h" },
+    };
+
+    for (pairs) |pair| {
+        const a = b.build_root.handle.readFileAlloc(b.allocator, pair.fixture, 1 << 20) catch |err| {
+            step.dependOn(&b.addFail(b.fmt("cannot read {s}: {s}", .{ pair.fixture, @errorName(err) })).step);
+            continue;
+        };
+        const c = b.build_root.handle.readFileAlloc(b.allocator, pair.copy, 1 << 20) catch |err| {
+            step.dependOn(&b.addFail(b.fmt("cannot read {s}: {s}", .{ pair.copy, @errorName(err) })).step);
+            continue;
+        };
+        if (!std.mem.eql(u8, a, c)) {
+            step.dependOn(&b.addFail(b.fmt(
+                "{s} has drifted from {s} — regenerate both, or copy the fixture over it",
+                .{ pair.copy, pair.fixture },
+            )).step);
+        }
+    }
+
+    return step;
 }
