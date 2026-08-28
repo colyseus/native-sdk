@@ -339,3 +339,47 @@ test "tls: a destroy nested inside a destroy's on_close is a no-op" {
         try testing.expect(closed());
     }
 }
+
+// A close from a tick-thread callback is finished by the loop on its way out;
+// the server must still get the close frame, with the code the app gave.
+fn onMessageClose(_: [*c]const u8, _: usize, ud: ?*anyopaque) callconv(.c) void {
+    const transport: [*c]c.colyseus_transport_t = @ptrCast(@alignCast(ud));
+    c.colyseus_transport_close(transport, 4321, "bye");
+    _ = g_echoed.fetchAdd(1, .seq_cst);
+}
+var g_reply: [16]u8 = undefined;
+var g_reply_len = std.atomic.Value(usize).init(0);
+fn onMessageCapture(data: [*c]const u8, len: usize, _: ?*anyopaque) callconv(.c) void {
+    const n = @min(len, g_reply.len);
+    @memcpy(g_reply[0..n], data[0..n]);
+    g_reply_len.store(n, .seq_cst);
+}
+fn replied() bool {
+    return g_reply_len.load(.seq_cst) > 0;
+}
+
+test "tls: a close from the tick thread still sends its close frame" {
+    const ca = try loadPem("tests/tls/ca.pem");
+    defer testing.allocator.free(ca);
+    const settings = makeSettings(ca, false);
+    defer c.colyseus_settings_free(settings);
+
+    reset();
+    var ev = makeEvents();
+    ev.on_message = onMessageClose;
+    const transport = try connectOrSkip(&ev, settings);
+    c.colyseus_transport_send(transport, "x", 1);
+    try testing.expect(pollUntil(closed, 8 * std.time.ns_per_s));
+    c.colyseus_transport_destroy(transport);
+
+    // ask the server what that connection's close frame said
+    reset();
+    g_reply_len.store(0, .seq_cst);
+    var ask = makeEvents();
+    ask.on_message = onMessageCapture;
+    const asker = try connectOrSkip(&ask, settings);
+    defer c.colyseus_transport_destroy(asker);
+    c.colyseus_transport_send(asker, "last-close", 10);
+    try testing.expect(pollUntil(replied, 8 * std.time.ns_per_s));
+    try testing.expectEqualStrings("4321", g_reply[0..g_reply_len.load(.seq_cst)]);
+}

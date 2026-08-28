@@ -47,6 +47,10 @@ server.on("upgrade", (req, socket) => {
   pump(socket);
 });
 
+// The tests can't see the wire, so a later connection may ask what the last
+// close frame said: send "last-close", get the code back (or "none").
+let lastClose = "none";
+
 // Minimal frame loop: unmask client frames, echo data frames, answer ping/close.
 function pump(socket) {
   let buf = Buffer.alloc(0);
@@ -58,12 +62,14 @@ function pump(socket) {
       buf = buf.subarray(frame.size);
       const op = frame.opcode;
       if (op === 0x8) {
+        lastClose = frame.payload.length >= 2 ? String(frame.payload.readUInt16BE(0)) : "none";
         socket.end(encodeFrame(0x8, frame.payload));
         return;
       } else if (op === 0x9) {
         socket.write(encodeFrame(0xa, frame.payload)); // pong
       } else if (op === 0x1 || op === 0x2) {
-        socket.write(encodeFrame(op, frame.payload)); // echo
+        const reply = frame.payload.equals(Buffer.from("last-close")) ? Buffer.from(lastClose) : frame.payload;
+        socket.write(encodeFrame(op, reply)); // echo
       }
     }
   });

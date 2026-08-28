@@ -290,6 +290,15 @@ static void ws_join_tick_thread(colyseus_ws_transport_data_t* data) {
     data->tick_thread = NULL;
 }
 
+/* Best effort, after whatever is still queued. Tick thread only, or the
+ * closer once the tick thread is joined. */
+static void ws_send_close_frame(colyseus_ws_transport_data_t* data, int code, const char* reason) {
+    if (!data->wslay_ctx || ws_load(&data->state) != COLYSEUS_WS_CONNECTED) return;
+    ws_outbox_drain(data);
+    wslay_event_queue_close(data->wslay_ctx, code, (const uint8_t*)reason, reason ? strlen(reason) : 0);
+    wslay_event_send(data->wslay_ctx);
+}
+
 /* The teardown both closers share: ws_close_impl below, and the loop finishing
  * a deferred close on its way out. */
 static void ws_finish_close(colyseus_transport_t* transport, int code, const char* reason) {
@@ -321,6 +330,7 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
      * nobody to complete it, and destroy() then frees this struct while the
      * loop is still reading it. */
     if (ws_on_tick_thread(data)) {
+        if (data->pending_close) return;  /* the first close's code is the one reported */
         WS_LOG("Close called from tick thread - deferring");
         /* wslay dispatches every buffered frame in one recv: no message after close */
         if (data->wslay_ctx) wslay_event_shutdown_read(data->wslay_ctx);
@@ -342,12 +352,7 @@ static void ws_close_impl(colyseus_transport_t* transport, int code, const char*
     /* The loop closed on its own way out; on_close has already fired. */
     if (data->state == COLYSEUS_WS_DISCONNECTED) return;
 
-    if (data->wslay_ctx && data->state == COLYSEUS_WS_CONNECTED) {
-        ws_outbox_drain(data);
-        wslay_event_queue_close(data->wslay_ctx, code, (const uint8_t*)reason, reason ? strlen(reason) : 0);
-        wslay_event_send(data->wslay_ctx);
-    }
-
+    ws_send_close_frame(data, code, reason);
     ws_finish_close(transport, code, reason);
 }
 
@@ -411,6 +416,7 @@ static thread_return_t THREAD_CALL ws_tick_thread_func(void* arg) {
         data->pending_close = false;
         WS_LOG("Handling deferred close: code=%d, reason=%s", code, reason ? reason : "(null)");
 
+        ws_send_close_frame(data, code, reason);
         ws_finish_close(transport, code, reason);
         free(reason);
     }
