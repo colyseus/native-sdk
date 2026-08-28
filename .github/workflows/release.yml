@@ -77,8 +77,9 @@ jobs:
         run: |
           mkdir -p package/lib
           
-          # Copy library
-          cp zig-out/lib/libcolyseus.a package/lib/
+          # libcolyseus.a plus the archives it links against — a static lib does
+          # not absorb its dependencies, so shipping it alone is unlinkable.
+          cp zig-out/lib/*.a package/lib/
           
           # Copy all headers (already installed by zig build)
           cp -r zig-out/include package/
@@ -92,8 +93,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path package/lib
           
-          # Copy library
-          Copy-Item zig-out/lib/colyseus.lib package/lib/
+          # colyseus.lib plus the libs it links against — a static lib does not
+          # absorb its dependencies, so shipping it alone is unlinkable.
+          Copy-Item zig-out/lib/*.lib package/lib/
           
           # Copy all headers (already installed by zig build)
           Copy-Item -Recurse zig-out/include package/
@@ -120,6 +122,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
       - name: Setup emsdk
         uses: mymindstorm/setup-emsdk@v14
         with:
@@ -134,7 +141,9 @@ jobs:
       - name: Package artifacts
         run: |
           mkdir -p package/lib
-          cp build/libcolyseus.a package/lib/
+          # libcolyseus.a plus the archives it links against — a static lib does
+          # not absorb its dependencies, so emcc needs them at the final link.
+          cp build/*.a package/lib/
           
           # Copy headers
           cp -r include package/
