@@ -168,21 +168,36 @@ This will rebuild automatically when source files change!
 
 ## Using the Library in Your Project
 
+The whole public API is behind one header:
+
+```c
+#include <colyseus.h>
+```
+
 ### As a Static Library
 
-After building, you can link against the library:
+`zig-out/include` is the only include path you need — it carries `colyseus.h`,
+the tree under `colyseus/`, and `uthash.h`.
+
+`zig-out/lib` holds `libcolyseus.a` plus the archives it links against (mbedTLS,
+wslay, and the Zig http/msgpack/URL modules): a static archive does not absorb
+its dependencies, so they all belong on the link line. Passing the directory
+avoids having to order them:
 
 ```bash
 cc your_program.c \
    -I zig-out/include \
-   -L zig-out/lib \
-   -lcolyseus \
+   zig-out/lib/*.a \
    -lpthread
 ```
 
+Add the platform libraries the core links: `CoreFoundation` and `Security`
+frameworks on macOS/iOS, `-lm` on Linux, `ws2_32`/`crypt32`/`bcrypt` on Windows.
+With `-Dshared=true` the shared library already contains the closure.
+
 ### Integrating with Zig Projects
 
-If your project uses Zig's build system, you can add this as a dependency:
+Linking the artifact carries its header tree, so there is no `addIncludePath`:
 
 ```zig
 const colyseus = b.dependency("colyseus", .{

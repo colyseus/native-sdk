@@ -3,6 +3,46 @@
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
 Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
 
+## Unreleased
+
+### Added
+
+- `#include <colyseus.h>` is now the whole integration surface — one header for
+  the client, room, schema, prediction and auth APIs. Linking the `colyseus`
+  artifact from a Zig build carries its header tree, so consumers need no
+  `addIncludePath`; for everyone else `-I zig-out/include` is the only include
+  path.
+
+### Fixed
+
+- A release archive can be linked. `zig build` installed `libcolyseus.a` alone,
+  but a static archive does not absorb what it links against, so every
+  documented `-lcolyseus` line failed on mbedTLS, wslay and the Zig
+  http/msgpack/URL symbols — the native tarballs were unusable outside a Zig
+  build. The whole static closure now installs alongside it, and
+  `cc app.c -I include lib/*.a` links and runs.
+- The web build links again. `build-wasm.sh` kept its own copy of the source
+  list, 13 files behind `build.zig`, so the WASM archive was missing the whole
+  prediction layer, `room_clock`, `input_handle`, `net_delay`, the latency probe
+  and quantization — it compiled but could not link. It now builds through
+  `zig build -Dtarget=wasm32-emscripten`, the way the GameMaker HTML5 script
+  already did, so there is no second list to drift. The WASM release archive
+  also carries the msgpack and URL-parsing libraries emscripten needs at the
+  final link.
+- The installed headers now compile. `zig build` shipped a hand-written list of
+  20 of the tree's 36 headers, so `#include <colyseus/schema.h>` against a
+  release archive failed on the missing `schema/dynamic_schema.h`, and the whole
+  prediction API, `room_clock.h`, `input_handle.h` and `net_delay.h` never
+  shipped at all.
+
+### Changed
+
+- No public header pulls in a vendored dependency's headers any more. The
+  WebSocket transport's own state and the mbedTLS TLS context moved to `src/`,
+  and `wslay/wslay.h` and `wslay/wslayver.h` are no longer installed. Code
+  reaching `transport->impl_data` as a `colyseus_ws_transport_data_t` was
+  reaching into the SDK's internals and will no longer compile.
+
 ## 0.18.1
 
 ### Added

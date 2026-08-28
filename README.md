@@ -23,6 +23,36 @@ zig build
 zig build run-example
 ```
 
+## Using the C API
+
+The whole public API is behind one header, and `zig-out/include` is the only
+include path it needs:
+
+```c
+#include <colyseus.h>
+```
+
+A static build ships the libraries it links against as separate archives —
+mbedTLS, wslay and the Zig modules — because an archive does not absorb its
+dependencies. Pass the whole directory and let the linker sort it out:
+
+```bash
+cc app.c -I zig-out/include zig-out/lib/*.a -lpthread \
+   -framework CoreFoundation -framework Security   # macOS/iOS
+```
+
+On Linux add `-lm`; on Windows link `ws2_32`, `crypt32` and `bcrypt`. A shared
+build (`-Dshared=true`) has already absorbed the closure, so `-lcolyseus` alone
+is enough there.
+
+From a Zig project, linking the artifact carries both its header tree and the
+whole closure — no `addIncludePath`, nothing else to name:
+
+```zig
+const colyseus = b.dependency("colyseus", .{ .target = target, .optimize = optimize });
+exe.linkLibrary(colyseus.artifact("colyseus"));
+```
+
 ## Project Structure
 
 ```
