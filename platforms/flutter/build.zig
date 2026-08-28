@@ -249,9 +249,7 @@ fn buildFlutterLibrary(
         addAndroidNdkPaths(flutter_lib, target.result);
     }
 
-    // Add include paths
-    flutter_lib.addIncludePath(native_sdk_dep.path("include"));
-    flutter_lib.addIncludePath(native_sdk_dep.path("third_party/uthash/src"));
+    // The SDK's headers arrive with linkLibrary below.
     flutter_lib.addIncludePath(b.path("src"));
 
     // Flutter export layer

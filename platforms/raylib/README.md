@@ -29,7 +29,7 @@ The web build requires two steps: first build the WASM library, then build the r
 
 **Step 1: Build the colyseus WASM library**
 
-From the native-sdk root directory, run the build script (requires `emcc` in your PATH):
+From the native-sdk root directory, run the build script (requires `zig` and `emcc` in your PATH):
 
 ```bash
 # From native-sdk root
@@ -97,7 +97,11 @@ Then open `http://localhost:8080` in your browser.
 
 ## Architecture
 
+- The whole SDK arrives through one `#include <colyseus.h>`; linking the
+  `colyseus` artifact carries its header tree, so `build.zig` sets no include
+  path for it
 - Uses the Colyseus Native SDK's callback system for state synchronization
-- Schema types are imported from `tests/schema/test_room_state.h`
+- Schema types come from `src/test_room_state.h`, generated against the
+  `test_room` state in `example-server/`
 - Messages are encoded using msgpack via zig-msgpack
 - Network I/O runs on a background thread (automatic polling)

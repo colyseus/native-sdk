@@ -9,11 +9,7 @@
     #include <emscripten/emscripten.h>
 #endif
 
-#include <colyseus/client.h>
-#include <colyseus/schema.h>
-#include <colyseus/schema/callbacks.h>
-#include <colyseus/schema/collections.h>
-#include <colyseus/messages.h>
+#include <colyseus.h>
 #include "test_room_state.h"
 
 #define MAX_PLAYERS 16

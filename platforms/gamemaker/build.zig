@@ -207,10 +207,9 @@ fn buildGameMakerExtension(
         addAndroidNdkPaths(gamemaker, target.result);
     }
 
-    // Add include paths
-    gamemaker.addIncludePath(native_sdk_dep.path("include"));
-    gamemaker.addIncludePath(native_sdk_dep.path("third_party/uthash/src"));
-    gamemaker.addIncludePath(native_sdk_dep.path("third_party/cJSON")); // for cJSON.h (latency endpoints array)
+    // The SDK's own headers arrive with linkLibrary below; cJSON does not,
+    // and the latency endpoints array here uses it directly.
+    gamemaker.addIncludePath(native_sdk_dep.path("third_party/cJSON"));
     gamemaker.addIncludePath(b.path("src")); // For local headers
 
     // GameMaker export layer (C code that wraps colyseus C API)

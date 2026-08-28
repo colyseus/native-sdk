@@ -42,14 +42,9 @@ pub fn build(b: *std.Build) void {
             },
         });
 
-        // Add include paths from native-sdk
-        exe.addIncludePath(native_sdk_dep.path("include"));
-        exe.addIncludePath(native_sdk_dep.path("third_party/uthash/src"));
-        exe.addIncludePath(native_sdk_dep.path("third_party/wslay/lib/includes"));
-        exe.addIncludePath(native_sdk_dep.path("tests/schema")); // For test_room_state.h
-        exe.addIncludePath(b.path("src")); // For local headers
-
-        // Link colyseus library (includes all internal dependencies: wslay, http, msgpack, etc.)
+        // No include paths for the SDK: linking the artifact carries its header
+        // tree, which is what makes <colyseus.h> resolve. main.c's own
+        // "test_room_state.h" resolves next to it.
         exe.linkLibrary(native_sdk_dep.artifact("colyseus"));
 
         // Link raylib
@@ -187,13 +182,10 @@ pub fn build(b: *std.Build) void {
             // Build it first with: cd native-sdk && mkdir -p build && (run emcc commands from CI)
             emcc.addFileArg(native_sdk_dep.path("build/libcolyseus.a"));
 
-            // Add include paths (only need the main include directory)
+            // The prebuilt .a carries no include path, so ask the artifact for
+            // the same header tree the native branch gets for free.
             emcc.addArgs(&.{"-I"});
-            emcc.addDirectoryArg(native_sdk_dep.path("include"));
-            emcc.addArgs(&.{"-I"});
-            emcc.addDirectoryArg(native_sdk_dep.path("third_party/uthash/src"));
-            emcc.addArgs(&.{"-I"});
-            emcc.addDirectoryArg(native_sdk_dep.path("tests/schema"));
+            emcc.addDirectoryArg(native_sdk_dep.artifact("colyseus").getEmittedIncludeTree());
             emcc.addArgs(&.{"-I"});
             emcc.addDirectoryArg(b.path("src"));
 
