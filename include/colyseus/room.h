@@ -260,10 +260,22 @@ struct colyseus_room {
     void* on_message_any_bytes_userdata;
     colyseus_room_on_message_with_type_bytes_fn on_message_any_with_type_bytes;
     void* on_message_any_with_type_bytes_userdata;
+
+    int dispatch_depth;  /* frames currently firing this room's callbacks */
 };
 
 /* Create and destroy room */
 colyseus_room_t* colyseus_room_create(const char* name, colyseus_transport_factory_fn transport_factory);
+
+/**
+ * Free the room, closing its connection first.
+ *
+ * Never call it from inside one of the room's own callbacks (on_join,
+ * on_message, on_leave, ...): the frame dispatching that callback keeps using
+ * the room after the callback returns, and the reconnection worker may be
+ * the very thread calling. Leaving from a callback is fine; defer the free to
+ * your own loop. Debug builds assert on it.
+ */
 void colyseus_room_free(colyseus_room_t* room);
 
 /* Set state type - must be called before connect for schema serialization */

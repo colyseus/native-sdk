@@ -7,6 +7,7 @@
 #include "colyseus/messages.h"
 #include "colyseus/utils/time.h"
 #include <stdlib.h>
+#include <assert.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -33,6 +34,26 @@
 static void room_on_transport_open(void* userdata);
 static void room_on_transport_message(const uint8_t* data, size_t length, void* userdata);
 static void room_on_transport_close(int code, const char* reason, void* userdata);
+static void room_handle_frame(colyseus_room_t* room, const uint8_t* data, size_t length);
+static void room_handle_close(colyseus_room_t* room, int code, const char* reason);
+
+/* Frames that fire the room's callbacks bump this, so colyseus_room_free can
+ * catch a free from inside one. Any thread. */
+static void room_dispatch_enter(colyseus_room_t* room) {
+    __atomic_fetch_add(&room->dispatch_depth, 1, __ATOMIC_RELAXED);
+}
+static void room_dispatch_exit(colyseus_room_t* room) {
+    __atomic_fetch_sub(&room->dispatch_depth, 1, __ATOMIC_RELAXED);
+}
+
+/* on_leave fires from the reconnection worker and from leave() as well, not
+ * only from the transport's close. */
+static void room_notify_leave(colyseus_room_t* room, int code, const char* reason) {
+    if (!room->on_leave) return;
+    room_dispatch_enter(room);
+    room->on_leave(code, reason, room->on_leave_userdata);
+    room_dispatch_exit(room);
+}
 static void room_on_transport_error(const char* error, void* userdata);
 static void room_dispatch_message(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
 static void room_dispatch_message_bytes(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
@@ -249,11 +270,8 @@ static bool room_reconnection_schedule_next(colyseus_room_t* room) {
         if (room->serializer) {
             colyseus_schema_serializer_teardown(room->serializer);
         }
-        if (room->on_leave) {
-            room->on_leave(COLYSEUS_CLOSE_FAILED_TO_RECONNECT,
-                           "No more retries. Reconnection failed.",
-                           room->on_leave_userdata);
-        }
+        room_notify_leave(room, COLYSEUS_CLOSE_FAILED_TO_RECONNECT,
+                          "No more retries. Reconnection failed.");
         return false;
     }
 
@@ -292,11 +310,8 @@ static worker_return_t WORKER_THREAD_CALL room_reconnect_worker_func(void* arg) 
             if (room->serializer) {
                 colyseus_schema_serializer_teardown(room->serializer);
             }
-            if (room->on_leave) {
-                room->on_leave(COLYSEUS_CLOSE_FAILED_TO_RECONNECT,
-                               "No more retries. Reconnection failed.",
-                               room->on_leave_userdata);
-            }
+            room_notify_leave(room, COLYSEUS_CLOSE_FAILED_TO_RECONNECT,
+                              "No more retries. Reconnection failed.");
             goto done;
         }
 
@@ -651,9 +666,7 @@ static void room_handle_reconnection(colyseus_room_t* room, int code, const char
     colyseus_reconnection_worker_t* w =
         (colyseus_reconnection_worker_t*)room->reconnection.worker;
     if (!w) {
-        if (room->on_leave) {
-            room->on_leave(code, reason, room->on_leave_userdata);
-        }
+        room_notify_leave(room, code, reason);
         return;
     }
 
@@ -664,11 +677,8 @@ static void room_handle_reconnection(colyseus_room_t* room, int code, const char
         if (room->serializer) {
             colyseus_schema_serializer_teardown(room->serializer);
         }
-        if (room->on_leave) {
-            room->on_leave(COLYSEUS_CLOSE_ABNORMAL_CLOSURE,
-                           "Room uptime too short for reconnection.",
-                           room->on_leave_userdata);
-        }
+        room_notify_leave(room, COLYSEUS_CLOSE_ABNORMAL_CLOSURE,
+                          "Room uptime too short for reconnection.");
         return;
     }
 
@@ -726,6 +736,9 @@ colyseus_room_t* colyseus_room_create(const char* name, colyseus_transport_facto
 
 void colyseus_room_free(colyseus_room_t* room) {
     if (!room) return;
+    /* Under a callback the dispatching frame keeps using the room; see room.h. */
+    assert(__atomic_load_n(&room->dispatch_depth, __ATOMIC_RELAXED) == 0 &&
+           "colyseus_room_free called from inside a room callback");
 
     /* Cancel and join the reconnection worker before tearing down the
      * transport — the worker may otherwise try to reconnect against a
@@ -852,9 +865,7 @@ void colyseus_room_leave(colyseus_room_t* room, bool consented) {
     room_reconnection_cancel(room);
 
     if (!room->transport) {
-        if (room->on_leave) {
-            room->on_leave(COLYSEUS_CLOSE_CONSENTED, "Already left", room->on_leave_userdata);
-        }
+        room_notify_leave(room, COLYSEUS_CLOSE_CONSENTED, "Already left");
         return;
     }
 
@@ -866,9 +877,7 @@ void colyseus_room_leave(colyseus_room_t* room, bool consented) {
             colyseus_transport_close(room->transport, 1000, "Leave");
         }
     } else {
-        if (room->on_leave) {
-            room->on_leave(COLYSEUS_CLOSE_CONSENTED, "Already left", room->on_leave_userdata);
-        }
+        room_notify_leave(room, COLYSEUS_CLOSE_CONSENTED, "Already left");
     }
 }
 
@@ -1506,7 +1515,12 @@ static void room_on_transport_open(void* userdata) {
 
 static void room_on_transport_message(const uint8_t* data, size_t length, void* userdata) {
     colyseus_room_t* room = (colyseus_room_t*)userdata;
+    room_dispatch_enter(room);
+    room_handle_frame(room, data, length);
+    room_dispatch_exit(room);
+}
 
+static void room_handle_frame(colyseus_room_t* room, const uint8_t* data, size_t length) {
     if (length == 0) return;
 
     {
@@ -1838,7 +1852,12 @@ void colyseus_room_process_message(colyseus_room_t* room, const uint8_t* data, s
 
 static void room_on_transport_close(int code, const char* reason, void* userdata) {
     colyseus_room_t* room = (colyseus_room_t*)userdata;
+    room_dispatch_enter(room);
+    room_handle_close(room, code, reason);
+    room_dispatch_exit(room);
+}
 
+static void room_handle_close(colyseus_room_t* room, int code, const char* reason) {
     /* in-flight requests can't be answered on a closed socket */
     room_reject_all_pending_requests(room, "connection closed before a response was received.");
 
@@ -1877,9 +1896,7 @@ static void room_on_transport_close(int code, const char* reason, void* userdata
     if (room->serializer) {
         colyseus_schema_serializer_teardown(room->serializer);
     }
-    if (room->on_leave) {
-        room->on_leave(code, reason, room->on_leave_userdata);
-    }
+    room_notify_leave(room, code, reason);
 }
 
 static void room_on_transport_error(const char* error, void* userdata) {
@@ -1887,7 +1904,9 @@ static void room_on_transport_error(const char* error, void* userdata) {
 
     fprintf(stderr, "Room transport error: %s\n", error);
     if (room->on_error) {
+        room_dispatch_enter(room);
         room->on_error(-1, error, room->on_error_userdata);
+        room_dispatch_exit(room);
     }
 
     /* connect() can fail before a socket exists (DNS down after an Android
