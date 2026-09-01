@@ -42,27 +42,27 @@ const CODEC_VECTORS =
     \\clamp8_0_10, NaN, 0, 0
     \\clamp8_0_10, Infinity, 255, 10
     \\clamp8_0_10, -Infinity, 0, 0
-    \\clamp16_pitch, 0, 32768, 0.00002288853284504455
-    \\clamp16_pitch, 1, 54613, 1.000022888532845
-    \\clamp16_pitch, 10, 65535, 1.5
-    \\clamp16_pitch, 0.0196078431372549, 33196, 0.01961547264820318
-    \\clamp16_pitch, 5.5, 65535, 1.5
+    \\clamp16_pitch, 0, 32767, 0
+    \\clamp16_pitch, 1, 54612, 1.000015259254738
+    \\clamp16_pitch, 10, 65534, 1.5
+    \\clamp16_pitch, 0.0196078431372549, 33195, 0.019592883083590307
+    \\clamp16_pitch, 5.5, 65534, 1.5
     \\clamp16_pitch, -1.5, 0, -1.5
-    \\clamp16_pitch, 1.5, 65535, 1.5
-    \\clamp16_pitch, 0.3, 39321, 0.2999999999999998
+    \\clamp16_pitch, 1.5, 65534, 1.5
+    \\clamp16_pitch, 0.3, 39320, 0.29998168889431454
     \\clamp16_pitch, -99, 0, -1.5
-    \\clamp16_pitch, 99, 65535, 1.5
-    \\clamp16_pitch, 3.141592653589793, 65535, 1.5
-    \\clamp16_pitch, 6.283185307179586, 65535, 1.5
-    \\clamp16_pitch, 7.283185307179586, 65535, 1.5
-    \\clamp16_pitch, -1, 10923, -0.999977111467155
-    \\clamp16_pitch, 360, 65535, 1.5
-    \\clamp16_pitch, 720.5, 65535, 1.5
-    \\clamp16_pitch, 1000000, 65535, 1.5
+    \\clamp16_pitch, 99, 65534, 1.5
+    \\clamp16_pitch, 3.141592653589793, 65534, 1.5
+    \\clamp16_pitch, 6.283185307179586, 65534, 1.5
+    \\clamp16_pitch, 7.283185307179586, 65534, 1.5
+    \\clamp16_pitch, -1, 10922, -1.000015259254738
+    \\clamp16_pitch, 360, 65534, 1.5
+    \\clamp16_pitch, 720.5, 65534, 1.5
+    \\clamp16_pitch, 1000000, 65534, 1.5
     \\clamp16_pitch, -1000000, 0, -1.5
-    \\clamp16_pitch, 0.123456789, 35464, 0.12343785763332571
+    \\clamp16_pitch, 0.123456789, 35464, 0.12346263008514669
     \\clamp16_pitch, NaN, 0, -1.5
-    \\clamp16_pitch, Infinity, 65535, 1.5
+    \\clamp16_pitch, Infinity, 65534, 1.5
     \\clamp16_pitch, -Infinity, 0, -1.5
     \\clamp32_unit, 0, 0, 0
     \\clamp32_unit, 1, 4294967295, 1
@@ -204,13 +204,13 @@ test "reflection_and_quantized_state" {
     c.colyseus_schema_serializer_handshake(serializer, &reflection, reflection.len, 0);
 
     // full state
-    const state_bytes = [_]u8{ 128, 238, 50, 129, 187, 130, 55, 221, 154, 31, 131, 1, 132, 2, 133, 5, 134, 4, 135, 161, 113, 255, 1, 128, 0, 1, 128, 1, 202, 0, 0, 32, 64, 128, 2, 3, 255, 2, 128, 0, 161, 97, 161, 120, 255, 5, 128, 7, 255, 4, 128, 0, 6, 128, 1, 7, 255, 6, 128, 1, 255, 7, 128, 2 };
+    const state_bytes = [_]u8{ 128, 238, 50, 129, 186, 130, 55, 221, 154, 31, 131, 1, 132, 2, 133, 5, 134, 4, 135, 161, 113, 255, 1, 128, 0, 1, 128, 1, 202, 0, 0, 32, 64, 128, 2, 3, 255, 2, 128, 0, 161, 97, 161, 120, 255, 5, 128, 7, 255, 4, 128, 0, 6, 128, 1, 7, 255, 6, 128, 1, 255, 7, 128, 2 };
     c.colyseus_schema_serializer_set_state(serializer, &state_bytes, state_bytes.len, 0);
 
     const state: *c.colyseus_dynamic_schema_t = @ptrCast(@alignCast(c.colyseus_schema_serializer_get_state(serializer).?));
 
     try testing.expectEqual(@as(f64, 1.2500025945283118), c.colyseus_dynamic_schema_get_by_name(state, "yaw").*.data.num);
-    try testing.expectEqual(@as(f64, 0.6999999999999997), c.colyseus_dynamic_schema_get_by_name(state, "pitch").*.data.num);
+    try testing.expectEqual(@as(f64, 0.6968503937007875), c.colyseus_dynamic_schema_get_by_name(state, "pitch").*.data.num);
     try testing.expectEqual(@as(f64, 0.12345678897655028), c.colyseus_dynamic_schema_get_by_name(state, "precise").*.data.num);
     try testing.expectEqualStrings("q", std.mem.span(c.colyseus_dynamic_schema_get_by_name(state, "label").*.data.str));
 
@@ -245,14 +245,14 @@ test "static_class_quantized_state" {
     const decoder = c.colyseus_decoder_create(&c.q_state_vtable).?;
     defer c.colyseus_decoder_free(decoder);
 
-    const state_bytes = [_]u8{ 128, 238, 50, 129, 187, 130, 55, 221, 154, 31, 131, 1, 132, 2, 133, 5, 134, 4, 135, 161, 113, 255, 1, 128, 0, 1, 128, 1, 202, 0, 0, 32, 64, 128, 2, 3, 255, 2, 128, 0, 161, 97, 161, 120, 255, 5, 128, 7, 255, 4, 128, 0, 6, 128, 1, 7, 255, 6, 128, 1, 255, 7, 128, 2 };
+    const state_bytes = [_]u8{ 128, 238, 50, 129, 186, 130, 55, 221, 154, 31, 131, 1, 132, 2, 133, 5, 134, 4, 135, 161, 113, 255, 1, 128, 0, 1, 128, 1, 202, 0, 0, 32, 64, 128, 2, 3, 255, 2, 128, 0, 161, 97, 161, 120, 255, 5, 128, 7, 255, 4, 128, 0, 6, 128, 1, 7, 255, 6, 128, 1, 255, 7, 128, 2 };
     var it = c.colyseus_iterator_t{ .offset = 0 };
     c.colyseus_decoder_decode(decoder, &state_bytes, state_bytes.len, &it);
 
     const state: *c.q_state_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
 
     try testing.expectEqual(@as(f64, 1.2500025945283118), state.yaw);
-    try testing.expectEqual(@as(f64, 0.6999999999999997), state.pitch);
+    try testing.expectEqual(@as(f64, 0.6968503937007875), state.pitch);
     try testing.expectEqual(@as(f64, 0.12345678897655028), state.precise);
     try testing.expectEqualStrings("q", std.mem.span(state.label));
 
@@ -274,4 +274,31 @@ test "static_class_quantized_state" {
     try testing.expectEqual(@as(f64, 4.000046652010295), state.yaw);
     try testing.expectEqual(@as(f64, -1.5), state.pitch);
     try testing.expectEqual(@as(c_int, 4), state.nums.*.count);
+}
+
+test "symmetric_range_carries_exact_zero" {
+    // 2^bits-1 intervals is odd, so on [-m, m] zero sits on a step boundary and
+    // half-up rounding lifts it to +1 quantum: a released input axis or a resting
+    // velocity never read back as 0. An even span puts min, 0 and max all on steps.
+    const cases = [_]struct { min: f64, max: f64, bits: u8 }{
+        .{ .min = -1, .max = 1, .bits = 8 },
+        .{ .min = -150, .max = 150, .bits = 16 },
+        .{ .min = -1.55, .max = 1.55, .bits = 16 },
+        .{ .min = -1, .max = 1, .bits = 32 },
+    };
+    for (cases) |k| {
+        const desc = c.colyseus_quantize_resolve(k.min, k.max, k.bits, false);
+        const steps = std.math.pow(f64, 2, @as(f64, @floatFromInt(k.bits)));
+        try testing.expectEqual(steps - 2.0, desc.span);
+        try testing.expectEqual(@as(f64, 0), c.colyseus_quantize_snap(&desc, 0));
+        try testing.expectEqual(k.min, c.colyseus_quantize_snap(&desc, k.min));
+        try testing.expectEqual(k.max, c.colyseus_quantize_snap(&desc, k.max));
+    }
+
+    // only symmetric clamped ranges give up a code
+    const asym = c.colyseus_quantize_resolve(0, 1, 8, false);
+    try testing.expectEqual(@as(f64, 255), asym.span);
+    const wrap = c.colyseus_quantize_resolve(-1, 1, 8, true);
+    try testing.expectEqual(@as(f64, 256), wrap.span);
+    try testing.expectEqual(@as(f64, 0), c.colyseus_quantize_snap(&wrap, 0));
 }

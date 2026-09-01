@@ -2,7 +2,7 @@
 // THIS FILE HAS BEEN GENERATED AUTOMATICALLY
 // DO NOT CHANGE IT MANUALLY UNLESS YOU KNOW WHAT YOU'RE DOING
 // 
-// GENERATED USING @colyseus/schema 5.0.11
+// GENERATED USING @colyseus/schema 5.0.27
 // 
 #ifndef __SCHEMA_CODEGEN_QSTATE_H__
 #define __SCHEMA_CODEGEN_QSTATE_H__ 1
@@ -28,7 +28,7 @@ typedef struct {
 } q_state_t;
 
 static const colyseus_quantized_descriptor_t q_state_yaw_quantized = {0, 6.283185307179586, 6.283185307179586, 65536, 16, true};
-static const colyseus_quantized_descriptor_t q_state_pitch_quantized = {-1.5, 1.5, 3, 255, 8, false};
+static const colyseus_quantized_descriptor_t q_state_pitch_quantized = {-1.5, 1.5, 3, 254, 8, false};
 static const colyseus_quantized_descriptor_t q_state_precise_quantized = {0, 1, 1, 4294967295, 32, false};
 
 static const colyseus_field_t q_state_fields[] = {

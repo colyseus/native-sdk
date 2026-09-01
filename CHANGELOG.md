@@ -3,6 +3,17 @@
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
 Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
 
+## 0.18.3
+
+### Fixed
+
+- `t.quantized()` fields on a range symmetric about zero (`min: -1, max: 1`) now
+  decode an exact `0`. A released input axis or a resting velocity arrived as one
+  quantum above zero, so a `== 0` check never fired and anything integrating the
+  value drifted. Requires a server on @colyseus/schema 5.0.27 — the wire mapping
+  for these fields changed, and generated C headers must be regenerated with
+  schema-codegen 5.0.27 (the descriptor's `span` is baked in).
+
 ## 0.18.2
 
 ### Added

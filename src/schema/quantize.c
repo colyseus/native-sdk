@@ -16,8 +16,9 @@ colyseus_quantized_descriptor_t colyseus_quantize_resolve(double min, double max
         .max = max,
         .range = max - min,
         /* wrapping spreads 2^bits steps across [min,max) (top ≡ bottom);
-         * clamped maps the endpoints onto 0 and 2^bits-1 inclusive */
-        .span = wrap ? steps : steps - 1.0,
+         * clamped maps the endpoints onto 0 and 2^bits-1 inclusive — one fewer
+         * on a range symmetric about zero so zero lands on a step too */
+        .span = wrap ? steps : (min == -max ? steps - 2.0 : steps - 1.0),
         .bits = bits,
         .wrap = wrap,
     };
