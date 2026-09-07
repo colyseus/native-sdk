@@ -102,7 +102,7 @@ void main() {
         expect((items[1] as SchemaInstance)['name'], 'reset_b');
         expect(items[999], isNull);
 
-        // Native storage prepends, so this pins the index-order contract.
+        // Pins the index-order contract: iteration follows the server's order.
         final names = <String>[];
         items.forEach((index, value) {
           names.add((value as SchemaInstance)['name'] as String);

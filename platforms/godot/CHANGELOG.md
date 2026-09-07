@@ -2,6 +2,16 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.18.1
+
+### Fixed
+
+- `room.get_state()` returns `ArraySchema` fields in the server's order. Every
+  array came back reversed, so anything stacking or ordering by array position
+  was inverted. `on_add()` also replays already-present array items oldest-first
+  now, instead of newest-first. Thanks @zahmad12!
+  [#30](https://github.com/colyseus/native-sdk/issues/30)
+
 ## 0.18.0
 
 ### Added

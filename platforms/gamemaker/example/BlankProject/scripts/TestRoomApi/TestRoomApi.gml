@@ -365,6 +365,39 @@ suite(function() {
             expect(colyseus_array_get(_me, "items", 1).name).toBe("shield");
         });
 
+        // colyseus_array_get is index-addressed, so it cannot see the order the
+        // decoder holds items in. on_add's replay of already-present items is
+        // the one GML-visible path that can.
+        test("on_add replays existing array items oldest-first", function() {
+            var _state = colyseus_room_get_state(global.__rt.room);
+            var _sid = colyseus_room_get_session_id(global.__rt.room);
+            var _me = colyseus_map_get(_state, "players", _sid);
+
+            // Fill the array BEFORE subscribing, so on_add has a backlog.
+            // reset_items empties it and pushes two known items in one tick.
+            colyseus_send(global.__rt.room, "reset_items", {});
+            var _start = current_time;
+            while (current_time - _start < 3000) {
+                colyseus_process();
+                if (colyseus_array_size(_me, "items") == 2 &&
+                    colyseus_array_get(_me, "items", 0).name == "reset_a") break;
+            }
+            expect(colyseus_array_size(_me, "items")).toBe(2);
+
+            global.__rt.replayed = [];
+            var _cb = colyseus_callbacks_create(global.__rt.room);
+            colyseus_on_add(_cb, _me, "items", function(_item, _index) {
+                array_push(global.__rt.replayed, _item.name);
+            });
+
+            _start = current_time;
+            while (array_length(global.__rt.replayed) < 2 && current_time - _start < 2000) {
+                colyseus_process();
+            }
+
+            expect(global.__rt.replayed).toBeEqual(["reset_a", "reset_b"]);
+        });
+
         test("struct field updates inline when listener fires", function() {
             global.__rt.callbacks = colyseus_callbacks_create(global.__rt.room);
             global.__rt.player_struct = undefined;

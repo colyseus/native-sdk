@@ -14,6 +14,7 @@ const testing = std.testing;
 //   - DELETE_BY_REFID idempotency guards + ref-count decrement (schema#220)
 //   - MOVE (32) / MOVE_AND_ADD (160) opcode handling
 //   - decode-end hole compaction renumbers survivors 0..n-1
+//   - items are visited in index order (foreach + on_add replay)
 // ============================================================================
 
 const c = @cImport({
@@ -21,6 +22,7 @@ const c = @cImport({
     @cInclude("colyseus/schema/collections.h");
     @cInclude("colyseus/schema/ref_tracker.h");
     @cInclude("colyseus/schema/decoder.h");
+    @cInclude("colyseus/schema/callbacks.h");
     @cInclude("schema/array_schema_insert_ops.h");
 });
 
@@ -244,4 +246,136 @@ test "arrayschema_move" {
     try testing.expectEqual(@as(f64, 2), itemValueAt(items, 0));
     try testing.expectEqual(@as(f64, 1), itemValueAt(items, 1));
     try testing.expectEqual(@as(f64, 9), itemValueAt(items, 2));
+}
+
+// ============================================================================
+// Ordering (issue #30)
+//
+// Every assertion above reads through colyseus_array_schema_get(index), which
+// is order-blind. These read the way the bindings do — in visit order — which
+// is where the reversal showed up. Fixtures are reused from the tests above.
+// ============================================================================
+
+const OrderProbe = struct {
+    var values: [16]f64 = undefined;
+    var indexes: [16]c_int = undefined;
+    var n: usize = 0;
+
+    fn reset() void {
+        n = 0;
+    }
+
+    fn record(index: c_int, value: f64) void {
+        if (n >= values.len) return;
+        indexes[n] = index;
+        values[n] = value;
+        n += 1;
+    }
+
+    fn onForeachNumber(index: c_int, value: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+        record(index, @as(*f64, @ptrCast(@alignCast(value.?))).*);
+    }
+
+    fn onForeachItem(index: c_int, value: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+        record(index, @as(*c.item_t, @ptrCast(@alignCast(value.?))).value);
+    }
+
+    fn onAddNumber(value: ?*anyopaque, key: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {
+        record(@as(*c_int, @ptrCast(@alignCast(key.?))).*, @as(*f64, @ptrCast(@alignCast(value.?))).*);
+    }
+
+    /// The visited values in order, and the indexes handed to the callback,
+    /// which must be the dense 0..n-1 the values were visited in.
+    fn expect(want: []const f64) !void {
+        try testing.expectEqualSlices(f64, want, values[0..n]);
+        for (indexes[0..n], 0..) |idx, i| {
+            try testing.expectEqual(@as(c_int, @intCast(i)), idx);
+        }
+    }
+};
+
+test "arrayschema_foreach_visits_in_index_order" {
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_numbers);
+    const numbers: *c.colyseus_array_schema_t = getState(decoder).numbers.?;
+
+    OrderProbe.reset();
+    c.colyseus_array_schema_foreach(numbers, OrderProbe.onForeachNumber, null);
+    try OrderProbe.expect(&[_]f64{ 1, 2, 3 });
+}
+
+test "arrayschema_foreach_order_survives_insert" {
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    // same fixture as arrayschema_unshift_same_tick_ops => [0, 1, 2, 99, 4]
+    decode(decoder, &snapshot_numbers);
+    decode(decoder, &[_]u8{ 255, 1, 128, 0, 0, 0, 3, 99, 128, 4, 4 });
+
+    const numbers: *c.colyseus_array_schema_t = getState(decoder).numbers.?;
+    OrderProbe.reset();
+    c.colyseus_array_schema_foreach(numbers, OrderProbe.onForeachNumber, null);
+    try OrderProbe.expect(&[_]f64{ 0, 1, 2, 99, 4 });
+}
+
+test "arrayschema_foreach_order_survives_hole_compaction" {
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    // same fixtures as arrayschema_stale_delete_by_refid: [0..4] then the
+    // patch dropping refIds 4/5/6, which renumbers the survivors at decode end
+    decode(decoder, &[_]u8{ 128, 1, 129, 2, 130, 3, 255, 2, 128, 0, 4, 128, 1, 5, 128, 2, 6, 128, 3, 7, 128, 4, 8, 255, 4, 128, 0, 255, 5, 128, 1, 255, 6, 128, 2, 255, 7, 128, 3, 255, 8, 128, 4 });
+    decode(decoder, &[_]u8{ 255, 2, 33, 4, 33, 5, 33, 6 });
+
+    const items: *c.colyseus_array_schema_t = getState(decoder).items.?;
+    OrderProbe.reset();
+    c.colyseus_array_schema_foreach(items, OrderProbe.onForeachItem, null);
+    try OrderProbe.expect(&[_]f64{ 3, 4 });
+}
+
+test "arrayschema_on_add_immediate_replays_in_index_order" {
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_numbers);
+    const numbers: *c.colyseus_array_schema_t = getState(decoder).numbers.?;
+
+    // on_add(immediate) replays what is already there, and every binding
+    // surfaces that replay straight to user code — so its order is visible.
+    const callbacks = c.colyseus_callbacks_create(decoder).?;
+    defer c.colyseus_callbacks_free(callbacks);
+
+    OrderProbe.reset();
+    _ = c.colyseus_callbacks_array_on_add(callbacks, numbers, OrderProbe.onAddNumber, null, true);
+    try OrderProbe.expect(&[_]f64{ 1, 2, 3 });
+}
+
+test "arrayschema_reverse_keeps_visit_order_in_sync" {
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_numbers);
+    const numbers: *c.colyseus_array_schema_t = getState(decoder).numbers.?;
+    c.colyseus_array_schema_reverse(numbers);
+
+    OrderProbe.reset();
+    c.colyseus_array_schema_foreach(numbers, OrderProbe.onForeachNumber, null);
+    try OrderProbe.expect(&[_]f64{ 3, 2, 1 });
+}
+
+test "arrayschema_clone_preserves_order" {
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_numbers);
+    const numbers: *c.colyseus_array_schema_t = getState(decoder).numbers.?;
+
+    const clone = c.colyseus_array_schema_clone(numbers).?;
+    defer c.colyseus_array_schema_free(clone, null);
+
+    OrderProbe.reset();
+    c.colyseus_array_schema_foreach(clone, OrderProbe.onForeachNumber, null);
+    try OrderProbe.expect(&[_]f64{ 1, 2, 3 });
 }

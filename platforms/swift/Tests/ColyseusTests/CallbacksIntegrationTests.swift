@@ -41,6 +41,31 @@ final class CallbacksIntegrationTests: XCTestCase {
         XCTAssertEqual(added.values.first, sessionId)
     }
 
+    // onAdd replays what is already in the collection, and that replay walks
+    // the decoder's list directly — so its order is the user-visible one.
+    func testOnAddReplaysExistingArrayItemsInOrder() async throws {
+        let room = try await joinPrivateRoom()
+        defer { room.leave() }
+
+        let sessionId = try XCTUnwrap(room.sessionId)
+        waitPumping("own player") { room.state?.players[sessionId] != nil }
+
+        // Fill the array BEFORE subscribing, so onAdd has a backlog to replay.
+        room.send("reset_items")
+        room.send("add_item", ["name": "sword"])
+        waitPumping("the items to land") {
+            room.state?.players[sessionId]?.items.count == 3
+        }
+
+        let replayed = Recorder()
+        let callbacks = Colyseus.Callbacks.get(room)
+        let player = try XCTUnwrap(room.state?.players[sessionId])
+        callbacks.onAdd(player.items) { _, item in replayed.record(item.name) }
+
+        XCTAssertEqual(replayed.values, ["reset_a", "reset_b", "sword"],
+                       "onAdd must replay oldest-first, not newest-first")
+    }
+
     func testOnRemoveFiresWhenAnEntryGoes() async throws {
         let room = try await joinPrivateRoom()
         defer { room.leave() }

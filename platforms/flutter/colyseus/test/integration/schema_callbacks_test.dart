@@ -1,6 +1,8 @@
 @Tags(['integration'])
 library;
 
+import 'dart:async';
+
 import 'package:colyseus/colyseus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -195,6 +197,35 @@ void main() {
     });
   });
 
+  // SchemaArray's reads sort by index client-side, so they cannot see the
+  // decoder's own ordering. onAdd's replay of already-present items does not
+  // go through that sort — it is the one Dart-visible path that can.
+  test('onAdd replays existing array items oldest-first', () async {
+    await withRoom(exampleServer, 'my_room', (client, room) async {
+      await waitForOwnEntry(room);
+
+      final state = room.stateAs(TestRoomState.new)!;
+      final me = state.players[room.sessionId]!;
+
+      // Fill the array BEFORE subscribing, so onAdd has a backlog to replay.
+      // reset_items empties it and pushes two known items in one tick.
+      room.send('reset_items');
+      room.send('add_item', {'name': 'sword'});
+      expect(await waitFor(() => me.items.length == 3), isTrue,
+          reason: 'items never settled at 3');
+
+      final replayed = <String>[];
+      final sub = callbacksOnItems(room, me, replayed);
+      expect(await waitFor(() => replayed.length == 3), isTrue,
+          reason: 'onAdd never replayed the existing items: $replayed');
+
+      expect(replayed, ['reset_a', 'reset_b', 'sword'],
+          reason: 'onAdd must replay oldest-first, not newest-first');
+
+      await sub.cancel();
+    });
+  });
+
   test('typed state access reads through generated façades', () async {
     await withRoom(exampleServer, 'my_room', (client, room) async {
       await waitForOwnEntry(room);
@@ -336,4 +367,11 @@ void main() {
       await sub.cancel();
     });
   });
+}
+
+/// Subscribes to `me.items` and records each replayed/added item's name.
+StreamSubscription<dynamic> callbacksOnItems(
+    ColyseusRoom room, Player me, List<String> into) {
+  return Callbacks.get(room).onAddByName(
+      me, 'items', (_, value) => into.add((value as SchemaInstance)['name'] as String));
 }

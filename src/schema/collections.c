@@ -1,4 +1,5 @@
 #include "colyseus/schema/collections.h"
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -110,14 +111,46 @@ void colyseus_array_schema_set_child_primitive(colyseus_array_schema_t* arr, con
     arr->has_schema_child = false;
 }
 
-static colyseus_array_item_t* array_find_item(colyseus_array_schema_t* arr, int index) {
-    colyseus_array_item_t* item = arr->items;
-    while (item) {
-        if (item->index == index) return item;
-        item = item->next;
+/*
+ * The link holding `index`, or the link it belongs at. `items` is ascending,
+ * so a lookup that misses has already walked to the insertion point — one
+ * walk answers both "is it there?" and "where does it go?".
+ */
+static colyseus_array_item_t** array_find_slot(colyseus_array_schema_t* arr, int index) {
+    colyseus_array_item_t** slot = &arr->items;
+    while (*slot && (*slot)->index < index) {
+        slot = &(*slot)->next;
     }
-    return NULL;
+    return slot;
 }
+
+static colyseus_array_item_t* array_find_item(colyseus_array_schema_t* arr, int index) {
+    colyseus_array_item_t** slot = array_find_slot(arr, index);
+    return (*slot && (*slot)->index == index) ? *slot : NULL;
+}
+
+/* Splice `node` in at `slot`, keeping `items` ascending by index — the
+ * ordering every consumer reads (foreach, the on_add(immediate) replays in
+ * callbacks.c, clear()'s DELETE events, and the bindings that push items out
+ * in list order). Callers set node->index first. */
+static void array_link_at(colyseus_array_schema_t* arr, colyseus_array_item_t** slot,
+                          colyseus_array_item_t* node) {
+    node->next = *slot;
+    *slot = node;
+    arr->count++;
+}
+
+#ifndef NDEBUG
+/* The invariant is load-bearing: a stray prepend would make array_find_slot
+ * miss an existing index, and set() would then link a second node at it. */
+static void array_assert_sorted(const colyseus_array_schema_t* arr) {
+    for (const colyseus_array_item_t* item = arr->items; item && item->next; item = item->next) {
+        assert(item->index < item->next->index && "ArraySchema items must stay ascending by index");
+    }
+}
+#else
+#define array_assert_sorted(arr) ((void)0)
+#endif
 
 /* Returns true when the key was present (the slot was a hole). */
 static bool array_remove_deleted_key(colyseus_array_schema_t* arr, int index) {
@@ -138,61 +171,39 @@ void colyseus_array_schema_set(colyseus_array_schema_t* arr, int index, void* va
 
     bool was_deleted = array_remove_deleted_key(arr, index); /* consult + clear */
 
-    colyseus_array_item_t* item = array_find_item(arr, index);
+    colyseus_array_item_t** slot = array_find_slot(arr, index);
+    colyseus_array_item_t* item = (*slot && (*slot)->index == index) ? *slot : NULL;
 
     /* strict ADD only: MOVE_AND_ADD/DELETE_AND_ADD/ADD_BY_REFID must not insert */
-    if (operation == (uint8_t)COLYSEUS_OP_ADD &&
+    bool insert = operation == (uint8_t)COLYSEUS_OP_ADD &&
         item != NULL && item->value != NULL &&
         item->value != value &&   /* re-ADD of the ref already here: overwrite */
-        !was_deleted) {
-        /* ADD at an occupied index = insert: shift existing items up. */
-        colyseus_array_item_t* new_item = malloc(sizeof(colyseus_array_item_t));
-        if (!new_item) return;
+        !was_deleted;
 
-        colyseus_array_item_t* curr = arr->items;
-        while (curr) {
-            if (curr->index >= index) curr->index++;
-            curr = curr->next;
+    if (item && !insert) {
+        item->value = value;   /* every op but insert writes the slot in place */
+        return;
+    }
+
+    colyseus_array_item_t* new_item = malloc(sizeof(colyseus_array_item_t));
+    if (!new_item) return;
+
+    if (insert) {
+        /* ADD at an occupied index = insert: shift `slot` and everything after
+         * it up, then take the vacated index. */
+        for (colyseus_array_item_t* curr = *slot; curr; curr = curr->next) {
+            curr->index++;
         }
         /* keep hole bookkeeping aligned with the shifted slots */
         for (int i = 0; i < arr->deleted_count; i++) {
             if (arr->deleted_keys[i] >= index) arr->deleted_keys[i]++;
         }
-
-        new_item->index = index;
-        new_item->value = value;
-        new_item->next = arr->items;
-        arr->items = new_item;
-        arr->count++;
-
-    } else if (operation == (uint8_t)COLYSEUS_OP_DELETE_AND_MOVE) {
-        /* Remove at index, then set at index */
-        if (item) {
-            item->value = value;
-        } else {
-            colyseus_array_item_t* new_item = malloc(sizeof(colyseus_array_item_t));
-            if (!new_item) return;
-            new_item->index = index;
-            new_item->value = value;
-            new_item->next = arr->items;
-            arr->items = new_item;
-            arr->count++;
-        }
-
-    } else {
-        /* Regular set */
-        if (item) {
-            item->value = value;
-        } else {
-            colyseus_array_item_t* new_item = malloc(sizeof(colyseus_array_item_t));
-            if (!new_item) return;
-            new_item->index = index;
-            new_item->value = value;
-            new_item->next = arr->items;
-            arr->items = new_item;
-            arr->count++;
-        }
     }
+
+    new_item->index = index;
+    new_item->value = value;
+    array_link_at(arr, slot, new_item);
+    array_assert_sorted(arr);
 }
 
 void* colyseus_array_schema_get(colyseus_array_schema_t* arr, int index) {
@@ -269,17 +280,18 @@ void colyseus_array_schema_reverse(colyseus_array_schema_t* arr) {
         item = item->next;
     }
 
+    /* Inverting the indices inverts the ordering, so relink to keep `items`
+     * ascending. */
+    colyseus_array_item_t* reversed = NULL;
     item = arr->items;
     while (item) {
+        colyseus_array_item_t* next = item->next;
         item->index = max_index - item->index;
-        item = item->next;
+        item->next = reversed;
+        reversed = item;
+        item = next;
     }
-}
-
-static int array_item_index_cmp(const void* a, const void* b) {
-    const colyseus_array_item_t* ia = *(const colyseus_array_item_t* const*)a;
-    const colyseus_array_item_t* ib = *(const colyseus_array_item_t* const*)b;
-    return ia->index - ib->index;
+    arr->items = reversed;
 }
 
 void colyseus_array_schema_on_decode_end(colyseus_array_schema_t* arr) {
@@ -308,23 +320,15 @@ void colyseus_array_schema_on_decode_end(colyseus_array_schema_t* arr) {
 
     arr->deleted_count = 0;
 
-    /* Renumber survivors 0..n-1 preserving order — reference decoders compact
-     * holes at decode end, and later positional ops address the compacted
-     * layout. Without this, any delete leaves sparse indices and desyncs. */
-    if (arr->count > 0) {
-        colyseus_array_item_t** nodes = malloc((size_t)arr->count * sizeof(*nodes));
-        if (!nodes) return;
-
-        int n = 0;
-        for (colyseus_array_item_t* item = arr->items; item; item = item->next) {
-            nodes[n++] = item;
-        }
-        qsort(nodes, (size_t)n, sizeof(*nodes), array_item_index_cmp);
-        for (int i = 0; i < n; i++) {
-            nodes[i]->index = i;
-        }
-        free(nodes);
+    /* Renumber survivors 0..n-1 — reference decoders compact holes at decode
+     * end, and later positional ops address the compacted layout. Without
+     * this, any delete leaves sparse indices and desyncs. The list is already
+     * ascending, so closing the gaps preserves the order. */
+    int i = 0;
+    for (colyseus_array_item_t* item = arr->items; item; item = item->next) {
+        item->index = i++;
     }
+    array_assert_sorted(arr);
 }
 
 void colyseus_array_schema_foreach(colyseus_array_schema_t* arr, colyseus_array_foreach_fn callback, void* userdata) {
@@ -354,14 +358,16 @@ colyseus_array_schema_t* colyseus_array_schema_clone(colyseus_array_schema_t* ar
      * which silently corrupts indices for any other items that followed in the
      * source list.
      */
+    colyseus_array_item_t** tail = &clone->items;
     colyseus_array_item_t* item = arr->items;
     while (item) {
         colyseus_array_item_t* new_item = malloc(sizeof(colyseus_array_item_t));
         if (!new_item) return clone;
         new_item->index = item->index;
         new_item->value = item->value;
-        new_item->next = clone->items;
-        clone->items = new_item;
+        new_item->next = NULL;
+        *tail = new_item;
+        tail = &new_item->next;
         clone->count++;
         item = item->next;
     }

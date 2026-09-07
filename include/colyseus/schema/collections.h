@@ -37,7 +37,9 @@ typedef struct colyseus_array_item {
 struct colyseus_array_schema {
     int __refId;
     
-    colyseus_array_item_t* items;       /* Linked list of items */
+    /* Linked list of items, kept ascending by index. Consumers rely on the
+     * ordering — walking `items` directly is walking the array in order. */
+    colyseus_array_item_t* items;
     int count;                          /* Number of items */
     int capacity;                       /* For array-based storage */
     
@@ -72,6 +74,7 @@ void colyseus_array_schema_on_decode_end(colyseus_array_schema_t* arr);
 
 /* Iteration */
 typedef void (*colyseus_array_foreach_fn)(int index, void* value, void* userdata);
+/* Visits every item in ascending index order. */
 void colyseus_array_schema_foreach(colyseus_array_schema_t* arr, colyseus_array_foreach_fn callback, void* userdata);
 
 /* Clone */

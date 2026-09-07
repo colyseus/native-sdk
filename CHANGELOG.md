@@ -3,6 +3,18 @@
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
 Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
 
+## 0.18.4
+
+### Fixed
+
+- `ArraySchema` items now reach the bindings in the server's order. Anything
+  that read an array in iteration order rather than by index got it exactly
+  reversed: the Godot `room.get_state()` snapshot, and `on_add(immediate)`'s
+  replay of already-present items in every binding. Length and element contents
+  were always right, so it only showed up where position carries meaning —
+  draw order, turn order, "most recent". Thanks @zahmad12!
+  [#30](https://github.com/colyseus/native-sdk/issues/30)
+
 ## 0.18.3
 
 ### Fixed

@@ -90,6 +90,34 @@ final class RoomIntegrationTests: XCTestCase {
         }
     }
 
+    // The array API is index-addressed, so `values` and `for-in` are the only
+    // reads whose ORDER can drift from the server's — nothing else here would
+    // notice a decoder that hands items back backwards.
+    func testArraySchemaReadsInServerOrder() async throws {
+        let room = try await client.create("test_room", options: ["private": true], state: TestRoomState.self)
+        defer { room.leave() }
+
+        let sessionId = try XCTUnwrap(room.sessionId)
+        waitPumping("own player to decode") { room.state?.players[sessionId] != nil }
+
+        // reset_items empties the array and pushes two known items in one tick.
+        room.send("reset_items")
+        waitPumping("the reset to land") {
+            room.state?.players[sessionId]?.items.values.map(\.name) == ["reset_a", "reset_b"]
+        }
+
+        room.send("add_item", ["name": "sword"])
+        waitPumping("the append to land") {
+            room.state?.players[sessionId]?.items.count == 3
+        }
+
+        let items = try XCTUnwrap(room.state?.players[sessionId]?.items)
+        XCTAssertEqual(items.values.map(\.name), ["reset_a", "reset_b", "sword"])
+        XCTAssertEqual(items.map(\.name), ["reset_a", "reset_b", "sword"], "for-in order")
+        XCTAssertEqual((0 ..< items.count).map { items[$0]!.name }, items.values.map(\.name),
+                       "subscript and values must agree")
+    }
+
     func testMapSchemaSeesOtherPlayers() async throws {
         // A joinOrCreate lands in whatever room the other test files are
         // already in, and then the player count says nothing.

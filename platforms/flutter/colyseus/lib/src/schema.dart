@@ -230,9 +230,10 @@ class SchemaMap {
 
 /// A decoded `ArraySchema`, indexed by position.
 ///
-/// The native storage is a linked list in insertion-prepend order, so every
-/// read here sorts by the item's decoded index — iteration matches the order
-/// the server sees, not the order the list happens to hold.
+/// Every read here sorts by the item's decoded index rather than trusting the
+/// snapshot order. The core hands items back in index order, but the Dart
+/// package and the bundled native library version independently, so the sort
+/// is what keeps iteration correct against an older core.
 class SchemaArray {
   final int _handle;
   int? _childType;

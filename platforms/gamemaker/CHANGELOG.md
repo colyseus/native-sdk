@@ -2,6 +2,15 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.1
+
+### Fixed
+
+- `on_add()` now replays already-present `ArraySchema` items oldest-first. It
+  replayed them newest-first, so anything built from that first pass came out
+  reversed. Thanks @zahmad12!
+  [#30](https://github.com/colyseus/native-sdk/issues/30)
+
 ## 0.18.0
 
 ### Added

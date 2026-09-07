@@ -472,6 +472,8 @@ typedef struct {
     const char* child_primitive_type;
 } ArrayConvertContext;
 
+/* push_back is enough: foreach visits in ascending index order, and holes are
+ * compacted away at decode end, so the visit order IS the array order. */
 static void array_item_to_godot(int index, void* value, void* userdata) {
     (void)index;
     ArrayConvertContext* ctx = (ArrayConvertContext*)userdata;
