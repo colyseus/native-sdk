@@ -42,13 +42,17 @@ public extension Colyseus.Room {
             try await withCheckedThrowingContinuation { continuation in
                 let userdata = pending.arm(continuation)
                 let encoded = payload == .null ? Data() : MessagePack.encode(payload)
-                let id: UInt32 = encoded.withUnsafeBytes { buffer in
-                    type.withCString { typePointer in
-                        colyseus_room_request_encoded_reply(
-                            raw, typePointer,
-                            buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count,
-                            requestReplyTrampoline, userdata
-                        )
+                // The core's pending table has no lock of its own, and a pump
+                // answers out of it.
+                let id: UInt32 = Colyseus.runtime.exclusive {
+                    encoded.withUnsafeBytes { buffer in
+                        type.withCString { typePointer in
+                            colyseus_room_request_encoded_reply(
+                                raw, typePointer,
+                                buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count,
+                                requestReplyTrampoline, userdata
+                            )
+                        }
                     }
                 }
                 pending.started(id: id, timeout: timeout)
@@ -107,14 +111,12 @@ final class PendingRequest: @unchecked Sendable {
 
     /// Settle from outside the core's callback — a timeout or a cancellation.
     ///
-    /// Takes the pump lock so the entry is not dropped while a reply is being
-    /// delivered through `pump()`. That covers the common race but not all of
-    /// it: the core's pending table has no lock of its own, and a close
-    /// rejects from the transport thread.
+    /// With the pump excluded, so the entry cannot be answered while it is
+    /// being dropped.
     func settle(_ result: Result<MessagePackValue, Swift.Error>) {
-        Colyseus.runtime.pumpLock.lock()
-        defer { Colyseus.runtime.pumpLock.unlock() }
-        claim(result) { room, id in colyseus_room_cancel_request(room, id) }
+        Colyseus.runtime.exclusive {
+            claim(result) { room, id in colyseus_room_cancel_request(room, id) }
+        }
     }
 
     /// Settle from the C callback, which has already taken the entry out of
@@ -137,10 +139,9 @@ final class PendingRequest: @unchecked Sendable {
         if let drop, requestId != 0 { drop(room, requestId) }
         lock.unlock()
 
-        // Outside the lock: resuming runs the caller's code, and the release
-        // can be the last one holding us.
+        // Outside the lock: the release can be the last one holding us.
         timer?.cancel()
-        Colyseus.runtime.deliver { continuation.resume(with: result) }
+        continuation.resume(with: result)
         releasePointer(pointer, as: PendingRequest.self)
     }
 }

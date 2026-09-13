@@ -75,6 +75,9 @@ public extension Colyseus {
         }
 
         /// Called whenever the signed-in user changes, sign-out included.
+        ///
+        /// Unlike room events this is synchronous with the call that caused
+        /// it: it has fired by the time `signIn…` returns or `signOut()` does.
         @discardableResult
         public func onChange(_ handler: @escaping @Sendable (User?) -> Void) -> Subscription {
             if changeBridge == nil, let raw {
@@ -169,25 +172,25 @@ public extension Colyseus {
                 UnsafeMutableRawPointer?
             ) -> Bool
         ) async throws -> User {
-            try await withCheckedThrowingContinuation { continuation in
-                let box = OneShot<User> { continuation.resume(with: $0) }
-                let pointer = retainedPointer(box)
+            let completion = Completion<User>()
+            return try await Colyseus.runtime.perform(completion) {
+                let pointer = retainedPointer(completion)
 
                 let started = start({ data, userdata in
-                    let box = consumeObject(userdata, as: OneShot<User>.self)
+                    let completion = consumeObject(userdata, as: Completion<User>.self)
                     if let user = User(data) {
-                        box?.finish(.success(user))
+                        completion?.finish(.success(user))
                     } else {
-                        box?.finish(.failure(Colyseus.Error.auth("server returned no user")))
+                        completion?.finish(.failure(Colyseus.Error.auth("server returned no user")))
                     }
                 }, { message, userdata in
-                    consumeObject(userdata, as: OneShot<User>.self)?
+                    consumeObject(userdata, as: Completion<User>.self)?
                         .finish(.failure(Colyseus.Error.auth(String(nullableCString: message) ?? "unknown error")))
                 }, pointer)
 
                 if !started {
-                    releasePointer(pointer, as: OneShot<User>.self)
-                    continuation.resume(throwing: Colyseus.Error.unavailable("client has been released"))
+                    releasePointer(pointer, as: Completion<User>.self)
+                    completion.finish(.failure(Colyseus.Error.unavailable("client has been released")))
                 }
             }
         }

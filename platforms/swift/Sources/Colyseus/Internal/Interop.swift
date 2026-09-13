@@ -61,8 +61,8 @@ func withCStrings<R>(_ strings: [String?], _ body: ([UnsafePointer<CChar>?]) -> 
 
 // MARK: - Mutable state that outlives one thread
 
-/// A lock-guarded box. The SDK's shared state is touched from the transport
-/// thread, the HTTP worker and the caller's queue, and none of it is hot
+/// A lock-guarded box. The SDK's shared state is touched from the pumping
+/// thread and from whichever threads await on it, and none of it is hot
 /// enough to justify anything finer-grained.
 final class Guarded<Value>: @unchecked Sendable {
     private var value: Value

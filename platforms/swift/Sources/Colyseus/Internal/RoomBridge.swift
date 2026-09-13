@@ -33,9 +33,11 @@ final class MessageRegistry<Payload>: @unchecked Sendable {
 
 /// Everything the C room calls back into, in one object.
 ///
-/// Room events run on whatever thread called ``Colyseus/pump()`` — with
-/// inbound traffic serialized (the default) that is the caller's own thread,
-/// so a handler sees the state it was told about and nothing has moved on.
+/// Room events reach handlers inside ``Colyseus/pump()``, on the thread that
+/// called it: in polled mode the core fires them there, and the few it reports
+/// synchronously from elsewhere — a close from `leave(consented: false)` or
+/// `dropConnection()` — are held for the next pump. The C payload is copied
+/// out first, since it only lives for the callback.
 final class RoomBridge: @unchecked Sendable {
     let join = Emitter<Void>()
     let stateChange = Emitter<Void>()
@@ -48,41 +50,48 @@ final class RoomBridge: @unchecked Sendable {
     let byteMessages = MessageRegistry<Data>()
     let anyMessage = Emitter<(type: Colyseus.MessageType, payload: MessagePackValue)>()
 
+    /// Set by `setLatency`. Only touched with the pump excluded or from
+    /// inside one, so it needs no lock of its own.
+    var hasInjectedLatency = false
+
     private var room: UnsafeMutablePointer<colyseus_room_t>?
 
     func install(on room: UnsafeMutablePointer<colyseus_room_t>, userdata: UnsafeMutableRawPointer) {
         self.room = room
-        armTransport()
 
         colyseus_room_on_join(room, { userdata in
-            borrowObject(userdata, as: RoomBridge.self)?.join.emit(())
+            guard let bridge = borrowObject(userdata, as: RoomBridge.self) else { return }
+            Colyseus.runtime.deliver { bridge.join.emit(()) }
         }, userdata)
 
         colyseus_room_on_state_change(room, { userdata in
-            borrowObject(userdata, as: RoomBridge.self)?.stateChange.emit(())
+            guard let bridge = borrowObject(userdata, as: RoomBridge.self) else { return }
+            Colyseus.runtime.deliver { bridge.stateChange.emit(()) }
         }, userdata)
 
         colyseus_room_on_error(room, { code, message, userdata in
-            borrowObject(userdata, as: RoomBridge.self)?
-                .error.emit(CodeMessage(code: code, message: String(nullableCString: message) ?? ""))
+            guard let bridge = borrowObject(userdata, as: RoomBridge.self) else { return }
+            let payload = CodeMessage(code: code, message: String(nullableCString: message) ?? "")
+            Colyseus.runtime.deliver { bridge.error.emit(payload) }
         }, userdata)
 
         colyseus_room_on_leave(room, { code, reason, userdata in
-            borrowObject(userdata, as: RoomBridge.self)?
-                .leave.emit(CodeMessage(code: code, message: String(nullableCString: reason) ?? ""))
+            guard let bridge = borrowObject(userdata, as: RoomBridge.self) else { return }
+            let payload = CodeMessage(code: code, message: String(nullableCString: reason) ?? "")
+            Colyseus.runtime.deliver { bridge.leave.emit(payload) }
         }, userdata)
 
         colyseus_room_on_drop(room, { code, reason, userdata in
-            borrowObject(userdata, as: RoomBridge.self)?
-                .drop.emit(CodeMessage(code: code, message: String(nullableCString: reason) ?? ""))
+            guard let bridge = borrowObject(userdata, as: RoomBridge.self) else { return }
+            let payload = CodeMessage(code: code, message: String(nullableCString: reason) ?? "")
+            Colyseus.runtime.deliver { bridge.drop.emit(payload) }
         }, userdata)
 
         colyseus_room_on_reconnect(room, { userdata in
             guard let bridge = borrowObject(userdata, as: RoomBridge.self) else { return }
-            // Reconnecting swaps in a fresh transport, so the wrap that
-            // serializes inbound traffic has to go back on.
-            bridge.armTransport()
-            bridge.reconnect.emit(())
+            // Before the next frame: the fresh transport arrives unwrapped.
+            bridge.rewrapLatency()
+            Colyseus.runtime.deliver { bridge.reconnect.emit(()) }
         }, userdata)
 
         // The encoded family, decoded in Swift: the core's own reader flattens
@@ -96,8 +105,10 @@ final class RoomBridge: @unchecked Sendable {
             let payload = (try? MessagePack.decode(bytes)) ?? .null
             let messageType = Colyseus.MessageType(wireType: type)
 
-            bridge.messages.emit(messageType, payload)
-            bridge.anyMessage.emit((type: messageType, payload: payload))
+            Colyseus.runtime.deliver {
+                bridge.messages.emit(messageType, payload)
+                bridge.anyMessage.emit((type: messageType, payload: payload))
+            }
         }, userdata)
 
         colyseus_room_on_message_any_with_type_bytes(room, { type, data, length, userdata in
@@ -106,36 +117,55 @@ final class RoomBridge: @unchecked Sendable {
             else { return }
 
             let bytes = data.map { Data(bytes: $0, count: length) } ?? Data()
-            bridge.byteMessages.emit(Colyseus.MessageType(wireType: type), bytes)
+            let messageType = Colyseus.MessageType(wireType: type)
+            Colyseus.runtime.deliver { bridge.byteMessages.emit(messageType, bytes) }
         }, userdata)
     }
 
-    /// Queue inbound frames so they are decoded inside `pump()` rather than on
-    /// the transport's thread. Also the seam injected latency rides on.
-    func armTransport() {
-        guard let room, Colyseus.serializedInbound else { return }
-        colyseus_netdelay_wrap(room, true)
+    /// Reconnecting swaps in a fresh transport, and injected latency rides a
+    /// wrap around the old one.
+    private func rewrapLatency() {
+        guard let room, hasInjectedLatency else { return }
+        colyseus_netdelay_wrap(room, false)
     }
 }
 
-/// A C callback that fires exactly once, carrying a Swift completion.
-final class OneShot<Value: Sendable>: @unchecked Sendable {
-    private var completion: (@Sendable (Result<Value, Swift.Error>) -> Void)?
+/// The result a one-shot C callback settles, for ``Runtime/perform(_:_:)`` to
+/// pick up. The callback retains it through userdata, so a caller that stopped
+/// waiting (cancelled) leaves nothing dangling.
+final class Completion<Value>: @unchecked Sendable {
+    private var settled: Result<Value, Swift.Error>?
     private let lock = NSLock()
-
-    init(_ completion: @escaping @Sendable (Result<Value, Swift.Error>) -> Void) {
-        self.completion = completion
-    }
 
     /// Settles once; later calls are dropped. Some C paths can report both a
     /// failure and a close for the same operation.
     func finish(_ result: Result<Value, Swift.Error>) {
         lock.lock()
-        let completion = self.completion
-        self.completion = nil
-        lock.unlock()
-
-        guard let completion else { return }
-        Colyseus.runtime.deliver { completion(result) }
+        defer { lock.unlock() }
+        if settled == nil { settled = result }
     }
+
+    var result: Result<Value, Swift.Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return settled
+    }
+}
+
+/// A matchmaking call on its way through C userdata.
+///
+/// The room is built inside the callback, not after the await resumes: by
+/// then a pump may already have dispatched its first frames to handlers that
+/// weren't installed yet.
+final class PendingJoin: @unchecked Sendable {
+    private let open: (UnsafeMutablePointer<colyseus_room_t>) -> Void
+    private let fail: (Swift.Error) -> Void
+
+    init<State: SchemaRef>(_ completion: Completion<Colyseus.Room<State>>) {
+        open = { completion.finish(.success(Colyseus.Room<State>(raw: $0))) }
+        fail = { completion.finish(.failure($0)) }
+    }
+
+    func opened(_ raw: UnsafeMutablePointer<colyseus_room_t>) { open(raw) }
+    func failed(_ error: Swift.Error) { fail(error) }
 }

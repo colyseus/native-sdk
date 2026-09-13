@@ -7,11 +7,12 @@ public enum Colyseus {
 
     // MARK: - Where your code runs
 
-    /// The queue every callback, event and completion is delivered on.
+    /// The queue the automatic pump runs on — and so, while ``autoPump`` is
+    /// on, the queue every callback, event and completion arrives on.
     ///
     /// Defaults to the main queue, which is where a game's frame loop lives.
-    /// Set it before creating a client; changing it with rooms open moves
-    /// later deliveries but not ones already in flight.
+    /// Set it before creating a client. With ``autoPump`` off, callbacks run
+    /// wherever you call ``pump()`` instead.
     public static var callbackQueue: DispatchQueue {
         get { runtime.callbackQueue }
         set { runtime.callbackQueue = newValue }
@@ -29,8 +30,15 @@ public enum Colyseus {
 
     // MARK: - Pumping
 
-    /// Release inbound traffic, decode it, advance reconnection, and deliver
-    /// everything that came of it.
+    /// Run the SDK, and deliver everything that came of it.
+    ///
+    /// Nothing in the SDK runs on a thread of its own: matchmaking replies,
+    /// socket reads and schema decoding, injected latency and reconnection
+    /// all advance inside this call. Every room callback runs inside it too,
+    /// on the calling thread — `onJoin`, `onStateChange`, messages, schema
+    /// callbacks, `onError`, `onDrop`, `onReconnect` and `onLeave`. Nothing is
+    /// delivered between pumps, so state read on the pumping thread never
+    /// changes under you.
     ///
     /// Call this once per frame from your render loop, having first turned
     /// ``autoPump`` off. Doing so keeps decoding, prediction and drawing on one
@@ -43,23 +51,20 @@ public enum Colyseus {
     ///     ...
     /// }
     /// ```
+    ///
+    /// A call from inside a callback returns without doing anything.
     public static func pump() {
-        // Serialized because the inbound queue pops under its own lock but
-        // DELIVERS outside it: two pumps at once would decode on two threads,
-        // which is the thing serialized inbound exists to prevent. Waiting on
-        // a join pumps too, and that can overlap an app's frame loop.
-        runtime.pumpLock.lock()
-        defer { runtime.pumpLock.unlock() }
-
-        colyseus_netdelay_pump()
-        colyseus_reconnect_poll()
+        runtime.pump(external: true)
     }
 
-    /// Whether the SDK pumps on its own timer (on by default, ~60 Hz).
+    /// Whether the SDK pumps on its own timer, on ``callbackQueue`` (on by
+    /// default, ~60 Hz).
     ///
     /// Turn it off in an app with a frame loop and call ``pump()`` there
-    /// instead — two pumps racing each other put decoding back on a second
-    /// thread, which is the thing serialized inbound exists to prevent.
+    /// instead; pumping from two threads splits your callbacks between them.
+    /// Until that loop is running, awaiting a join, a reconnect or an HTTP
+    /// call pumps for you, so `try await client.joinOrCreate(...)` finishes
+    /// with no loop at all.
     public static var autoPump: Bool {
         get { runtime.autoPump }
         set { runtime.autoPump = newValue }
@@ -76,16 +81,12 @@ public enum Colyseus {
         Int(colyseus_netdelay_in_flight())
     }
 
-    /// Whether inbound traffic is queued and released inside ``pump()``
-    /// (the default) rather than decoded on the transport's own thread.
-    ///
-    /// Leaving this on is what makes the SDK single-threaded from your side:
-    /// schema decoding, input acks and prediction writes all happen while you
-    /// are inside `pump()`. It is also the seam ``Colyseus/Room/setLatency(delayMs:jitterMs:)``
-    /// injects into, so turning it off disables that too.
+    /// Always true: inbound traffic is decoded inside ``pump()`` and nowhere
+    /// else, so there is no longer anything to switch off.
+    @available(*, deprecated, message: "Inbound traffic is always decoded inside Colyseus.pump(); this setting does nothing.")
     public static var serializedInbound: Bool {
-        get { runtime.serializedInbound }
-        set { runtime.serializedInbound = newValue }
+        get { true }
+        set {}
     }
 
     static let runtime = Runtime()
@@ -93,14 +94,30 @@ public enum Colyseus {
 
 /// Process-wide SDK state. One instance, held by ``Colyseus``.
 final class Runtime: @unchecked Sendable {
-    let pumpLock = NSLock()
+    /// Held for a whole pump, and by anything that must not overlap one.
+    private let pumpLock = NSLock()
+    /// Guards everything below.
     private let lock = NSLock()
+    private var pumpingThread: pthread_t?
+    private var held: [@Sendable () -> Void] = []
+    private var lastExternalPump: TimeInterval = -.infinity
+    private var activity = 0
     private var timer: DispatchSourceTimer?
     private var _callbackQueue: DispatchQueue = .main
     private var _autoPump = true
     private var _autoPumpInterval: TimeInterval = 1.0 / 60.0
-    private var _serializedInbound = true
     private var _defaultRequestTimeout: TimeInterval = 10
+
+    /// How long the app's own pumps may pause before an await pumps for it.
+    /// Short enough that a tool with no loop joins promptly; long enough that
+    /// a frame loop's ordinary gap between frames doesn't hand a pump away.
+    private static let assistAfter: TimeInterval = 0.1
+
+    init() {
+        // The core reads the mode per socket and request, when it starts —
+        // this has to run before the first connect.
+        colyseus_set_polled(true)
+    }
 
     var callbackQueue: DispatchQueue {
         get { lock.withLock { _callbackQueue } }
@@ -126,58 +143,133 @@ final class Runtime: @unchecked Sendable {
         }
     }
 
-    var serializedInbound: Bool {
-        get { lock.withLock { _serializedInbound } }
-        set { lock.withLock { _serializedInbound = newValue } }
-    }
-
     var defaultRequestTimeout: TimeInterval {
         get { lock.withLock { _defaultRequestTimeout } }
         set { lock.withLock { _defaultRequestTimeout = max(newValue, 0) } }
     }
 
-    /// Run `body` on the callback queue, or inline when already on it.
-    ///
-    /// The inline path matters: a game that pumps from its frame loop expects
-    /// the state it just decoded to be readable in the same frame, not one
-    /// dispatch later.
-    func deliver(_ body: @escaping @Sendable () -> Void) {
-        let queue = callbackQueue
-        if isCurrent(queue) {
-            body()
-        } else {
-            queue.async(execute: body)
-        }
+    // MARK: - Pumping
+
+    /// Whether the calling thread is inside ``pump(external:)`` right now.
+    var isPumpingThread: Bool {
+        lock.withLock { pumpingThread.map { pthread_equal($0, pthread_self()) != 0 } ?? false }
     }
 
-    /// The pump timer only exists while at least one room is open — an idle
-    /// process should not wake 60 times a second.
-    func roomOpened() {
-        lock.withLock { openRooms += 1 }
+    /// One pump. `external` is the app's (or the timer's), as opposed to one
+    /// an await runs because nobody else is pumping.
+    func pump(external: Bool) {
+        // From a callback: the lock isn't recursive, and the core ignores a
+        // nested poll anyway.
+        if isPumpingThread { return }
+
+        pumpLock.lock()
+        defer { pumpLock.unlock() }
+
+        let earlier = lock.withLock { () -> [@Sendable () -> Void] in
+            pumpingThread = pthread_self()
+            if external { lastExternalPump = ProcessInfo.processInfo.systemUptime }
+            defer { held.removeAll() }
+            return held
+        }
+        defer { lock.withLock { pumpingThread = nil } }
+
+        // Held events happened before anything this poll reads.
+        for body in earlier { body() }
+        colyseus_poll()
+    }
+
+    /// Run `body` with no pump in flight on another thread — for the room
+    /// calls that tear down or rewire what a pump reads.
+    func exclusive<R>(_ body: () throws -> R) rethrows -> R {
+        if isPumpingThread { return try body() }
+        pumpLock.lock()
+        defer { pumpLock.unlock() }
+        return try body()
+    }
+
+    /// Hand `body` to the pumping thread: now when this is that thread,
+    /// otherwise at the start of the next pump.
+    ///
+    /// What arrives here off a pump is a close the core reported
+    /// synchronously: `leave(consented: false)`, `dropConnection()`, a room
+    /// freed while connected.
+    func deliver(_ body: @escaping @Sendable () -> Void) {
+        if isPumpingThread { return body() }
+        lock.withLock { held.append(body) }
         startTimerIfNeeded()
     }
 
-    func roomClosed() {
-        let remaining = lock.withLock { () -> Int in
-            openRooms = max(0, openRooms - 1)
-            return openRooms
+    // MARK: - Waiting on the core
+
+    /// Suspend until `isDone`, which some pump will make true.
+    ///
+    /// With ``Colyseus/autoPump`` on, the timer pumps. With it off the app
+    /// does — and until its loop is running (no pump for `assistAfter`), this
+    /// pumps instead, so an await never depends on a loop that isn't there.
+    func wait(until isDone: @Sendable () -> Bool) async throws {
+        begin()
+        defer { end() }
+
+        while !isDone() {
+            if shouldAssist {
+                pump(external: false)
+                if isDone() { return }
+            }
+            try await Task.sleep(nanoseconds: 4_000_000)
         }
-        if remaining == 0 { stopTimer() }
     }
 
-    private var openRooms = 0
+    /// Start a C call whose callback settles `completion`, and await it.
+    func perform<Value: Sendable>(_ completion: Completion<Value>, _ start: () -> Void) async throws -> Value {
+        start()
+        try await wait { completion.result != nil }
+        return try completion.result!.get() // wait returned, so it settled
+    }
+
+    private var shouldAssist: Bool {
+        lock.withLock {
+            !_autoPump && ProcessInfo.processInfo.systemUptime - lastExternalPump > Self.assistAfter
+        }
+    }
+
+    // MARK: - The automatic pump
+
+    /// Something needs pumping: an open room, or an await in flight. The
+    /// timer only runs while there is — an idle process should not wake 60
+    /// times a second.
+    func begin() {
+        lock.withLock { activity += 1 }
+        startTimerIfNeeded()
+    }
+
+    /// The timer notices on its next tick, after one more pump has delivered
+    /// whatever the last thing left behind — a closed room's `onLeave`.
+    func end() {
+        lock.withLock { activity = max(0, activity - 1) }
+    }
 
     private func startTimerIfNeeded() {
-        let (shouldRun, queue, interval) = lock.withLock {
-            (_autoPump && openRooms > 0 && timer == nil, _callbackQueue, _autoPumpInterval)
-        }
-        guard shouldRun else { return }
+        lock.withLock {
+            guard _autoPump, activity > 0 || !held.isEmpty, timer == nil else { return }
 
-        let source = DispatchSource.makeTimerSource(queue: queue)
-        source.schedule(deadline: .now() + interval, repeating: interval)
-        source.setEventHandler { Colyseus.pump() }
-        source.resume()
-        lock.withLock { timer = source }
+            let source = DispatchSource.makeTimerSource(queue: _callbackQueue)
+            source.schedule(deadline: .now() + _autoPumpInterval, repeating: _autoPumpInterval)
+            source.setEventHandler { [weak self] in
+                Colyseus.pump()
+                self?.stopTimerIfIdle()
+            }
+            source.resume()
+            timer = source
+        }
+    }
+
+    private func stopTimerIfIdle() {
+        let source = lock.withLock { () -> DispatchSourceTimer? in
+            guard activity == 0, held.isEmpty else { return nil }
+            defer { timer = nil }
+            return timer
+        }
+        source?.cancel()
     }
 
     private func stopTimer() {
@@ -196,16 +288,9 @@ final class Runtime: @unchecked Sendable {
 }
 
 private extension NSLock {
-    func withLock<R>(_ body: () -> R) -> R {
+    func withLock<R>(_ body: () throws -> R) rethrows -> R {
         lock()
         defer { unlock() }
-        return body()
+        return try body()
     }
-}
-
-/// `DispatchQueue.main` is the only queue we can ask about cheaply and
-/// reliably; for anything else a specific-key probe is needed, and callers who
-/// set a custom queue are pumping from it themselves anyway.
-private func isCurrent(_ queue: DispatchQueue) -> Bool {
-    queue === DispatchQueue.main && Thread.isMainThread
 }

@@ -25,8 +25,8 @@ final class TestRoomState: SchemaRef, @unchecked Sendable {
 
 let endpoint = CommandLine.arguments.dropFirst().first ?? "ws://127.0.0.1:2567"
 
-// This example drives its own loop, so it pumps rather than letting the SDK's
-// timer do it on another thread.
+// This example drives its own loop, so it pumps rather than leaving it to the
+// SDK's timer. The join below pumps for itself until the loop starts.
 Colyseus.autoPump = false
 
 let client = try Colyseus.Client(endpoint: endpoint)

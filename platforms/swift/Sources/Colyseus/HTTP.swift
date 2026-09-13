@@ -94,33 +94,31 @@ public extension Colyseus {
             // The C client owns this pointer and outlives the request; handing
             // it to the worker is the whole point of having one.
             nonisolated(unsafe) let raw = handle
+            let completion = Completion<Response>()
 
-            return try await withCheckedThrowingContinuation { continuation in
+            return try await Colyseus.runtime.perform(completion) {
                 queue.async {
-                    let box = OneShot<Response> { continuation.resume(with: $0) }
-                    let pointer = retainedPointer(box)
-
                     withCStrings([path, body]) { strings in
                         call(raw, strings[0], strings[1], { response, userdata in
-                            let box = consumeObject(userdata, as: OneShot<Response>.self)
+                            let completion = consumeObject(userdata, as: Completion<Response>.self)
                             guard let response = response?.pointee else {
-                                box?.finish(.failure(Colyseus.Error.http(status: 0, body: "")))
+                                completion?.finish(.failure(Colyseus.Error.http(status: 0, body: "")))
                                 return
                             }
                             let value = Response(
                                 status: response.status_code,
                                 body: String(nullableCString: response.body) ?? ""
                             )
-                            box?.finish(response.success
+                            completion?.finish(response.success
                                 ? .success(value)
                                 : .failure(Colyseus.Error.http(status: value.status, body: value.body)))
                         }, { error, userdata in
-                            consumeObject(userdata, as: OneShot<Response>.self)?
+                            consumeObject(userdata, as: Completion<Response>.self)?
                                 .finish(.failure(Colyseus.Error.http(
                                     status: error?.pointee.code ?? 0,
                                     body: String(nullableCString: error?.pointee.message) ?? ""
                                 )))
-                        }, pointer)
+                        }, retainedPointer(completion))
                     }
                 }
             }

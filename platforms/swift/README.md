@@ -61,13 +61,15 @@ export COLYSEUS_XCFRAMEWORK_CHECKSUM=…
 
 ## The frame loop
 
-The transport runs on its own thread, so by default the SDK queues inbound
-traffic and releases it inside `Colyseus.pump()` — decoding, input acks and
-prediction writes then all happen on the thread that pumped, not on the
-socket's. That is also the seam injected latency rides on, so it costs nothing
-to leave on.
+Nothing in the SDK runs on a thread of its own. Matchmaking, socket reads and
+decoding, injected latency and reconnection all advance inside
+`Colyseus.pump()`, and every room callback — `onJoin`, `onStateChange`,
+messages, schema callbacks, `onError`, `onDrop`, `onReconnect`, `onLeave` —
+runs inside it, on the thread that called it. Nothing is delivered between
+pumps, so state read on that thread holds still.
 
-An app with a frame loop should own the pump:
+By default the SDK pumps itself at 60 Hz on `Colyseus.callbackQueue`, the main
+queue. An app with a frame loop should own the pump:
 
 ```swift
 Colyseus.autoPump = false           // once, at startup
@@ -83,8 +85,9 @@ override func update(_ currentTime: TimeInterval) {
 ```
 
 The order is load-bearing. A pose read before the pump is a frame stale; one
-taken between the tick and the sends jitters. Without a frame loop, leave
-`autoPump` on and the SDK pumps at 60 Hz.
+taken between the tick and the sends jitters. Awaiting a join or an HTTP call
+before the loop is running pumps for you, so `try await client.joinOrCreate(...)`
+needs no loop to finish.
 
 ## What's here
 

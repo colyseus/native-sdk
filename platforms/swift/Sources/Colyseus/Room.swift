@@ -8,6 +8,9 @@ public extension Colyseus {
     /// this room. Decoding does not depend on it — the core builds its own
     /// picture from the handshake's reflection — so the generated class is a
     /// typed way to read what was decoded, nothing more.
+    ///
+    /// Every `on…` handler runs inside ``Colyseus/pump()``, on the thread that
+    /// called it.
     final class Room<State: SchemaRef>: @unchecked Sendable {
         let raw: UnsafeMutablePointer<colyseus_room_t>
         private let bridge: RoomBridge
@@ -56,36 +59,41 @@ public extension Colyseus {
 
         init(raw: UnsafeMutablePointer<colyseus_room_t>) {
             self.raw = raw
-            bridge = RoomBridge()
-            bridgePointer = retainedPointer(bridge)
-            bridge.install(on: raw, userdata: bridgePointer)
-            Colyseus.runtime.roomOpened()
+            let bridge = RoomBridge()
+            let pointer = retainedPointer(bridge)
+            self.bridge = bridge
+            bridgePointer = pointer
+
+            // A pump on another thread may already be ticking this socket.
+            Colyseus.runtime.exclusive { bridge.install(on: raw, userdata: pointer) }
+            Colyseus.runtime.begin()
         }
 
         deinit {
-            // The callbacks layer belongs to the C room and dies with it, so
-            // Swift-side registrations have to be dropped BEFORE the free —
-            // a stored property released afterwards would unregister from
-            // memory that is gone.
-            _callbacks?.invalidate()
+            let raw = raw
+            let callbacks = _callbacks
 
-            // Then order matters again: the transport thread can be inside a
-            // callback right now, and it reaches the bridge through this
-            // pointer. Free the room — which joins the thread — and only then
-            // let go of the bridge.
-            colyseus_netdelay_unwrap(raw.pointee.transport)
-            colyseus_room_free(raw)
+            // Nothing here may overlap a pump, which would dispatch into
+            // registrations and a room that are going away.
+            Colyseus.runtime.exclusive {
+                // The callbacks layer belongs to the C room and dies with it, so
+                // Swift-side registrations have to be dropped BEFORE the free —
+                // a stored property released afterwards would unregister from
+                // memory that is gone.
+                callbacks?.invalidate()
+                colyseus_netdelay_unwrap(raw.pointee.transport)
+                colyseus_room_free(raw)
+            }
+
+            // Last: the free can still report a close through the bridge.
             releasePointer(bridgePointer, as: RoomBridge.self)
-            Colyseus.runtime.roomClosed()
+            Colyseus.runtime.end()
         }
 
         /// Matchmaking answers as soon as the connect STARTS, so a room handed
         /// straight back has no session and no state. Every Colyseus SDK
         /// resolves its join on the JOIN_ROOM handshake instead, and this is
         /// where that wait happens.
-        ///
-        /// It pumps while it waits: at this point the app has no frame loop
-        /// yet, and the JOIN frame is sitting in the inbound queue.
         func waitUntilJoined(timeout: TimeInterval = 20) async throws {
             if isConnected { return }
 
@@ -102,20 +110,22 @@ public extension Colyseus {
             defer { subscriptions.forEach { $0.cancel() } }
 
             let deadline = Date().addingTimeInterval(timeout)
-            while Date() < deadline {
-                Colyseus.pump()
-                if let result = outcome.current { return try result.get() }
-                if isConnected { return }
-                try await Task.sleep(nanoseconds: 4_000_000)
+            try await Colyseus.runtime.wait { [self] in
+                outcome.current != nil || isConnected || Date() >= deadline
             }
+
+            if let result = outcome.current { return try result.get() }
+            if isConnected { return }
 
             throw Colyseus.Error.roomClosed(code: 0, reason: "timed out waiting to join " + (name ?? "the room"))
         }
 
         /// Leave the room. `consented: false` reports it as a drop, which is
         /// what lets a server's `allowReconnection` hold the seat.
+        ///
+        /// ``onLeave(_:)`` follows inside a later ``Colyseus/pump()``.
         public func leave(consented: Bool = true) {
-            colyseus_room_leave(raw, consented)
+            Colyseus.runtime.exclusive { colyseus_room_leave(raw, consented) }
         }
 
         // MARK: - Events
@@ -176,7 +186,7 @@ public extension Colyseus {
             }
             set {
                 var options = newValue.asC
-                colyseus_room_set_reconnection_options(raw, &options)
+                Colyseus.runtime.exclusive { colyseus_room_set_reconnection_options(raw, &options) }
             }
         }
 
@@ -265,13 +275,14 @@ public extension Colyseus {
         /// A room whose server declares `defineInput()` gets round-trip figures
         /// for free through ``clock``; this is for the ones that do not.
         public func ping() async throws -> Int {
-            try await withCheckedThrowingContinuation { continuation in
-                let box = OneShot<Int> { result in
-                    continuation.resume(with: result)
+            let completion = Completion<Int>()
+            return try await Colyseus.runtime.perform(completion) {
+                let pointer = retainedPointer(completion)
+                Colyseus.runtime.exclusive {
+                    colyseus_room_ping(raw, { rtt, userdata in
+                        consumeObject(userdata, as: Completion<Int>.self)?.finish(.success(Int(rtt)))
+                    }, pointer)
                 }
-                colyseus_room_ping(raw, { rtt, userdata in
-                    consumeObject(userdata, as: OneShot<Int>.self)?.finish(.success(Int(rtt)))
-                }, retainedPointer(box))
             }
         }
 
@@ -283,13 +294,18 @@ public extension Colyseus {
         /// directions — `delayMs: 200` adds 100 ms each way. Jitter is applied
         /// symmetrically and never reorders packets.
         public func setLatency(delayMs: Double, jitterMs: Double = 0) {
-            colyseus_netdelay_set(raw, delayMs, jitterMs)
+            // Wrapping rewires the transport's callbacks, which a pump calls.
+            Colyseus.runtime.exclusive {
+                bridge.hasInjectedLatency = true
+                colyseus_netdelay_set(raw, delayMs, jitterMs)
+            }
         }
 
         /// Kill the connection uncleanly, the way a lost network would.
-        /// Auto-reconnection takes it from there.
+        /// Auto-reconnection takes it from there; ``onDrop(_:)`` arrives in
+        /// the next ``Colyseus/pump()``.
         public func dropConnection() {
-            colyseus_netdelay_drop(raw)
+            Colyseus.runtime.exclusive { colyseus_netdelay_drop(raw) }
         }
     }
 }
