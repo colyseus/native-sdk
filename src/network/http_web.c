@@ -244,6 +244,10 @@ static void http_fetch_request(
 
 #include <emscripten/fetch.h>
 
+/* emscripten_fetch completes on the browser's event loop — nothing to poll,
+ * but colyseus_poll() calls this on every build */
+void colyseus_http_poll(void) {}
+
 typedef struct {
     colyseus_http_success_callback_t on_success;
     colyseus_http_error_callback_t on_error;
