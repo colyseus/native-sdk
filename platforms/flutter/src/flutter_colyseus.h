@@ -106,16 +106,18 @@ FLUTTER_EXPORT int colyseus_flutter_client_join_by_id(intptr_t client_handle, co
 FLUTTER_EXPORT int colyseus_flutter_client_reconnect(intptr_t client_handle, const char* reconnection_token);
 
 /**
- * Toggle inbound-traffic serialization (default on).
- *
- * When on, every room's transport is wrapped at join so inbound frames decode
- * inside colyseus_netdelay_pump() on the calling (Dart) thread rather than on
- * the WebSocket thread. Turn it off only for a client that never touches the
- * predict layer and drives no per-frame pump.
- *
- * Takes effect for rooms joined after the call.
+ * Events queued for the next colyseus_flutter_poll_event() drain.
  */
-FLUTTER_EXPORT void colyseus_flutter_set_serialized_inbound(int enabled);
+FLUTTER_EXPORT int colyseus_flutter_pending_events(void);
+
+/**
+ * Thread-origin check. The client runs in polled mode, so every SDK callback
+ * should fire inside colyseus_poll() on the Dart thread: the first counts the
+ * ones that didn't since load, the second how often the Dart thread itself
+ * changed (non-zero makes the first meaningless).
+ */
+FLUTTER_EXPORT int colyseus_flutter_debug_foreign_callbacks(void);
+FLUTTER_EXPORT int colyseus_flutter_debug_dart_thread_switches(void);
 
 // =============================================================================
 // HTTP + Auth (src/flutter_http.c)

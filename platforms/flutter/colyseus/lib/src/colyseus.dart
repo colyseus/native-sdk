@@ -17,9 +17,13 @@ final _n = NativeFunctions.instance;
 
 /// Process-wide runtime control.
 ///
-/// The SDK delivers native events to Dart by draining a queue. By default a
-/// 16 ms timer does that for you and nothing else is required. Games should
-/// instead drive it from their own frame callback:
+/// The native SDK never calls into the app from a thread of its own. Sockets,
+/// matchmaking replies and reconnection all advance inside [pump], and every
+/// event they produce — join, state, messages, schema callbacks, drop,
+/// reconnect, leave — is delivered there, on the thread that pumps.
+///
+/// By default a 16 ms timer pumps for you and nothing else is required. Games
+/// should instead drive it from their own frame callback:
 ///
 /// ```dart
 /// Colyseus.autoPoll = false;          // once, before joining
@@ -33,32 +37,32 @@ final _n = NativeFunctions.instance;
 /// ```
 ///
 /// Pumping from the frame callback keeps decode, input acks and prediction
-/// writes on one thread and inside one frame, which is what makes reads
-/// during rendering consistent.
+/// writes inside one frame, which is what makes reads during rendering
+/// consistent.
 class Colyseus {
   Colyseus._();
 
   /// Whether the SDK runs its own ~60 Hz poll timer (default true).
   ///
-  /// Set false when the app drives [pump] itself. Existing rooms keep working
-  /// either way; both paths share one drain routine and draining is
-  /// idempotent, so a stray double-pump is harmless.
+  /// Set false when the app drives [pump] itself; from then on nothing is
+  /// delivered between the app's pumps. Existing rooms keep working either
+  /// way, and both paths run the same [pump], so a stray double-pump is
+  /// harmless. While no room exists the timer still runs a pending
+  /// [selectByLatency], which has no frame of the app's to disturb.
   static bool get autoPoll => ColyseusEventPoller.instance.autoPoll;
 
   static set autoPoll(bool value) =>
       ColyseusEventPoller.instance.autoPoll = value;
 
-  /// Advances the native runtime by one frame and delivers pending events.
+  /// Advances the native runtime by one frame and delivers what it produced.
   ///
-  /// Order matters: inbound frames are released (and therefore decoded) by the
-  /// netdelay pump, so it has to run before the event queue is drained or the
-  /// events it produces would wait a frame — including the JOIN that resolves
-  /// a pending join future.
-  static void pump() {
-    core.colyseus_netdelay_pump();
-    core.colyseus_reconnect_poll();
-    ColyseusEventPoller.instance.drain();
-  }
+  /// Completes matchmaking requests, reads and decodes every socket, releases
+  /// packets held by [ColyseusRoom.setLatency] and advances reconnection, then
+  /// delivers the resulting events — all on the calling thread, before this
+  /// returns. A join future completes in the pump that decodes its JOIN.
+  ///
+  /// Calling it from inside a callback it is delivering does nothing.
+  static void pump() => ColyseusEventPoller.instance.pump();
 
   /// Packets currently held by the latency injector, both directions.
   ///
@@ -72,9 +76,8 @@ class Colyseus {
   /// null when every endpoint failed. Use it to choose a region before
   /// connecting.
   ///
-  /// Measurement runs on worker threads, so the callback arrives
-  /// asynchronously — unlike the predict layer's callbacks, which are
-  /// synchronous by construction.
+  /// The probes' sockets advance inside [pump] like a room's; the poll timer
+  /// keeps pumping while a measurement runs, even with no room open.
   static Future<({String endpoint, double latencyMs})?> selectByLatency(
     List<String> endpoints, {
     int pingCount = 1,
@@ -84,10 +87,12 @@ class Colyseus {
 
     final completer = Completer<({String endpoint, double latencyMs})?>();
     late final NativeCallable<Void Function(Pointer<Char>, Double)> callable;
+    final release = ColyseusEventPoller.instance.hold();
 
-    // A listener callable, not isolateLocal: measurement finishes on a worker
-    // thread, which isolateLocal forbids. The endpoint arrives as a copy the
-    // native side allocated for exactly this reason, and Dart frees it.
+    // A listener callable, not isolateLocal: the verdict comes from the
+    // probes' coordinator thread, which isolateLocal forbids. The endpoint
+    // arrives as a copy the native side allocated for exactly this reason,
+    // and Dart frees it.
     callable = NativeCallable<Void Function(Pointer<Char>, Double)>.listener(
       (Pointer<Char> best, double latencyMs) {
         String? endpoint;
@@ -101,6 +106,7 @@ class Colyseus {
               : (endpoint: endpoint, latencyMs: latencyMs));
         }
         callable.close();
+        release();
       },
     );
 
@@ -127,12 +133,7 @@ class Colyseus {
     return completer.future;
   }
 
-  /// Turns off the transport wrap that serializes inbound decoding onto the
-  /// pumping thread.
-  ///
-  /// On by default and required by the prediction layer. Only disable it for
-  /// a client that neither predicts nor injects latency, and do so before
-  /// joining any room.
-  static set serializedInbound(bool value) =>
-      _n.setSerializedInbound(value ? 1 : 0);
+  /// Has no effect: inbound traffic is always decoded on the pumping thread.
+  @Deprecated('Decoding always runs inside Colyseus.pump(); remove the call.')
+  static set serializedInbound(bool value) {}
 }

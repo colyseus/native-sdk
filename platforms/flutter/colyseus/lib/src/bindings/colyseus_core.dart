@@ -184,6 +184,43 @@ class ColyseusCore {
               colyseus_room_on_response_fn,
               ffi.Pointer<ffi.Void>)>();
 
+  int colyseus_room_request_encoded_reply(
+    ffi.Pointer<colyseus_room_t> room,
+    ffi.Pointer<ffi.Char> type,
+    ffi.Pointer<ffi.Uint8> payload,
+    int payload_length,
+    colyseus_room_on_response_encoded_fn callback,
+    ffi.Pointer<ffi.Void> userdata,
+  ) {
+    return _colyseus_room_request_encoded_reply(
+      room,
+      type,
+      payload,
+      payload_length,
+      callback,
+      userdata,
+    );
+  }
+
+  late final _colyseus_room_request_encoded_replyPtr = _lookup<
+      ffi.NativeFunction<
+          ffi.Uint32 Function(
+              ffi.Pointer<colyseus_room_t>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Uint8>,
+              ffi.Size,
+              colyseus_room_on_response_encoded_fn,
+              ffi.Pointer<ffi.Void>)>>('colyseus_room_request_encoded_reply');
+  late final _colyseus_room_request_encoded_reply =
+      _colyseus_room_request_encoded_replyPtr.asFunction<
+          int Function(
+              ffi.Pointer<colyseus_room_t>,
+              ffi.Pointer<ffi.Char>,
+              ffi.Pointer<ffi.Uint8>,
+              int,
+              colyseus_room_on_response_encoded_fn,
+              ffi.Pointer<ffi.Void>)>();
+
   void colyseus_room_cancel_request(
     ffi.Pointer<colyseus_room_t> room,
     int request_id,
@@ -2798,8 +2835,69 @@ class ColyseusCore {
       _colyseus_client_get_authPtr.asFunction<
           ffi.Pointer<colyseus_auth_t> Function(
               ffi.Pointer<colyseus_client_t>)>(isLeaf: true);
+
+  /// Drive the SDK from the calling thread — once per frame.
+  ///
+  /// Runs, in order: completed HTTP requests (matchmaking), polled websockets
+  /// (read, decode, dispatch), the latency injector's due packets, and pending
+  /// auto-reconnections. In polled mode (colyseus_set_polled) every callback
+  /// fires on this thread, inside this call. Cheap when nothing is connected;
+  /// a call from inside an SDK callback is a no-op. Poll from one thread at a
+  /// time.
+  ///
+  /// Engine bindings call this from their own frame driver, so apps built on
+  /// them never have to.
+  void colyseus_poll() {
+    return _colyseus_poll();
+  }
+
+  late final _colyseus_pollPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function()>>('colyseus_poll');
+  late final _colyseus_poll = _colyseus_pollPtr.asFunction<void Function()>();
+
+  /// Process-wide: deliver everything through colyseus_poll() instead of
+  /// background threads, so the thread that polls is the only one that ever
+  /// touches SDK state. Set it once at startup, before connecting — it applies
+  /// to sockets and requests started afterwards. Off by default.
+  void colyseus_set_polled(
+    bool polled,
+  ) {
+    return _colyseus_set_polled(
+      polled,
+    );
+  }
+
+  late final _colyseus_set_polledPtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Bool)>>(
+          'colyseus_set_polled');
+  late final _colyseus_set_polled =
+      _colyseus_set_polledPtr.asFunction<void Function(bool)>();
+
+  bool colyseus_is_polled() {
+    return _colyseus_is_polled();
+  }
+
+  late final _colyseus_is_polledPtr =
+      _lookup<ffi.NativeFunction<ffi.Bool Function()>>('colyseus_is_polled');
+  late final _colyseus_is_polled =
+      _colyseus_is_polledPtr.asFunction<bool Function()>(isLeaf: true);
 }
 
+/// Transport interface (vtable pattern).
+///
+/// Threading contract: connect/send/close/destroy may be called from any
+/// thread. Callbacks fire on the transport's driving thread (the native
+/// WebSocket tick thread; the event loop on web).
+///
+/// close() reports on_close once: synchronously when called off the driving
+/// thread, otherwise on the driving thread after the current callback returns.
+/// No message is delivered after close().
+///
+/// destroy() from inside a callback is the last word both ways: nothing fires
+/// after it, and the transport frees itself once the callback returns. Off the
+/// driving thread destroy() closes first (natively on_close fires inside it,
+/// before the pointer dies) and frees synchronously. A destroy nested inside
+/// that on_close is a no-op.
 final class colyseus_transport extends ffi.Struct {
   external ffi.Pointer<
       ffi.NativeFunction<
@@ -3323,6 +3421,9 @@ final class colyseus_room extends ffi.Struct {
       on_message_any_with_type_bytes;
 
   external ffi.Pointer<ffi.Void> on_message_any_with_type_bytes_userdata;
+
+  @ffi.Int()
+  external int dispatch_depth;
 }
 
 typedef colyseus_transport_factory_fn
@@ -3599,6 +3700,8 @@ final class colyseus_pending_request extends ffi.Struct {
 
   external colyseus_room_on_response_fn callback;
 
+  external colyseus_room_on_response_encoded_fn callback_encoded;
+
   external ffi.Pointer<ffi.Void> userdata;
 
   external UT_hash_handle hh;
@@ -3616,6 +3719,40 @@ typedef Dartcolyseus_room_on_response_fnFunction = void Function(
     ffi.Pointer<colyseus_message_reader_t> reader,
     ffi.Pointer<ffi.Char> error,
     ffi.Pointer<ffi.Void> userdata);
+typedef colyseus_room_on_response_encoded_fn = ffi
+    .Pointer<ffi.NativeFunction<colyseus_room_on_response_encoded_fnFunction>>;
+typedef colyseus_room_on_response_encoded_fnFunction = ffi.Void Function(
+    ffi.UnsignedInt outcome,
+    ffi.Pointer<ffi.Uint8> data,
+    ffi.Size length,
+    ffi.Pointer<ffi.Char> reason,
+    ffi.Pointer<ffi.Void> userdata);
+typedef Dartcolyseus_room_on_response_encoded_fnFunction = void Function(
+    colyseus_request_outcome_t outcome,
+    ffi.Pointer<ffi.Uint8> data,
+    int length,
+    ffi.Pointer<ffi.Char> reason,
+    ffi.Pointer<ffi.Void> userdata);
+
+enum colyseus_request_outcome_t {
+  COLYSEUS_REQUEST_OK(0),
+  COLYSEUS_REQUEST_REJECTED(1),
+  COLYSEUS_REQUEST_FAULTED(2),
+  COLYSEUS_REQUEST_CLOSED(3);
+
+  final int value;
+  const colyseus_request_outcome_t(this.value);
+
+  static colyseus_request_outcome_t fromValue(int value) => switch (value) {
+        0 => COLYSEUS_REQUEST_OK,
+        1 => COLYSEUS_REQUEST_REJECTED,
+        2 => COLYSEUS_REQUEST_FAULTED,
+        3 => COLYSEUS_REQUEST_CLOSED,
+        _ => throw ArgumentError(
+            "Unknown value for colyseus_request_outcome_t: $value"),
+      };
+}
+
 typedef colyseus_room_on_ping_fn
     = ffi.Pointer<ffi.NativeFunction<colyseus_room_on_ping_fnFunction>>;
 typedef colyseus_room_on_ping_fnFunction = ffi.Void Function(
@@ -3756,9 +3893,17 @@ final class colyseus_decoder extends ffi.Struct {
 
   external ffi.Pointer<colyseus_changes_t> changes;
 
-  external colyseus_trigger_changes_fn trigger_changes;
+  @ffi.Array.multi([8])
+  external ffi.Array<colyseus_trigger_changes_fn> trigger_changes;
 
-  external ffi.Pointer<ffi.Void> trigger_userdata;
+  @ffi.Array.multi([8])
+  external ffi.Array<ffi.Pointer<ffi.Void>> trigger_userdata;
+
+  @ffi.Int()
+  external int trigger_count;
+
+  @ffi.Int()
+  external int trigger_index;
 
   external ffi.Pointer<colyseus_resync_visited_entry_t> resync_visited;
 
@@ -3775,6 +3920,15 @@ final class colyseus_ref_tracker extends ffi.Struct {
   external ffi.Pointer<colyseus_ref_entry_t> refs;
 
   external ffi.Pointer<colyseus_deleted_ref_t> deleted;
+
+  @ffi.Array.multi([8])
+  external ffi.Array<colyseus_ref_collect_fn> collect_listeners;
+
+  @ffi.Array.multi([8])
+  external ffi.Array<ffi.Pointer<ffi.Void>> collect_userdata;
+
+  @ffi.Int()
+  external int collect_count;
 }
 
 final class colyseus_ref_entry_t extends ffi.Struct {
@@ -3823,6 +3977,12 @@ final class colyseus_deleted_ref extends ffi.Struct {
   external ffi.Pointer<colyseus_deleted_ref> next;
 }
 
+typedef colyseus_ref_collect_fn
+    = ffi.Pointer<ffi.NativeFunction<colyseus_ref_collect_fnFunction>>;
+typedef colyseus_ref_collect_fnFunction = ffi.Void Function(
+    ffi.Int ref_id, ffi.Pointer<ffi.Void> userdata);
+typedef Dartcolyseus_ref_collect_fnFunction = void Function(
+    int ref_id, ffi.Pointer<ffi.Void> userdata);
 typedef colyseus_type_context_t = colyseus_type_context;
 
 final class colyseus_type_context extends ffi.Struct {
@@ -3875,6 +4035,9 @@ final class colyseus_data_change_t extends ffi.Struct {
 
   @ffi.Bool()
   external bool owns_previous_value;
+
+  @ffi.Bool()
+  external bool owns_value;
 }
 
 typedef colyseus_trigger_changes_fn

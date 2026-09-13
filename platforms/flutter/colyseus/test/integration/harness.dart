@@ -13,8 +13,10 @@ const exampleServer = 'ws://127.0.0.1:2567';
 /// (`cd demos/prediction-tools && pnpm dev --host 0.0.0.0`).
 ///
 /// The `--host` flag is mandatory: without it Vite binds `::1` only and
-/// native clients can't reach it.
-const playground = 'ws://127.0.0.1:5173';
+/// native clients can't reach it. Set `COLYSEUS_PLAYGROUND` (say
+/// `ws://127.0.0.1:5174`) when 5173 belongs to something else.
+final playground =
+    Platform.environment['COLYSEUS_PLAYGROUND'] ?? 'ws://127.0.0.1:5173';
 
 /// Whether [endpoint]'s TCP port accepts connections.
 Future<bool> serverReachable(String endpoint) async {
@@ -139,10 +141,9 @@ Future<void> withRoom(
 
 /// Leaves [room], waits for the socket to actually close, then frees it.
 ///
-/// Freeing while the transport thread is still ticking races its teardown and
-/// takes the whole process down, so the wait is load-bearing rather than
-/// cosmetic. Latency injection is cleared first: it is global, and queued
-/// packets would otherwise outlive the room they belong to.
+/// Freeing an open room reports its close on the spot; waiting keeps every
+/// test on the ordinary leave path. Latency injection is cleared first: it is
+/// global, and queued packets would otherwise outlive the room they belong to.
 Future<void> closeRoom(ColyseusRoom room) async {
   room.setLatency();
   await waitFor(() => Colyseus.packetsInFlight == 0,

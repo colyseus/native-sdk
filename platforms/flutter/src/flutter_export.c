@@ -286,6 +286,69 @@ static int event_queue_pop(flutter_event_t* event) {
     return 1;
 }
 
+FLUTTER_EXPORT int colyseus_flutter_pending_events(void) {
+    event_queue_lock();
+    int count = g_event_queue.count;
+    event_queue_unlock();
+    return count;
+}
+
+// =============================================================================
+// Runtime: polled mode + thread-origin check
+// =============================================================================
+
+/*
+ * Polled mode runs every SDK callback inside colyseus_poll(), which only Dart
+ * calls (Colyseus.pump and the poll timer). It applies to sockets and requests
+ * started afterwards, so every glue entry point that starts one calls this
+ * first.
+ */
+void flutter_runtime_init(void) {
+    if (!colyseus_is_polled()) colyseus_set_polled(true);
+}
+
+/*
+ * The Dart thread is whichever thread last entered through a Dart-only entry
+ * point (client create, the event drain). An SDK callback on any other thread
+ * is counted, and the integration tests assert the count stays 0.
+ */
+static uintptr_t g_dart_thread = 0;
+static int g_foreign_callbacks = 0;
+static int g_dart_thread_switches = 0;
+
+static uintptr_t flutter_thread_self(void) {
+#ifdef _WIN32
+    return (uintptr_t)GetCurrentThreadId();
+#else
+    return (uintptr_t)pthread_self();
+#endif
+}
+
+static void flutter_note_dart_thread(void) {
+    uintptr_t self = flutter_thread_self();
+    uintptr_t prev = __atomic_exchange_n(&g_dart_thread, self, __ATOMIC_RELAXED);
+    if (prev != 0 && prev != self) {
+        __atomic_fetch_add(&g_dart_thread_switches, 1, __ATOMIC_RELAXED);
+    }
+}
+
+static void flutter_note_callback(void) {
+    if (flutter_thread_self() != __atomic_load_n(&g_dart_thread, __ATOMIC_RELAXED)) {
+        __atomic_fetch_add(&g_foreign_callbacks, 1, __ATOMIC_RELAXED);
+    }
+}
+
+/* SDK callbacks that ran off the Dart thread since the library loaded. */
+FLUTTER_EXPORT int colyseus_flutter_debug_foreign_callbacks(void) {
+    return __atomic_load_n(&g_foreign_callbacks, __ATOMIC_RELAXED);
+}
+
+/* Times the Dart thread changed. Non-zero voids the check above: an isolate
+ * that migrates between OS threads would count as foreign. */
+FLUTTER_EXPORT int colyseus_flutter_debug_dart_thread_switches(void) {
+    return __atomic_load_n(&g_dart_thread_switches, __ATOMIC_RELAXED);
+}
+
 // =============================================================================
 // Callback entry helpers
 // =============================================================================
@@ -446,6 +509,7 @@ static void flutter_snapshot_item(flutter_callback_entry_t* entry, void* value,
 }
 
 static void flutter_property_change_trampoline(void* value, void* previous_value, void* userdata) {
+    flutter_note_callback();
     flutter_callback_entry_t* entry = (flutter_callback_entry_t*)userdata;
     if (!entry || !entry->active) return;
 
@@ -467,6 +531,7 @@ static void flutter_property_change_trampoline(void* value, void* previous_value
 }
 
 static void flutter_item_add_trampoline(void* value, void* key, void* userdata) {
+    flutter_note_callback();
     flutter_callback_entry_t* entry = (flutter_callback_entry_t*)userdata;
     if (!entry || !entry->active) return;
 
@@ -492,6 +557,7 @@ static void flutter_item_add_trampoline(void* value, void* key, void* userdata) 
 }
 
 static void flutter_instance_change_trampoline(void* userdata) {
+    flutter_note_callback();
     flutter_callback_entry_t* entry = (flutter_callback_entry_t*)userdata;
     if (!entry || !entry->active) return;
 
@@ -504,6 +570,7 @@ static void flutter_instance_change_trampoline(void* userdata) {
 }
 
 static void flutter_item_remove_trampoline(void* value, void* key, void* userdata) {
+    flutter_note_callback();
     flutter_callback_entry_t* entry = (flutter_callback_entry_t*)userdata;
     if (!entry || !entry->active) return;
 
@@ -533,6 +600,7 @@ static void flutter_item_remove_trampoline(void* value, void* key, void* userdat
 // =============================================================================
 
 static void on_room_join(void* userdata) {
+    flutter_note_callback();
     int ref = (int)(intptr_t)userdata;
     flutter_event_t event = {0};
     event.type = FLUTTER_EVENT_ROOM_JOIN;
@@ -541,6 +609,7 @@ static void on_room_join(void* userdata) {
 }
 
 static void on_room_state_change(void* userdata) {
+    flutter_note_callback();
     int ref = (int)(intptr_t)userdata;
     flutter_event_t event = {0};
     event.type = FLUTTER_EVENT_ROOM_STATE_CHANGE;
@@ -549,6 +618,7 @@ static void on_room_state_change(void* userdata) {
 }
 
 static void on_room_message_with_type_encoded(const char* type, const uint8_t* data, size_t length, void* userdata) {
+    flutter_note_callback();
     int ref = (int)(intptr_t)userdata;
     flutter_event_t event = {0};
     event.type = FLUTTER_EVENT_ROOM_MESSAGE;
@@ -566,6 +636,7 @@ static void on_room_message_with_type_encoded(const char* type, const uint8_t* d
 }
 
 static void on_room_error(int code, const char* message, void* userdata) {
+    flutter_note_callback();
     int ref = (int)(intptr_t)userdata;
     flutter_event_t event = {0};
     event.type = FLUTTER_EVENT_ROOM_ERROR;
@@ -576,6 +647,7 @@ static void on_room_error(int code, const char* message, void* userdata) {
 }
 
 static void on_room_leave(int code, const char* reason, void* userdata) {
+    flutter_note_callback();
     int ref = (int)(intptr_t)userdata;
     flutter_event_t event = {0};
     event.type = FLUTTER_EVENT_ROOM_LEAVE;
@@ -586,6 +658,7 @@ static void on_room_leave(int code, const char* reason, void* userdata) {
 }
 
 static void on_room_drop(int code, const char* reason, void* userdata) {
+    flutter_note_callback();
     int ref = (int)(intptr_t)userdata;
     flutter_event_t event = {0};
     event.type = FLUTTER_EVENT_ROOM_DROP;
@@ -596,27 +669,19 @@ static void on_room_drop(int code, const char* reason, void* userdata) {
 }
 
 /*
- * Serialize inbound traffic onto the Dart thread.
+ * Arm the latency injector's seam on a room's transport.
  *
- * Wrapping with always_queue_inbound means frames are only decoded inside
- * colyseus_netdelay_pump(), which Dart drives — so schema decode, input acks
- * and predict writes never race the WS thread, and the event ring is filled
- * and drained within one frame. It is also the seam the latency injector
- * uses, so arming it here costs nothing extra.
+ * Polled mode already decodes on the Dart thread, so the wrap doesn't queue
+ * inbound traffic: at zero delay it passes both directions straight through.
+ * Re-arming it on reconnect keeps a setLatency() delay applied to the fresh
+ * transport.
  */
-static bool g_serialized_inbound = true;
-
 static void flutter_arm_transport(colyseus_room_t* room) {
-    if (room && g_serialized_inbound) {
-        colyseus_netdelay_wrap(room, true);
-    }
-}
-
-FLUTTER_EXPORT void colyseus_flutter_set_serialized_inbound(int enabled) {
-    g_serialized_inbound = enabled != 0;
+    if (room) colyseus_netdelay_wrap(room, false);
 }
 
 static void on_room_reconnect(void* userdata) {
+    flutter_note_callback();
     int ref = (int)(intptr_t)userdata;
 
     // Reconnecting swaps in a fresh transport, so the wrap has to be re-armed.
@@ -629,6 +694,7 @@ static void on_room_reconnect(void* userdata) {
 }
 
 static void on_client_room_success(colyseus_room_t* room, void* userdata) {
+    flutter_note_callback();
     int ref = (int)(intptr_t)userdata;
     flutter_room_ref_set(ref, room);
     flutter_arm_transport(room);
@@ -644,6 +710,7 @@ static void on_client_room_success(colyseus_room_t* room, void* userdata) {
 }
 
 static void on_client_error(int code, const char* message, void* userdata) {
+    flutter_note_callback();
     int ref = (int)(intptr_t)userdata;
     flutter_event_t event = {0};
     event.type = FLUTTER_EVENT_CLIENT_ERROR;
@@ -660,6 +727,9 @@ static void on_client_error(int code, const char* message, void* userdata) {
 // =============================================================================
 
 FLUTTER_EXPORT intptr_t colyseus_flutter_client_create(const char* endpoint) {
+    flutter_runtime_init();
+    flutter_note_dart_thread();
+
     colyseus_settings_t* settings = colyseus_settings_create();
     if (!settings) {
         return 0;
@@ -1060,6 +1130,8 @@ FLUTTER_EXPORT void colyseus_flutter_message_free(intptr_t msg_handle) {
 // =============================================================================
 
 FLUTTER_EXPORT int colyseus_flutter_poll_event(void) {
+    flutter_note_dart_thread();
+
     // Clean up previous iterator state
     if (g_current_iter_key) {
         colyseus_message_reader_free(g_current_iter_key);

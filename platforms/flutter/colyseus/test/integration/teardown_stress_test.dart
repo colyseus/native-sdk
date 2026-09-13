@@ -8,10 +8,10 @@ import 'harness.dart';
 
 /// Joining and leaving repeatedly, the way switching screens does.
 ///
-/// The transport runs its own thread. Freeing a room while that thread is
-/// still ticking is a use-after-free, and it shows up as a process-level
-/// crash rather than a failed assertion — which is what makes it worth a
-/// dedicated stress test instead of trusting the other suites to catch it.
+/// A teardown that races the socket's own is a use-after-free, and it shows up
+/// as a process-level crash rather than a failed assertion — which is what
+/// makes it worth a dedicated stress test instead of trusting the other
+/// suites to catch it.
 void main() {
   setUpAll(() => requireServer(playground));
 

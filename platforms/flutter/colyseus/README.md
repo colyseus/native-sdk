@@ -130,6 +130,11 @@ void onFrame() {
 `recon.drift.ema` stays at the floating-point noise floor; when it drifts, that
 number tells you.
 
+Every room event — join, state, messages, schema callbacks, drop, reconnect,
+leave — is delivered inside `Colyseus.pump()` (or the default timer that calls
+it), on the Dart thread. The native SDK never calls into Dart from a thread of
+its own, so state read between two pumps can't change underneath you.
+
 ## HTTP and auth
 
 ```dart

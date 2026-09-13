@@ -72,5 +72,20 @@ void main() {
     test('an empty list resolves to null', () async {
       expect(await Colyseus.selectByLatency([]), isNull);
     });
+
+    // The probes only advance inside a pump; with no room there is no frame
+    // of the app's for the timer to disturb, so it runs anyway.
+    test('completes with autoPoll off and no room open', () async {
+      Colyseus.autoPoll = false;
+      try {
+        final result = await Colyseus.selectByLatency(
+          [exampleServer],
+          timeoutMs: 3000,
+        ).timeout(const Duration(seconds: 10));
+        expect(result?.endpoint, exampleServer);
+      } finally {
+        Colyseus.autoPoll = true;
+      }
+    });
   });
 }

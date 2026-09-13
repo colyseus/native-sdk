@@ -128,6 +128,11 @@ void onFrame() {
 `recon.drift.ema` stays at the floating-point noise floor; when it drifts, that
 number tells you.
 
+Every room event — join, state, messages, schema callbacks, drop, reconnect,
+leave — is delivered inside `Colyseus.pump()` (or the default timer that calls
+it), on the Dart thread. The native SDK never calls into Dart from a thread of
+its own, so state read between two pumps can't change underneath you.
+
 ### HTTP and auth
 
 `colyseus_http_*` and `colyseus_auth_*` in the core BLOCK — each runs its
@@ -172,7 +177,9 @@ cd ../../../demos/prediction-tools && pnpm dev --host 0.0.0.0   # :5173
 
 `--host` is not optional for the playground: without it Vite binds IPv6
 loopback only and native clients cannot reach it. The example server declares
-no `defineInput()`, so every prediction test needs the playground.
+no `defineInput()`, so every prediction test needs the playground. When 5173 is
+taken, start it with `--port 5174` and set
+`COLYSEUS_PLAYGROUND=ws://127.0.0.1:5174`.
 
 ```sh
 cd colyseus

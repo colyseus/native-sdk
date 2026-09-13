@@ -35,6 +35,7 @@
 
 /* Provided by flutter_export.c — the glue owns the room-ref table. */
 colyseus_room_t* flutter_room_from_ref(int ref);
+void flutter_runtime_init(void);
 
 /* =============================================================================
  * Link anchors
@@ -109,6 +110,9 @@ FLUTTER_EXPORT void colyseus_flutter_select_by_latency(
     int ping_count, int timeout_ms, int use_secure,
     flutter_latency_cb callback)
 {
+    // Probes are sockets too: polled like a room's, whichever call comes first.
+    flutter_runtime_init();
+
     colyseus_latency_options_t options = {0};
     options.ping_count = ping_count;
     options.timeout_ms = timeout_ms;

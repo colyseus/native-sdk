@@ -10,18 +10,25 @@ import 'types.dart';
 
 final _n = NativeFunctions.instance;
 
-/// Drives the native event queue and dispatches to [ColyseusRoom] instances.
+/// Drives the native runtime and dispatches its events to [ColyseusRoom]s.
 ///
-/// Two ways to run: the built-in ~60 Hz timer (the default), or the app's own
-/// frame callback via `Colyseus.pump()`. Both funnel into [drain]; apps that
-/// pump themselves should set `Colyseus.autoPoll = false` so events aren't
-/// also delivered mid-frame by the timer.
+/// The native SDK runs in polled mode: sockets, matchmaking replies and
+/// reconnection only advance inside `colyseus_poll()`, and every callback they
+/// fire lands in a native queue that [drain] empties. [pump] does both on the
+/// calling thread, so no SDK callback runs on any thread but Dart's.
+///
+/// Two ways to run it: the built-in ~60 Hz timer (the default), or the app's
+/// own frame callback via `Colyseus.pump()`. Apps that pump themselves should
+/// set `Colyseus.autoPoll = false` so events aren't also delivered mid-frame
+/// by the timer.
 class ColyseusEventPoller {
   ColyseusEventPoller._();
   static final ColyseusEventPoller instance = ColyseusEventPoller._();
 
   Timer? _timer;
   bool _autoPoll = true;
+  bool _pumping = false;
+  int _holds = 0;
   final Map<int, ColyseusRoom> _rooms = {};
   final Map<int, Completer<ColyseusRoom>> _pendingJoins = {};
 
@@ -30,20 +37,37 @@ class ColyseusEventPoller {
   set autoPoll(bool value) {
     if (_autoPoll == value) return;
     _autoPoll = value;
-    if (value) {
-      if (_rooms.isNotEmpty) _ensureRunning();
+    _updateTimer();
+  }
+
+  /// With [autoPoll] off the app owns the pump — except while no room exists,
+  /// when a pump has nothing of the app's to deliver mid-frame and a [hold]
+  /// would otherwise never advance.
+  bool get _wantsTimer => _autoPoll
+      ? (_rooms.isNotEmpty || _holds > 0)
+      : (_rooms.isEmpty && _holds > 0);
+
+  void _updateTimer() {
+    if (_wantsTimer) {
+      _timer ??= Timer.periodic(const Duration(milliseconds: 16), (_) => pump());
     } else {
       _timer?.cancel();
       _timer = null;
     }
   }
 
-  void _ensureRunning() {
-    if (!_autoPoll) return;
-    _timer ??= Timer.periodic(
-      const Duration(milliseconds: 16),
-      (_) => _tick(),
-    );
+  /// Keeps the runtime pumping while native work that belongs to no room is
+  /// in flight (a latency probe). Call the returned function once it settles.
+  void Function() hold() {
+    _holds++;
+    _updateTimer();
+    var released = false;
+    return () {
+      if (released) return;
+      released = true;
+      _holds--;
+      _updateTimer();
+    };
   }
 
   /// Register a room for event dispatch and return a Future that
@@ -53,7 +77,7 @@ class ColyseusEventPoller {
     _rooms[roomRef] = room;
     final completer = Completer<ColyseusRoom<T>>();
     _pendingJoins[roomRef] = completer;
-    _ensureRunning();
+    _updateTimer();
     return completer.future;
   }
 
@@ -61,21 +85,22 @@ class ColyseusEventPoller {
   void unregisterRoom(int roomRef) {
     _rooms.remove(roomRef);
     _pendingJoins.remove(roomRef);
-    if (_rooms.isEmpty) {
-      _timer?.cancel();
-      _timer = null;
-    }
+    _updateTimer();
   }
 
-  /// Timer path: release inbound traffic, then deliver what it produced.
+  /// Runs one frame of the native runtime, then delivers what it produced.
   ///
-  /// Inbound frames are queued at the transport seam and only decode inside
-  /// the netdelay pump, so draining without pumping first would deliver
-  /// nothing.
-  void _tick() {
-    core.colyseus_netdelay_pump();
-    core.colyseus_reconnect_poll();
-    drain();
+  /// A pump from inside a callback this pump is delivering does nothing:
+  /// decode and dispatch would re-enter mid-frame.
+  void pump() {
+    if (_pumping) return;
+    _pumping = true;
+    try {
+      core.colyseus_poll();
+      drain();
+    } finally {
+      _pumping = false;
+    }
   }
 
   /// Delivers every queued native event to its room.
@@ -145,6 +170,7 @@ class ColyseusEventPoller {
             completer.completeError(ColyseusError(code, message));
           }
           _rooms.remove(roomRef);
+          _updateTimer();
           break;
 
         case ColyseusEventType.propertyChange:

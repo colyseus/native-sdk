@@ -202,6 +202,24 @@ class NativeFunctions {
       Int32 Function(),
       int Function()>('colyseus_flutter_event_get_data_length');
 
+  /// Events queued for the next drain.
+  late final pendingEvents = _lib.lookupFunction<
+      Int32 Function(),
+      int Function()>('colyseus_flutter_pending_events', isLeaf: true);
+
+  // ===== Diagnostics =====
+
+  /// SDK callbacks that ran off the Dart thread since load; tests assert 0.
+  late final debugForeignCallbacks = _lib.lookupFunction<
+      Int32 Function(),
+      int Function()>('colyseus_flutter_debug_foreign_callbacks', isLeaf: true);
+
+  /// Times the Dart thread was seen to change; non-zero voids the count above.
+  late final debugDartThreadSwitches = _lib.lookupFunction<
+      Int32 Function(),
+      int Function()>('colyseus_flutter_debug_dart_thread_switches',
+      isLeaf: true);
+
   // ===== Schema Event Accessors =====
 
   late final eventGetCallbackHandle = _lib.lookupFunction<
@@ -368,10 +386,6 @@ class NativeFunctions {
   late final roomPtr = _lib.lookupFunction<
       IntPtr Function(Int32),
       int Function(int)>('colyseus_flutter_room_ptr');
-
-  late final setSerializedInbound = _lib.lookupFunction<
-      Void Function(Int32),
-      void Function(int)>('colyseus_flutter_set_serialized_inbound');
 
   /// Wraps colyseus_select_by_latency so the winning endpoint reaches Dart as
   /// an owned copy — the core's own string is gone by the time an async

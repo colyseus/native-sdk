@@ -59,6 +59,11 @@ functions:
     - 'colyseus_reconnect_poll'
     - 'colyseus_room_get_state'
 
+    # The polled runtime: Colyseus.pump() and the poll timer drive it.
+    - 'colyseus_poll'
+    - 'colyseus_set_polled'
+    - 'colyseus_is_polled'
+
     - 'colyseus_room_clock_.*'
     - 'colyseus_input_handle_.*'
     - 'colyseus_netdelay_.*'
@@ -101,6 +106,8 @@ functions:
       - 'colyseus_event_channel_(has|pending_count)'
       - 'colyseus_netdelay_in_flight'
       - 'colyseus_client_get_(http|auth)'
+      - 'colyseus_is_polled'
+      # NOT leaf: colyseus_poll decodes, and decode fires predict callbacks.
       # NOT leaf: colyseus_auth_signout and set_token emit the change callback.
 
 typedefs:
