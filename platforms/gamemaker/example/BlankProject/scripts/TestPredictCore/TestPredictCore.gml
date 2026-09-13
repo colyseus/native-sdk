@@ -185,10 +185,12 @@ suite(function() {
 
         // The header's contract: a reconcile detected by tick() is replayed by
         // the pump that FOLLOWS tick, before the live loop — on frames where
-        // tick() returned no due steps too. Frames run far faster than the
-        // 20 Hz input step, so most acks land on a zero-step frame. A
-        // bit-exact sim never replays (the ack short-circuits), so the live
-        // step is nudged off the server's answer to force a rollback per ack.
+        // tick() returned no due steps too. Each frame first ticks at the
+        // previous instant: no time passes, so no step is due, but a fresh ack
+        // is still picked up (waiting for one to land on a zero-step frame by
+        // chance failed whenever acks lined up with step frames). A bit-exact
+        // sim never replays (the ack short-circuits), so the live step is
+        // nudged off the server's answer to force a rollback per ack.
         test("the leading pump replays on zero-step frames", function() {
             var _t = global.__pt;
             expect(_t.ok).toBeTruthy();
@@ -215,9 +217,14 @@ suite(function() {
             });
 
             var _start = current_time;
+            var _now = colyseus_predict_now();
+            _predict.tick(_now);
             while (current_time - _start < 2000) {
                 colyseus_process();
-                var _steps = _predict.tick(colyseus_predict_now());
+                global.__pt_pump.frame_steps = _predict.tick(_now);   // same instant: 0 steps
+                _recon.pump();
+                _now = colyseus_predict_now();
+                var _steps = _predict.tick(_now);
                 global.__pt_pump.frame_steps = _steps;
                 _recon.pump();
                 repeat (_steps) {
