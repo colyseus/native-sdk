@@ -784,12 +784,13 @@ GM_EXPORT void colyseus_gm_room_free(double room_handle) {
     if (room && room->transport) {
         colyseus_netdelay_unwrap(room->transport);
     }
-    /* predict objects deregister from room-owned layers — free BEFORE the room */
+    /* predict objects and callbacks layers hook the room's decoder — release
+     * them BEFORE the room */
     gm_predict_room_released((int)room_handle);
+    gm_room_ref_release((int)room_handle);
     if (room) {
         colyseus_room_free(room);
     }
-    gm_room_ref_release((int)room_handle);
 }
 
 GM_EXPORT void colyseus_gm_room_send(double room_handle, const char* type, const char* data) {
