@@ -101,6 +101,58 @@ void colyseus_client_get_latency(
     void* userdata
 );
 
+/**
+ * Drive the SDK from the calling thread — once per frame.
+ *
+ * Runs, in order: completed matchmaking requests, polled websockets (read,
+ * decode, dispatch, queued sends), the latency injector's due packets,
+ * latency probes, and due auto-reconnection attempts. In polled mode
+ * (colyseus_set_polled) this is where every SDK callback fires: on this
+ * thread, inside this call, never between polls.
+ *
+ * Cheap when nothing is connected, and harmless in threaded mode (it only
+ * drives what was started polled). A call from inside an SDK callback returns
+ * at once. Poll from one thread at a time — and in polled mode, leave and
+ * free rooms and clients on that same thread.
+ *
+ * Engine bindings call this from their own frame driver, so apps built on
+ * them never have to.
+ */
+void colyseus_poll(void);
+
+/**
+ * Process-wide: run the SDK polled — deliver everything through
+ * colyseus_poll() instead of background threads, so the thread that polls is
+ * the only one that ever touches SDK state. The recommended mode for native
+ * apps; off by default for now.
+ *
+ * Call it once at startup, before creating a client. The mode is latched when
+ * each piece starts, so flipping it later never strands or splits a live
+ * connection — only what starts afterwards follows:
+ *  - a websocket, when it connects;
+ *  - a matchmaking request, when it is submitted;
+ *  - a room, on its first connect: its auto-reconnection, and every socket
+ *    it reopens, keep that mode for the room's lifetime;
+ *  - a latency probe, when it starts.
+ *
+ * With it on:
+ *  - matchmaking still blocks on a worker thread, but on_success / on_error
+ *    run in the poll — and so does what they start: creating the room and
+ *    connecting its socket (DNS lookup included);
+ *  - reconnection attempts are scheduled by the poll; giving up tears the
+ *    state down and fires on_leave there;
+ *  - a send from the polling thread is written at once (from inside one of
+ *    the socket's own callbacks, at the end of that tick); a send from any
+ *    other thread waits for the next poll.
+ *
+ * It also sets colyseus_ws_set_polled(), which on its own still makes only
+ * the sockets polled: matchmaking and reconnection keep their worker threads.
+ * Auth calls and the raw colyseus_http_* requests are unaffected either way —
+ * they block and answer on the calling thread.
+ */
+void colyseus_set_polled(bool polled);
+bool colyseus_is_polled(void);
+
 #ifdef __cplusplus
 }
 #endif

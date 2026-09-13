@@ -15,6 +15,8 @@ Cross-platform Native SDK for [Colyseus](https://colyseus.io/). Aimed to be used
 
 ## Building
 
+Requires Zig 0.15.x (0.16 is not supported yet).
+
 ```bash
 git submodule update --init --recursive
 zig build
@@ -22,6 +24,9 @@ zig build
 # Run example
 zig build run-example
 ```
+
+Tests: `zig build test`, or `zig build test -Dskip-integration=true` without
+the servers. See [tests/README.md](tests/README.md).
 
 ## Using the C API
 
@@ -52,6 +57,34 @@ whole closure — no `addIncludePath`, nothing else to name:
 const colyseus = b.dependency("colyseus", .{ .target = target, .optimize = optimize });
 exe.linkLibrary(colyseus.artifact("colyseus"));
 ```
+
+## Threads and the frame loop
+
+Everything a room does with an incoming frame — schema decode, `on_change` /
+`on_add` / `listen` callbacks, prediction bookkeeping — runs on the thread that
+drives the socket. For a native app with a frame loop, the recommended setup is
+polled mode: switch it on once at startup, before creating a client, then call
+`colyseus_poll()` once per frame from the thread that reads room state.
+
+```c
+colyseus_set_polled(true);   // at startup, before connecting
+
+// every frame, on the thread that reads room state:
+colyseus_poll();             // socket IO, decode and every callback happen here
+```
+
+In polled mode no SDK thread ever touches your state: matchmaking results, room
+and state callbacks, auto-reconnection and latency probes are all delivered
+inside `colyseus_poll()`, on the thread that calls it. A send from that thread
+goes out immediately; a send from any other thread waits for the next poll.
+
+Threaded delivery is still the default (a later release will flip it): each
+socket runs its own tick thread, matchmaking and reconnection report from
+worker threads, and reading room state from your main loop races the decoder.
+
+The Godot and GameMaker bindings run polled for you. The full contract is in
+[`include/colyseus/client.h`](include/colyseus/client.h) and
+[`include/colyseus/websocket_transport.h`](include/colyseus/websocket_transport.h).
 
 ## Project Structure
 

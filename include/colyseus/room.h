@@ -165,8 +165,9 @@ typedef struct {
     int queue_count;
 
     /* Scheduler state — worker thread + condvar, or the polled deadline
-     * machine on Emscripten/COLYSEUS_RECONNECT_POLLED builds. Defined
-     * opaquely to keep platform headers out of this public header. */
+     * machine (rooms connected in polled mode, Emscripten,
+     * COLYSEUS_RECONNECT_POLLED builds). Defined opaquely to keep platform
+     * headers out of this public header. */
     void* worker;
 } colyseus_reconnection_state_t;
 
@@ -361,13 +362,13 @@ void colyseus_room_get_reconnection_options(const colyseus_room_t* room, colyseu
 bool colyseus_room_is_reconnecting(const colyseus_room_t* room);
 
 /**
- * Advance pending auto-reconnections (polled-scheduler builds).
+ * Advance pending auto-reconnections on the polled scheduler.
  *
- * On Emscripten — and on native builds compiled with
- * -DCOLYSEUS_RECONNECT_POLLED — reconnection is driven by this poll instead
- * of a worker thread: call it once per frame, alongside the transport poll.
- * On threaded-scheduler builds it is a no-op, so hosts may call it
- * unconditionally.
+ * colyseus_poll() calls it; call it yourself only when driving the pieces by
+ * hand. A room reconnects through it when it first connected in polled mode
+ * (colyseus_set_polled), and always on Emscripten and in native builds
+ * compiled with -DCOLYSEUS_RECONNECT_POLLED. Rooms on the threaded scheduler
+ * are left alone, so hosts may call it unconditionally.
  */
 void colyseus_reconnect_poll(void);
 

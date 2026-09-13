@@ -13,6 +13,11 @@
  * coordinator thread (never inside a callback — see websocket_transport.c's
  * ws_on_tick_thread reentrancy contract).
  *
+ * Native, polled mode (colyseus_set_polled): no coordinator. The probe's
+ * socket ticks inside colyseus_poll(), and colyseus_latency_poll() — run by
+ * the same poll, after the sockets — enforces the timeout, tears down and
+ * reports, so the result arrives on the polling thread.
+ *
  * Emscripten (single-threaded): no threads; the timeout is armed with
  * emscripten_set_timeout and teardown is deferred to the event loop with
  * emscripten_async_call (the web transport delivers events from a poll loop /
@@ -20,6 +25,7 @@
  */
 
 #include "colyseus/latency.h"
+#include "colyseus/client.h"
 #include "colyseus/transport.h"
 #include "colyseus/websocket_transport.h"
 #include "colyseus/protocol.h"
@@ -97,6 +103,8 @@ struct colyseus_latency_probe {
     /* completion */
     probe_done_fn on_done;
     void*         on_done_ctx;
+
+    uint64_t deadline_ms;  /* polled mode: colyseus_latency_poll() times it out */
 
 #ifdef __EMSCRIPTEN__
     long timeout_id;
@@ -263,7 +271,111 @@ static void probe_launch(colyseus_latency_probe_t* p) {
     colyseus_transport_connect(p->transport, p->endpoint);
 }
 
+/* Timeouts and teardown already run on the browser's event loop. */
+void colyseus_latency_poll(void) {}
+
 #else  /* native (pthreads / Win32) */
+
+void colyseus_ws_pin_polled(colyseus_transport_t* transport, bool polled); /* websocket_transport.c */
+
+/* stack settings view carries only the TLS config that connect reads */
+static void probe_connect(colyseus_latency_probe_t* p) {
+    colyseus_settings_t s;
+    memset(&s, 0, sizeof(s));
+    s.use_secure_protocol = p->use_secure;
+    s.tls_skip_verification = p->tls_skip_verification;
+    s.ca_pem_data = p->ca_pem_data;
+    s.ca_pem_len = p->ca_pem_len;
+    colyseus_websocket_connect_with_settings(p->transport, p->endpoint, &s);
+}
+
+/* Polled-mode probes still in flight. Slots are nulled, never compacted, so
+ * the poll can walk by index while a result callback launches another. */
+static colyseus_latency_probe_t** g_polled_probes = NULL;
+static int g_polled_probes_cap = 0;
+#ifdef _WIN32
+static SRWLOCK g_polled_probes_lock = SRWLOCK_INIT;
+    #define POLLED_PROBES_LOCK()   AcquireSRWLockExclusive(&g_polled_probes_lock)
+    #define POLLED_PROBES_UNLOCK() ReleaseSRWLockExclusive(&g_polled_probes_lock)
+#else
+static pthread_mutex_t g_polled_probes_lock = PTHREAD_MUTEX_INITIALIZER;
+    #define POLLED_PROBES_LOCK()   pthread_mutex_lock(&g_polled_probes_lock)
+    #define POLLED_PROBES_UNLOCK() pthread_mutex_unlock(&g_polled_probes_lock)
+#endif
+
+static bool polled_probe_add(colyseus_latency_probe_t* p) {
+    bool added = false;
+    POLLED_PROBES_LOCK();
+    int free_slot = -1;
+    for (int i = 0; i < g_polled_probes_cap; i++) {
+        if (!g_polled_probes[i]) { free_slot = i; break; }
+    }
+    if (free_slot < 0) {
+        int cap = g_polled_probes_cap ? g_polled_probes_cap * 2 : 8;
+        colyseus_latency_probe_t** grown = realloc(g_polled_probes, (size_t)cap * sizeof(*grown));
+        if (grown) {
+            memset(grown + g_polled_probes_cap, 0, (size_t)(cap - g_polled_probes_cap) * sizeof(*grown));
+            free_slot = g_polled_probes_cap;
+            g_polled_probes = grown;
+            g_polled_probes_cap = cap;
+        }
+    }
+    if (free_slot >= 0) {
+        g_polled_probes[free_slot] = p;
+        added = true;
+    }
+    POLLED_PROBES_UNLOCK();
+    return added;
+}
+
+/* Settles only through its callbacks or the deadline; the result is reported
+ * by colyseus_latency_poll(), never from inside the launching call. */
+static void probe_launch_polled(colyseus_latency_probe_t* p) {
+    p->deadline_ms = colyseus_monotonic_ms() + (uint64_t)p->timeout_ms;
+
+    colyseus_transport_events_t ev = probe_events(p);
+    p->transport = colyseus_websocket_transport_create(&ev);
+    if (p->transport) {
+        colyseus_ws_pin_polled(p->transport, true);
+        probe_connect(p);
+    } else {
+        PROBE_LOCK(p);
+        probe_settle(p, false, -1.0, COLYSEUS_CLOSE_ABNORMAL_CLOSURE, "failed to create transport");
+        PROBE_UNLOCK(p);
+    }
+
+    if (!polled_probe_add(p)) {
+        PROBE_LOCK(p);
+        probe_settle(p, false, -1.0, COLYSEUS_CLOSE_ABNORMAL_CLOSURE, "out of memory");
+        PROBE_UNLOCK(p);
+        probe_complete(p);
+    }
+}
+
+void colyseus_latency_poll(void) {
+    uint64_t now = colyseus_monotonic_ms();
+    for (int i = 0;; i++) {
+        POLLED_PROBES_LOCK();
+        bool end = i >= g_polled_probes_cap;
+        colyseus_latency_probe_t* p = end ? NULL : g_polled_probes[i];
+        POLLED_PROBES_UNLOCK();
+        if (end) break;
+        if (!p) continue;
+
+        PROBE_LOCK(p);
+        if (!p->settled && now >= p->deadline_ms) {
+            probe_settle(p, false, -1.0, COLYSEUS_CLOSE_ABNORMAL_CLOSURE, "latency probe timed out");
+        }
+        bool done = p->settled;
+        PROBE_UNLOCK(p);
+        if (!done) continue;
+
+        POLLED_PROBES_LOCK();
+        g_polled_probes[i] = NULL;
+        POLLED_PROBES_UNLOCK();
+        probe_complete(p);  /* outside any tick: the destroy closes on the spot */
+    }
+}
 
 /* Wait on the probe condvar for up to delay_ms. Caller holds the probe mutex. */
 static void probe_timedwait(colyseus_latency_probe_t* p, int delay_ms) {
@@ -293,14 +405,9 @@ static probe_thread_ret PROBE_THREAD_CALL probe_coordinator(void* arg) {
         probe_settle(p, false, -1.0, COLYSEUS_CLOSE_ABNORMAL_CLOSURE, "failed to create transport");
         PROBE_UNLOCK(p);
     } else {
-        /* stack settings view carries only the TLS config that connect reads */
-        colyseus_settings_t s;
-        memset(&s, 0, sizeof(s));
-        s.use_secure_protocol = p->use_secure;
-        s.tls_skip_verification = p->tls_skip_verification;
-        s.ca_pem_data = p->ca_pem_data;
-        s.ca_pem_len = p->ca_pem_len;
-        colyseus_websocket_connect_with_settings(p->transport, p->endpoint, &s);
+        /* a socket the coordinator waits on must tick on its own thread */
+        colyseus_ws_pin_polled(p->transport, false);
+        probe_connect(p);
 
         PROBE_LOCK(p);
         uint64_t deadline = colyseus_monotonic_ms() + (uint64_t)p->timeout_ms;
@@ -321,6 +428,10 @@ static probe_thread_ret PROBE_THREAD_CALL probe_coordinator(void* arg) {
 }
 
 static void probe_launch(colyseus_latency_probe_t* p) {
+    if (colyseus_is_polled()) {
+        probe_launch_polled(p);
+        return;
+    }
 #ifdef _WIN32
     HANDLE th = CreateThread(NULL, 0, probe_coordinator, p, 0, NULL);
     if (th) CloseHandle(th);

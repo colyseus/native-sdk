@@ -4,6 +4,37 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "colyseus/room.h"
+#include "colyseus/net_delay.h"
+#include "colyseus/websocket_transport.h"
+
+void colyseus_http_poll(void);    /* below on native, http_web.c on the web */
+void colyseus_latency_poll(void); /* latency.c */
+
+/* ── Polled runtime ─────────────────────────────────────────────── */
+
+static int g_polled = 0;
+static _Thread_local int g_poll_depth = 0;
+
+void colyseus_set_polled(bool polled) {
+    __atomic_store_n(&g_polled, polled ? 1 : 0, __ATOMIC_RELEASE);
+    colyseus_ws_set_polled(polled);
+}
+
+bool colyseus_is_polled(void) {
+    return __atomic_load_n(&g_polled, __ATOMIC_ACQUIRE) != 0;
+}
+
+void colyseus_poll(void) {
+    if (g_poll_depth) return; /* re-entered from a callback it dispatched */
+    g_poll_depth++;
+    colyseus_http_poll();
+    colyseus_ws_poll();        /* netdelay-queued inbound lands here… */
+    colyseus_netdelay_pump();  /* …and decodes here, same call */
+    colyseus_latency_poll();
+    colyseus_reconnect_poll();
+    g_poll_depth--;
+}
 
 /* Platform-specific threading */
 #ifdef __EMSCRIPTEN__
@@ -27,7 +58,9 @@ typedef struct http_task {
     char* body;
     void (*on_success)(const colyseus_http_response_t*, void*);
     void (*on_error)(const colyseus_http_error_t*, void*);
+    void (*discard)(void*);  /* frees userdata when neither callback will run */
     void* userdata;
+    bool polled;             /* complete through colyseus_http_poll(); latched at submit */
     struct http_task* next;
 } http_task_t;
 
@@ -81,6 +114,136 @@ typedef struct {
 } http_worker_t;
 
 static thread_return_t THREAD_CALL http_worker_func(void* arg);
+
+/* Polled requests: the worker still blocks on the request, but the outcome
+ * waits here until colyseus_http_poll() runs the callbacks on the polling
+ * thread. Process-wide, like the poll. */
+typedef struct http_completion {
+    struct http_completion* next;
+    const http_worker_t* owner;  /* purged when its client is freed */
+    bool ok;
+    int code;                    /* status code, or the error's code */
+    char* text;                  /* body, or the error's message */
+    void (*on_success)(const colyseus_http_response_t*, void*);
+    void (*on_error)(const colyseus_http_error_t*, void*);
+    void (*discard)(void*);
+    void* userdata;
+} http_completion_t;
+
+static http_completion_t* g_http_done_head = NULL;
+static http_completion_t* g_http_done_tail = NULL;
+#ifdef _WIN32
+static SRWLOCK g_http_done_lock = SRWLOCK_INIT;
+    #define http_done_lock()   AcquireSRWLockExclusive(&g_http_done_lock)
+    #define http_done_unlock() ReleaseSRWLockExclusive(&g_http_done_lock)
+#else
+static pthread_mutex_t g_http_done_lock = PTHREAD_MUTEX_INITIALIZER;
+    #define http_done_lock()   pthread_mutex_lock(&g_http_done_lock)
+    #define http_done_unlock() pthread_mutex_unlock(&g_http_done_lock)
+#endif
+
+/* The request's callbacks run inside colyseus_http_post; these copy the
+ * outcome out before its buffers are freed. */
+typedef struct {
+    bool done;
+    bool ok;
+    int code;
+    char* text;
+} http_capture_t;
+
+static void http_capture_success(const colyseus_http_response_t* response, void* userdata) {
+    http_capture_t* cap = (http_capture_t*)userdata;
+    cap->done = true;
+    cap->ok = true;
+    cap->code = response->status_code;
+    cap->text = response->body ? strdup(response->body) : NULL;
+}
+
+static void http_capture_error(const colyseus_http_error_t* error, void* userdata) {
+    http_capture_t* cap = (http_capture_t*)userdata;
+    cap->done = true;
+    cap->ok = false;
+    cap->code = error->code;
+    cap->text = error->message ? strdup(error->message) : NULL;
+}
+
+static void http_completion_push(const http_worker_t* w, const http_task_t* task, http_capture_t* cap) {
+    http_completion_t* done = malloc(sizeof(*done));
+    if (!done) {
+        fprintf(stderr, "colyseus: out of memory — HTTP completion dropped\n");
+        free(cap->text);
+        if (task->discard) task->discard(task->userdata);
+        return;
+    }
+    done->next = NULL;
+    done->owner = w;
+    done->ok = cap->done && cap->ok;
+    /* no callback at all means the request never produced a result */
+    done->code = cap->done ? cap->code : -1;
+    done->text = cap->done ? cap->text : strdup("HTTP request failed");
+    done->on_success = task->on_success;
+    done->on_error = task->on_error;
+    done->discard = task->discard;
+    done->userdata = task->userdata;
+
+    http_done_lock();
+    if (g_http_done_tail) g_http_done_tail->next = done;
+    else g_http_done_head = done;
+    g_http_done_tail = done;
+    http_done_unlock();
+}
+
+/* Drops a freed client's undelivered completions. */
+static void http_completion_purge(const http_worker_t* w) {
+    http_completion_t* dropped = NULL;
+    http_done_lock();
+    http_completion_t** link = &g_http_done_head;
+    g_http_done_tail = NULL;
+    while (*link) {
+        http_completion_t* done = *link;
+        if (done->owner == w) {
+            *link = done->next;
+            done->next = dropped;
+            dropped = done;
+        } else {
+            g_http_done_tail = done;
+            link = &done->next;
+        }
+    }
+    http_done_unlock();
+
+    while (dropped) {
+        http_completion_t* next = dropped->next;
+        if (dropped->discard) dropped->discard(dropped->userdata);
+        free(dropped->text);
+        free(dropped);
+        dropped = next;
+    }
+}
+
+/* One at a time, so a callback that frees its client purges the rest. */
+void colyseus_http_poll(void) {
+    for (;;) {
+        http_done_lock();
+        http_completion_t* done = g_http_done_head;
+        if (done) {
+            g_http_done_head = done->next;
+            if (!g_http_done_head) g_http_done_tail = NULL;
+        }
+        http_done_unlock();
+        if (!done) break;
+
+        if (done->ok) {
+            colyseus_http_response_t response = { done->code, done->text, true };
+            if (done->on_success) done->on_success(&response, done->userdata);
+        } else {
+            colyseus_http_error_t error = { done->code, done->text };
+            if (done->on_error) done->on_error(&error, done->userdata);
+        }
+        free(done->text);
+        free(done);
+    }
+}
 
 static http_worker_t* http_worker_create(void) {
     http_worker_t* w = malloc(sizeof(http_worker_t));
@@ -170,11 +333,13 @@ static void http_worker_free(http_worker_t* w) {
     http_task_t* t = w->head;
     while (t) {
         http_task_t* next = t->next;
+        if (t->discard) t->discard(t->userdata);
         free(t->path);
         free(t->body);
         free(t);
         t = next;
     }
+    http_completion_purge(w);
 
 #ifdef _WIN32
     DeleteCriticalSection(&w->mutex);
@@ -221,14 +386,21 @@ static thread_return_t THREAD_CALL http_worker_func(void* arg) {
 #endif
 
         /* Execute the HTTP request (blocking, but on this worker thread) */
-        colyseus_http_post(
-            task->http,
-            task->path,
-            task->body,
-            task->on_success,
-            task->on_error,
-            task->userdata
-        );
+        if (task->polled) {
+            http_capture_t cap = {0};
+            colyseus_http_post(task->http, task->path, task->body,
+                               http_capture_success, http_capture_error, &cap);
+            http_completion_push(w, task, &cap);
+        } else {
+            colyseus_http_post(
+                task->http,
+                task->path,
+                task->body,
+                task->on_success,
+                task->on_error,
+                task->userdata
+            );
+        }
 
         free(task->path);
         free(task->body);
@@ -259,6 +431,10 @@ static void matchmake_context_free(colyseus_matchmake_context_t* ctx) {
     if (!ctx) return;
     free(ctx->reconnection_token);
     free(ctx);
+}
+
+static void matchmake_context_discard(void* userdata) {
+    matchmake_context_free((colyseus_matchmake_context_t*)userdata);
 }
 
 /* Internal functions */
@@ -439,7 +615,9 @@ static void client_create_matchmake_request(
     task->body = strdup(options_json ? options_json : "{}");
     task->on_success = client_on_matchmake_success;
     task->on_error = client_on_matchmake_error;
+    task->discard = matchmake_context_discard;
     task->userdata = ctx;
+    task->polled = colyseus_is_polled();
     task->next = NULL;
 
     http_worker_enqueue((http_worker_t*)client->http_worker, task);

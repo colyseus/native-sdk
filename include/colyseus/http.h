@@ -41,7 +41,9 @@ void colyseus_http_free(colyseus_http_t* http);
 void colyseus_http_set_auth_token(colyseus_http_t* http, const char* token);
 const char* colyseus_http_get_auth_token(const colyseus_http_t* http);
 
-/* HTTP methods (async with callbacks) */
+/* HTTP methods. Native: they block, and call back on the calling thread
+ * before returning — polled mode (colyseus_set_polled) or not. Web: they
+ * return at once and call back from colyseus_poll(). */
 void colyseus_http_get(
     colyseus_http_t* http,
     const char* path,
