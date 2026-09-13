@@ -21,25 +21,35 @@ Copy the `godot` folder to your Godot project, then create a script:
 ```gdscript
 extends Node
 
-var client: ColyseusClient
-var room: ColyseusRoom
+var client: Colyseus.Client
+var room: Colyseus.Room
+var callbacks: Colyseus.Callbacks
 
 func _ready():
-    # Connect to server
-    client = ColyseusClient.new()
-    client.connect_to("ws://localhost:2567")
-
-    # Join a room
+    client = Colyseus.Client.new("ws://localhost:2567")
     room = client.join_or_create("my_room")
+    room.set_state_type(MyState)  # optional, and only before the room joins
 
-    # Handle events
+    # Register right away: these go live as soon as the room joins
+    callbacks = Colyseus.Callbacks.of(room)
+    callbacks.on_add("players", func(player, key): print("player added: ", key))
+    callbacks.listen("currentTurn", func(value, _previous): print("turn: ", value))
+
     room.joined.connect(func(): print("Joined!"))
-    room.message_received.connect(func(data): print("Message: ", data))
+    room.message_received.connect(func(type, data): print("Message: ", type, " ", data))
+
+func _process(_delta):
+    # typed root: the same object every frame, maps/arrays kept current
+    if room.state:
+        $Label.text = "%d players" % room.state.players.size()
 
 func send_greeting():
-    var data = "Hello".to_utf8_buffer()
-    room.send_message("greet", data)
+    room.send_message("greet", {"text": "Hello"})
 ```
+
+Callbacks and signals fire synchronously inside `Colyseus.poll()`, which the
+addon runs every frame: `joined`, then the first state's `on_add`/`listen`,
+then `state_changed`.
 
 ## 🔧 Build Options
 
@@ -59,25 +69,28 @@ zig build -Dtarget=x86_64-linux
 
 ## 📚 API Overview
 
-### ColyseusClient
+### Colyseus.Client
 ```gdscript
-# Connection
-client.connect_to("ws://localhost:2567")
+var client = Colyseus.Client.new("ws://localhost:2567")
 
 # Join/Create rooms
 var room = client.join_or_create("room_name")
 var room = client.join("room_name")
 var room = client.join_by_id("room_id")
-var room = client.create_room("room_name")
+var room = client.create("room_name")
 ```
 
-### ColyseusRoom
+### Colyseus.Room
 ```gdscript
 # Send messages
 room.send_message("type", data)
 room.send_message_int(123, data)
 
-# Leave room
+# State
+room.set_state_type(MyState)   # before the room joins
+room.state                     # typed root (or a Dictionary snapshot when untyped)
+
+# Leave room (consented: the server runs onLeave right away)
 room.leave()
 
 # Signals
@@ -86,6 +99,16 @@ room.state_changed.connect(on_state_changed)
 room.message_received.connect(on_message)
 room.error.connect(on_error)
 room.left.connect(on_left)
+```
+
+### Colyseus.Callbacks
+```gdscript
+var callbacks = Colyseus.Callbacks.of(room)
+var handle = callbacks.on_add("players", func(player, key): pass)
+callbacks.on_remove("players", func(player, key): pass)
+callbacks.listen("currentTurn", func(value, previous): pass)
+callbacks.listen(player, "x", func(value, previous): pass)   # nested instance
+callbacks.remove(handle)                                     # -1 means the registration failed
 ```
 
 ## 🎮 Running the Example Server

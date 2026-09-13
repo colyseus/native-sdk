@@ -53,16 +53,43 @@ Add `Colyseus` as an autoload in your project (Project → Project Settings → 
 - Path: `res://addons/colyseus/colyseus.gd`
 - Name: `Colyseus`
 
-Then use the factory to create clients:
+Then create a client and join:
 
 ```gdscript
-var client = Colyseus.create_client()
-client.set_endpoint("ws://localhost:2567")
+var client = Colyseus.Client.new("ws://localhost:2567")
 var room = client.join_or_create("my_room")
+room.set_state_type(MyState)            # optional: decode into your Colyseus.Schema classes
 
-# Get callbacks
-var callbacks = Colyseus.callbacks(room)
+var callbacks = Colyseus.Callbacks.of(room)
+callbacks.on_add("players", func(player, key): print("joined: ", key))
 ```
+
+## State and callbacks
+
+- **Register whenever.** `Colyseus.Callbacks.of(room)` works right after
+  `join_or_create()` returns, from `joined`, or later. Root registrations made
+  before the room joins go live right after `joined`, replaying what is already
+  there: `listen` fires with the current value, `on_add` once per existing item.
+  `of()` returns the same registry every time for a room.
+- **Delivery is synchronous**, inside `Colyseus.poll()` (the addon polls every
+  frame), in the order the server sent it: `joined`, the first state's
+  `on_add`/`listen`, then `state_changed`; after that each patch fires its
+  callbacks, then `state_changed`. Web exports defer callbacks to the end of
+  the frame instead, since socket events arrive outside `poll()` there.
+- Every registration returns a handle for `remove(handle)`, which is safe from
+  inside the callback itself. A registration that can't work (unknown field, a
+  target that was removed) returns `-1` and prints an error.
+- **Typed state.** With `set_state_type(MyState)` (call it before the room
+  joins), `room.state` / `room.get_state()` is your root instance: the same
+  object every time, kept current. Its map and array fields are live
+  Dictionaries/Arrays, primitive collections (`array<uint8>`) included. Keep a
+  reference and it stays up to date. Without a schema class, `get_state()`
+  returns a Dictionary snapshot.
+- When an entity is removed, its instance's `__ref_id` goes back to `-1` once
+  the SDK lets go of it. Ids are reused by the server for later entities.
+- `predict.value(instance, field)` is safe on anything: the smoothed value of an
+  attached field, the decoded value otherwise, and the last received value once
+  the entity is gone. NAN only means `instance` has no such numeric field.
 
 ## Web Export
 
@@ -126,21 +153,24 @@ See [example.gd](example.gd)
 ### ColyseusRoom
 
 #### Methods
-- `send_message(type: String, data: PackedByteArray)` - Send a string-typed message
-- `send_message_int(type: int, data: PackedByteArray)` - Send an integer-typed message
-- `leave(consented: bool = true)` - Leave the room
+- `send_message(type: String, data)` - Send a string-typed message (any Variant payload)
+- `send_message_int(type: int, data)` - Send an integer-typed message
+- `leave()` - Leave the room (consented: the server runs `onLeave` right away, `left` reports 4000)
 - `get_id() -> String` - Get the room ID
 - `get_session_id() -> String` - Get the session ID
 - `get_reconnection_token() -> String` - Token for `client.reconnect()`; persist it to survive a process kill
 - `get_name() -> String` - Get the room name
-- `is_connected() -> bool` - Check if connected (joined and WebSocket is open)
+- `set_state_type(schema_class)` - Decode into your `Colyseus.Schema` classes; call before the room joins
+- `get_state()` / `state` - The typed root (with `set_state_type`), else a Dictionary snapshot
+- `connected: bool` - Joined and the WebSocket is open
 
 #### Signals
 - `joined()` - Emitted when successfully joined the room
-- `state_changed()` - Emitted when room state changes
-- `message_received(data: PackedByteArray)` - Emitted when a message is received
+- `state_changed()` - Emitted after each state patch, once its callbacks have run
+- `message_received(type, data)` - Emitted when a message is received
 - `error(code: int, message: String)` - Emitted on error
 - `left(code: int, reason: String)` - Emitted when leaving the room
+- `dropped(code: int, reason: String)` / `reconnected()` - Automatic reconnection
 
 ## Architecture
 

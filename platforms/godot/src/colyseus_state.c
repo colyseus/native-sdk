@@ -321,10 +321,11 @@ static void colyseus_dynamic_value_to_variant(
             break;
             
         case COLYSEUS_FIELD_NUMBER:
+        case COLYSEUS_FIELD_QUANTIZED: /* dequantized */
         case COLYSEUS_FIELD_FLOAT64:
             variant_from_float(result, value->data.num);
             break;
-            
+
         case COLYSEUS_FIELD_FLOAT32:
             variant_from_float(result, (double)value->data.f32);
             break;

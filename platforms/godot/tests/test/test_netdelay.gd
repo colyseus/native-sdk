@@ -2,12 +2,14 @@ extends GutTest
 ## Latency injector — lab-move, live server. The RTT the clock reports must
 ## track the injected round trip, and packets must actually queue.
 
+const Playground = preload("res://helpers/playground.gd")
+
 var client: Colyseus.Client
 var room: Colyseus.Room
 var _joined := false
 
 func before_all():
-	client = Colyseus.Client.new("ws://127.0.0.1:5173")
+	client = Colyseus.Client.new(Playground.url())
 
 func after_all():
 	client = null

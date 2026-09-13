@@ -17,6 +17,7 @@ import "./config/auth.config";
 import { MyRoom } from "./rooms/MyRoom";
 import { TestRoom } from "./rooms/TestRoom";
 import { ViewTestRoom } from "./rooms/ViewTestRoom";
+import { BindingFixtureRoom } from "./rooms/BindingFixtureRoom";
 
 export const server = defineServer({
     rooms: {
@@ -25,6 +26,7 @@ export const server = defineServer({
         my_room: defineRoom(TestRoom),
         test_room: defineRoom(TestRoom),
         view_test_room: defineRoom(ViewTestRoom),
+        binding_fixture_room: defineRoom(BindingFixtureRoom),
         stub_room: defineRoom(MyRoom),
     },
 

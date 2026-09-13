@@ -14,12 +14,14 @@ const HALF := 1.6
 const ARENA_W := 100.0
 const ARENA_H := 60.0
 
+const Playground = preload("res://helpers/playground.gd")
+
 var client: Colyseus.Client
 var room: Colyseus.Room
 var _joined := false
 
 func before_all():
-	client = Colyseus.Client.new("ws://127.0.0.1:5173")
+	client = Colyseus.Client.new(Playground.url())
 
 func after_all():
 	client = null
@@ -219,3 +221,66 @@ func test_tick_without_a_timestamp_drives_from_the_room_clock():
 	assert_gt(recon.value("x"), start_x + 5.0, "driving right must move the prediction")
 	assert_lt(recon.drift_ema, 0.01,
 		"drift ema %f — the defaulted tick is off-axis" % recon.drift_ema)
+
+func test_step_reads_schema_types_and_memo_freezes_any_variant():
+	assert_true(await _join_and_wait(), "should join lab-move (is the playground up?)")
+
+	var start = Time.get_ticks_msec()
+	var me = null
+	while me == null and (Time.get_ticks_msec() - start) < 5000:
+		Colyseus.poll()
+		me = _me()
+		OS.delay_msec(10)
+	assert_not_null(me, "own player should decode into state.players")
+	if me == null:
+		return
+
+	var types := {"cmd": {}, "state": {}}
+	var computes := [0]
+	var live := {}      # tick -> what that tick's live step memoized
+	var replays := [0]
+	var mismatches := []
+	var step := func(ctx, s, cmd):
+		types.cmd[typeof(cmd.moveX)] = true
+		types.state[typeof(s.x)] = true
+		var frozen = ctx.memo("probe", func():
+			computes[0] += 1
+			return {"tick": ctx.tick, "path": [1, 2, 3]})
+		if ctx.is_replay:
+			replays[0] += 1
+			if live.has(ctx.tick) and frozen != live[ctx.tick]:
+				mismatches.append(ctx.tick)
+		else:
+			live[ctx.tick] = frozen
+		_step(ctx, s, cmd)
+		# biased on purpose: every ack mispredicts, so replays exercise the memo
+		# (a matched prediction short-circuits without replaying)
+		s.x += 0.05
+
+	var input = room.input()
+	var predict = Colyseus.Predict.of(room)
+	var recon = predict.reconciler(me, {
+		"input": input,
+		"fields": ["x", "y", "vx", "vy"],
+		"smooth_ms": 66.67,
+		"step": step,
+	})
+	assert_not_null(recon, "predict.reconciler should build over the decoded player")
+	if recon == null:
+		return
+
+	start = Time.get_ticks_msec()
+	while (Time.get_ticks_msec() - start) < 1500:
+		Colyseus.poll()
+		var steps = predict.tick(float(Time.get_ticks_msec()))
+		for i in steps:
+			input.data.moveX = 1
+			input.data.moveY = 0
+			input.send()
+		OS.delay_msec(5)
+
+	assert_eq(types.cmd.keys(), [TYPE_INT], "an int8 input field reads as int")
+	assert_eq(types.state.keys(), [TYPE_FLOAT], "a number field reads as float")
+	assert_gt(replays[0], 0, "acks should replay the inputs still in flight")
+	assert_eq(mismatches, [], "every replay gets the Dictionary its live step froze")
+	assert_eq(computes[0], live.size(), "compute runs once per live step, never on a replay")

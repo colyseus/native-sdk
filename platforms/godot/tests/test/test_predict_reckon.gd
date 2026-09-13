@@ -4,6 +4,8 @@ extends GutTest
 ## scratch, value()/value_at() read it back); the real mover port arrives
 ## with the playground app.
 
+const Playground = preload("res://helpers/playground.gd")
+
 var client: Colyseus.Client
 var room: Colyseus.Room
 var _joined := false
@@ -12,7 +14,7 @@ var _last_dt := 0.0
 var _last_elapsed := 0.0
 
 func before_all():
-	client = Colyseus.Client.new("ws://127.0.0.1:5173")
+	client = Colyseus.Client.new(Playground.url())
 
 func after_all():
 	client = null

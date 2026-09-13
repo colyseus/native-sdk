@@ -6,6 +6,8 @@
 #include "colyseus_netdelay.h"
 #include "colyseus_schema_registry.h"
 #include "tls_certificates.h"
+#include <colyseus/websocket_transport.h>
+#include <colyseus/client.h>
 #include <gdextension_interface.h>
 #include <string.h>
 #include <stdlib.h>
@@ -830,38 +832,38 @@ static void bind_signal_3(
 
 // Forward declaration for vararg call wrapper (defined later, needed by HTTP method registration)
 static void call_vararg(void *method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr *p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError *r_error);
+static void bind_method_vararg(const char *class_name, const char *method_name, GDExtensionClassMethodCall call_fn, bool has_return);
 
-extern void colyseus_http_poll(void);
-extern void colyseus_ws_poll(void);
-extern void colyseus_reconnect_poll(void);
 
 // Process queued events and emit signals on main thread
 extern void gdext_http_process_events(void);
 extern void gdext_room_process_events(void);
 extern void gdext_latency_process_events(void);
 
+static void colyseus_poll_all(void) {
+    /* a poll() from inside a callback would re-enter the socket mid-dispatch */
+    if (gdext_in_dispatch()) return;
+    gdext_dispatch_begin();
+    colyseus_poll();
+    gdext_http_process_events();
+    gdext_room_process_events();
+    gdext_latency_process_events();
+    gdext_rooms_flush_joined();
+    gdext_dispatch_end();
+}
+
 static void gdext_colyseus_client_poll_call(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
     const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count,
     GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
     (void)p_method_userdata; (void)p_instance; (void)p_args;
     (void)p_argument_count; (void)r_return; (void)r_error;
-    colyseus_http_poll();
-    colyseus_ws_poll();
-    colyseus_reconnect_poll();
-    gdext_http_process_events();
-    gdext_room_process_events();
-    gdext_latency_process_events();
+    colyseus_poll_all();
 }
 
 static void gdext_colyseus_client_poll_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance,
     const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
     (void)p_method_userdata; (void)p_instance; (void)p_args; (void)r_ret;
-    colyseus_http_poll();
-    colyseus_ws_poll();
-    colyseus_reconnect_poll();
-    gdext_http_process_events();
-    gdext_room_process_events();
-    gdext_latency_process_events();
+    colyseus_poll_all();
 }
 
 static void register_colyseus_client(void) {
@@ -1342,14 +1344,9 @@ static void register_colyseus_room(void) {
         destruct_property(&args_info[0]);
     }
 
-    // get_state - returns Dictionary with current state
-    // Uses bind_method_0_with_ret like other working methods (is_connected, get_id, etc.)
-    bind_method_0_with_ret(
-        "_ColyseusRoom",
-        "get_state",
-        gdext_colyseus_room_get_state,
-        GDEXTENSION_VARIANT_TYPE_DICTIONARY
-    );
+    // get_state - the typed root instance, or a Dictionary snapshot when untyped
+    bind_method_vararg("_ColyseusRoom", "get_state",
+        (GDExtensionClassMethodCall)gdext_colyseus_room_get_state, true);
 
     // set_state_type - vararg to accept either String or GDScript class
     {
@@ -1945,6 +1942,15 @@ static void colyseus_initialize(void *userdata, GDExtensionInitializationLevel p
     /* Initialize TLS certificates (auto-loads bundled or override certs) */
     gdext_tls_certificates_init();
 
+    gdext_mark_main_thread();
+
+#ifndef __EMSCRIPTEN__
+    /* Everything — sockets, matchmaking completions, reconnects — delivers
+     * inside Colyseus.poll() on the main thread: decoding, predict bookkeeping
+     * and GDScript _set_field calls must not race the game loop. */
+    colyseus_set_polled(true);
+#endif
+
     register_colyseus_client();
     register_colyseus_room();
     register_colyseus_callbacks();
@@ -1999,6 +2005,7 @@ GDExtensionBool GDE_EXPORT colyseus_sdk_init(
     api.callable_custom_create = (GDExtensionInterfaceCallableCustomCreate)p_get_proc_address("callable_custom_create");
     api.variant_new_copy = (GDExtensionInterfaceVariantNewCopy)p_get_proc_address("variant_new_copy");
     api.variant_stringify = (GDExtensionInterfaceVariantStringify)p_get_proc_address("variant_stringify");
+    api.print_error = (GDExtensionInterfacePrintError)p_get_proc_address("print_error");
     api.classdb_register_extension_class4 = (GDExtensionInterfaceClassdbRegisterExtensionClass4)p_get_proc_address("classdb_register_extension_class4");
     api.classdb_register_extension_class5 = (GDExtensionInterfaceClassdbRegisterExtensionClass5)p_get_proc_address("classdb_register_extension_class5");
 

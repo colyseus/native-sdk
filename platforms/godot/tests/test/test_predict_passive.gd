@@ -3,12 +3,14 @@ extends GutTest
 ## server (`pnpm dev --host 0.0.0.0`). lab-bots runs a server-driven bot at
 ## the patch rate; the lerp timeline must render it smoothly BETWEEN patches.
 
+const Playground = preload("res://helpers/playground.gd")
+
 var client: Colyseus.Client
 var room: Colyseus.Room
 var _joined := false
 
 func before_all():
-	client = Colyseus.Client.new("ws://127.0.0.1:5173")
+	client = Colyseus.Client.new(Playground.url())
 
 func after_all():
 	client = null

@@ -7,8 +7,9 @@
  * Thin gdext veneer over the core injector (src/network/net_delay.c). The
  * queueing/trampoline logic was born here and lifted into the core for the
  * GameMaker port — one implementation, every engine. Godot rooms keep the
- * zero-delay inbound passthrough (always_queue_inbound=false): decode on
- * the WS thread is this binding's existing threading model.
+ * zero-delay inbound passthrough (always_queue_inbound=false): sockets are
+ * polled, so an undelayed frame already decodes inside Colyseus.poll() on
+ * the main thread — queueing it would only add a pump.
  */
 
 void gdext_colyseus_room_set_latency(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {

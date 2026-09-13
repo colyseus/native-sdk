@@ -1,6 +1,8 @@
 #include "godot_colyseus.h"
+#include "colyseus_callbacks.h"
 #include "msgpack_variant.h"
 #include "tls_certificates.h"
+#include <stdarg.h>
 #include <colyseus/client.h>
 #include <colyseus/http.h>
 #include <colyseus/auth/auth.h>
@@ -47,7 +49,8 @@ typedef enum {
 
 typedef struct gdext_room_event {
     gdext_room_event_type_t type;
-    GDExtensionObjectPtr room_object;
+    GDExtensionObjectPtr room_object;   // NULL once the room is gone (see forget)
+    ColyseusRoomWrapper* room_wrapper;
     int code;               // for error/leave
     char* str_data;         // message (error/leave reason), or message type
     uint8_t* binary_data;   // message payload (msgpack)
@@ -57,6 +60,7 @@ typedef struct gdext_room_event {
 
 static void room_event_push(gdext_room_event_t* event);
 static gdext_room_event_t* room_event_pop(void);
+static void room_event_deliver(gdext_room_event_t* event);
 
 // Helper function to create a Godot String from a C string
 static void string_from_c_str(String *p_dest, const char *p_src) {
@@ -302,64 +306,88 @@ void gdext_colyseus_client_get_endpoint_call(void* p_method_userdata, GDExtensio
     }
 }
 
-// Helper function to emit Godot signals via call_deferred
-// This ensures signals are emitted on the main thread, avoiding thread safety issues
-static void emit_signal(GDExtensionObjectPtr object, const char* signal_name, GDExtensionConstVariantPtr* args, int arg_count) {
-    if (!object) return;
+// =============================================================================
+// Dispatch scope
+// =============================================================================
 
-    Variant object_variant;
-    constructors.variant_from_object_constructor(&object_variant, &object);
+/* Per thread: only the thread running Colyseus.poll() ever sees depth > 0.
+ * The matchmaking HTTP worker and the reconnect worker still call into the
+ * room from their own threads — they read 0 here, so they queue. */
+static _Thread_local int t_dispatch_depth = 0;
+static _Thread_local bool t_main_thread = false;
 
-    // Use call_deferred because WebSocket callbacks fire from a background thread.
-    // Godot APIs are not thread-safe, so we must defer to the main thread.
-    StringName call_deferred_method;
-    constructors.string_name_new_with_latin1_chars(&call_deferred_method, "call_deferred", false);
+void gdext_mark_main_thread(void) { t_main_thread = true; }
 
-    // First arg to call_deferred is the method name "emit_signal"
-    String emit_signal_str;
-    constructors.string_new_with_utf8_chars(&emit_signal_str, "emit_signal");
-    Variant emit_signal_variant;
-    constructors.variant_from_string_constructor(&emit_signal_variant, &emit_signal_str);
+bool gdext_on_main_thread(void) { return t_main_thread; }
 
-    // Second arg to call_deferred is the signal name
-    String signal_string;
-    constructors.string_new_with_utf8_chars(&signal_string, signal_name);
-    Variant signal_name_variant;
-    constructors.variant_from_string_constructor(&signal_name_variant, &signal_string);
+typedef struct { void (*fn)(void*); void* data; } gdext_after_t;
+static gdext_after_t* g_after = NULL;
+static int g_after_count = 0;
+static int g_after_cap = 0;
 
-    // Build args array: ["emit_signal", signal_name, ...args]
-    GDExtensionConstVariantPtr call_args[16];
-    call_args[0] = &emit_signal_variant;
-    call_args[1] = &signal_name_variant;
-    for (int i = 0; i < arg_count && i < 14; i++) {
-        call_args[i + 2] = args[i];
+void gdext_dispatch_begin(void) { t_dispatch_depth++; }
+
+bool gdext_in_dispatch(void) { return t_dispatch_depth > 0; }
+
+void gdext_dispatch_end(void) {
+    if (t_dispatch_depth == 1) {
+        /* still inside the scope, so work queued by these calls lands here too */
+        for (int i = 0; i < g_after_count; i++) {
+            g_after[i].fn(g_after[i].data);
+        }
+        g_after_count = 0;
     }
+    if (t_dispatch_depth > 0) t_dispatch_depth--;
+}
 
-    Variant return_value;
-    GDExtensionCallError error;
-    api.variant_call(&object_variant, &call_deferred_method, call_args, arg_count + 2, &return_value, &error);
+void gdext_after_dispatch(void (*fn)(void* data), void* data) {
+    if (!fn) return;
+    if (!gdext_in_dispatch()) { fn(data); return; }
+    if (g_after_count == g_after_cap) {
+        int cap = g_after_cap ? g_after_cap * 2 : 16;
+        gdext_after_t* grown = (gdext_after_t*)realloc(g_after, (size_t)cap * sizeof(gdext_after_t));
+        if (!grown) { fn(data); return; }  /* can't wait: run now rather than leak */
+        g_after = grown;
+        g_after_cap = cap;
+    }
+    g_after[g_after_count].fn = fn;
+    g_after[g_after_count].data = data;
+    g_after_count++;
+}
 
-    destructors.string_name_destructor(&call_deferred_method);
-    destructors.string_destructor(&emit_signal_str);
-    destructors.variant_destroy(&emit_signal_variant);
-    destructors.string_destructor(&signal_string);
-    destructors.variant_destroy(&signal_name_variant);
-    destructors.variant_destroy(&return_value);
-    destructors.variant_destroy(&object_variant);
+void gdext_push_error(const char* fmt, ...) {
+    char message[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(message, sizeof(message), fmt, ap);
+    va_end(ap);
+    if (api.print_error) {
+        api.print_error(message, "Colyseus", __FILE__, __LINE__, 1);
+    } else {
+        fprintf(stderr, "ERROR: %s\n", message);
+    }
 }
 
 // =============================================================================
-// Room event trampolines — push to queue (processed in poll on main thread)
+// Room event trampolines — delivered right away inside Colyseus.poll(),
+// queued for the next poll otherwise (another thread, or web socket events).
 // =============================================================================
+
+static gdext_room_event_t* room_event_new(gdext_room_event_type_t type, ColyseusRoomWrapper* room_wrapper) {
+    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
+    if (!event) return NULL;
+    event->type = type;
+    event->room_object = room_wrapper->godot_object;
+    event->room_wrapper = room_wrapper;
+    return event;
+}
 
 static void on_room_message_with_type(const char* type, const uint8_t* data, size_t length, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper || !room_wrapper->godot_object) return;
 
-    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
+    gdext_room_event_t* event = room_event_new(ROOM_EVENT_MESSAGE, room_wrapper);
     if (!event) return;
-    event->type = ROOM_EVENT_MESSAGE;
-    event->room_object = room_wrapper->godot_object;
     event->str_data = type ? strdup(type) : strdup("");
     if (data && length > 0) {
         event->binary_data = (uint8_t*)malloc(length);
@@ -368,79 +396,75 @@ static void on_room_message_with_type(const char* type, const uint8_t* data, siz
             event->binary_len = length;
         }
     }
-    room_event_push(event);
+    room_event_deliver(event);
 }
 
 static void on_room_join(void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper || !room_wrapper->godot_object) return;
 
-    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
-    if (!event) return;
-    event->type = ROOM_EVENT_JOIN;
-    event->room_object = room_wrapper->godot_object;
-    room_event_push(event);
+    gdext_room_hook_decoder(room_wrapper);
+
+    /* The core calls this before it parses the rest of JOIN_ROOM (input
+     * reflection, tick rate), so room.input() would still be null in a
+     * `joined` handler — hold it until this room's next event or poll's end. */
+    if (gdext_in_dispatch()) {
+        room_wrapper->join_pending = true;
+        return;
+    }
+    gdext_room_event_t* event = room_event_new(ROOM_EVENT_JOIN, room_wrapper);
+    if (event) room_event_push(event);
 }
 
 static void on_room_state_change(void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper || !room_wrapper->godot_object) return;
 
-    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
-    if (!event) return;
-    event->type = ROOM_EVENT_STATE_CHANGE;
-    event->room_object = room_wrapper->godot_object;
-    room_event_push(event);
+    gdext_room_after_decode(room_wrapper);
+
+    gdext_room_event_t* event = room_event_new(ROOM_EVENT_STATE_CHANGE, room_wrapper);
+    if (event) room_event_deliver(event);
 }
 
 static void on_room_error(int code, const char* message, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper || !room_wrapper->godot_object) return;
 
-    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
+    gdext_room_event_t* event = room_event_new(ROOM_EVENT_ERROR, room_wrapper);
     if (!event) return;
-    event->type = ROOM_EVENT_ERROR;
-    event->room_object = room_wrapper->godot_object;
     event->code = code;
     event->str_data = message ? strdup(message) : strdup("");
-    room_event_push(event);
+    room_event_deliver(event);
 }
 
 static void on_room_leave(int code, const char* reason, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper || !room_wrapper->godot_object) return;
 
-    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
+    gdext_room_event_t* event = room_event_new(ROOM_EVENT_LEAVE, room_wrapper);
     if (!event) return;
-    event->type = ROOM_EVENT_LEAVE;
-    event->room_object = room_wrapper->godot_object;
     event->code = code;
     event->str_data = reason ? strdup(reason) : strdup("");
-    room_event_push(event);
+    room_event_deliver(event);
 }
 
 static void on_room_drop(int code, const char* reason, void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper || !room_wrapper->godot_object) return;
 
-    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
+    gdext_room_event_t* event = room_event_new(ROOM_EVENT_DROP, room_wrapper);
     if (!event) return;
-    event->type = ROOM_EVENT_DROP;
-    event->room_object = room_wrapper->godot_object;
     event->code = code;
     event->str_data = reason ? strdup(reason) : strdup("");
-    room_event_push(event);
+    room_event_deliver(event);
 }
 
 static void on_room_reconnect(void* userdata) {
     ColyseusRoomWrapper* room_wrapper = (ColyseusRoomWrapper*)userdata;
     if (!room_wrapper || !room_wrapper->godot_object) return;
 
-    gdext_room_event_t* event = (gdext_room_event_t*)calloc(1, sizeof(gdext_room_event_t));
-    if (!event) return;
-    event->type = ROOM_EVENT_RECONNECT;
-    event->room_object = room_wrapper->godot_object;
-    room_event_push(event);
+    gdext_room_event_t* event = room_event_new(ROOM_EVENT_RECONNECT, room_wrapper);
+    if (event) room_event_deliver(event);
 }
 
 // Matchmaking success callback (shared by all matchmaking methods)
@@ -1373,21 +1397,52 @@ void gdext_latency_process_events(void) {
     }
 }
 
-void gdext_room_process_events(void) {
-    gdext_room_event_t* event;
-    while ((event = room_event_pop()) != NULL) {
-        if (!event->room_object) {
-            room_event_free(event);
-            continue;
-        }
+void gdext_room_deliver_joined(ColyseusRoomWrapper* room_wrapper) {
+    if (!room_wrapper) return;
+    room_wrapper->join_pending = false;
+    if (room_wrapper->godot_object) {
+        emit_signal_direct(room_wrapper->godot_object, "joined", NULL, 0);
+    }
+    gdext_callbacks_flush_room(room_wrapper);
+}
 
-        switch (event->type) {
+void gdext_room_events_forget(GDExtensionObjectPtr room_object) {
+    HTTP_QUEUE_LOCK();
+    for (gdext_room_event_t* e = g_room_event_head; e; e = e->next) {
+        if (e->room_object == room_object) {
+            e->room_object = NULL;
+            e->room_wrapper = NULL;
+        }
+    }
+    HTTP_QUEUE_UNLOCK();
+}
+
+static void room_event_dispatch(gdext_room_event_t* event) {
+    ColyseusRoomWrapper* room_wrapper = event->room_wrapper;
+    if (!event->room_object || !room_wrapper || !room_wrapper->godot_object) {
+        room_event_free(event);
+        return;
+    }
+    /* `joined` always leads whatever this room reports next */
+    if (event->type != ROOM_EVENT_JOIN && room_wrapper->join_pending) {
+        gdext_room_deliver_joined(room_wrapper);
+        if (!room_wrapper->godot_object) {
+            room_event_free(event);
+            return;
+        }
+    }
+
+    switch (event->type) {
             case ROOM_EVENT_JOIN:
-                emit_signal_direct(event->room_object, "joined", NULL, 0);
+                gdext_room_deliver_joined(room_wrapper);
                 break;
 
             case ROOM_EVENT_STATE_CHANGE:
-                emit_signal_direct(event->room_object, "state_changed", NULL, 0);
+                /* registrations buffered during the decode go live first */
+                gdext_callbacks_flush_room(room_wrapper);
+                if (room_wrapper->godot_object) {
+                    emit_signal_direct(event->room_object, "state_changed", NULL, 0);
+                }
                 break;
 
             case ROOM_EVENT_ERROR: {
@@ -1474,9 +1529,23 @@ void gdext_room_process_events(void) {
                 destructors.variant_destroy(&data_variant);
                 break;
             }
-        }
+    }
 
-        room_event_free(event);
+    room_event_free(event);
+}
+
+static void room_event_deliver(gdext_room_event_t* event) {
+    if (gdext_in_dispatch()) {
+        room_event_dispatch(event);
+    } else {
+        room_event_push(event);
+    }
+}
+
+void gdext_room_process_events(void) {
+    gdext_room_event_t* event;
+    while ((event = room_event_pop()) != NULL) {
+        room_event_dispatch(event);
     }
 }
 

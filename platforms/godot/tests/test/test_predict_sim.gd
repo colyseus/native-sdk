@@ -18,12 +18,14 @@ const PUCK_FRICTION := 0.985
 const PUCK_RESTITUTION := 0.92
 const PUCK_PUSH_MIN := 14.0
 
+const Playground = preload("res://helpers/playground.gd")
+
 var client: Colyseus.Client
 var room: Colyseus.Room
 var _joined := false
 
 func before_all():
-	client = Colyseus.Client.new("ws://127.0.0.1:5173")
+	client = Colyseus.Client.new(Playground.url())
 
 func after_all():
 	client = null

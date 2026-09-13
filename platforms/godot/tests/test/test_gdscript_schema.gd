@@ -119,10 +119,10 @@ func test_set_state_type_decodes_into_user_gdscript_classes():
 	# not happen.
 	assert_true(_captured_player is Player, "Map value should be our user-defined Player class")
 
-	# Decoded field values are read from the native schema via the get_state()
-	# Dictionary snapshot. Poll until the initial state batch has fully landed:
-	# currentTurn assigned and the starting Item pushed into the player's array.
-	var state := {}
+	# Decoded field values, read off the typed root get_state() returns. Poll
+	# until the initial state batch has fully landed: currentTurn assigned and
+	# the starting Item pushed into the player's array.
+	var state = null
 	start = Time.get_ticks_msec()
 	while (Time.get_ticks_msec() - start) < 5000:
 		Colyseus.poll()
@@ -130,40 +130,38 @@ func test_set_state_type_decodes_into_user_gdscript_classes():
 		state = room.get_state()
 		if _state_ready(state):
 			break
-	assert_eq(typeof(state), TYPE_DICTIONARY, "get_state() returns a Dictionary snapshot")
+	assert_true(state is TestRoomState, "get_state() returns the typed root")
+	if not (state is TestRoomState):
+		return
 
 	# STRING primitive — server sets currentTurn to the first player's session id.
-	assert_true(state.has("currentTurn"), "state should expose the STRING 'currentTurn' field")
-	assert_false(str(state["currentTurn"]).is_empty(), "currentTurn should be a non-empty session id")
+	assert_false(str(state.currentTurn).is_empty(), "currentTurn should be a non-empty session id")
 
 	# MAP field + NUMBER fields on the child schema.
-	assert_true(state.has("players"), "state should expose the MAP 'players' field")
-	var players: Dictionary = state["players"]
+	var players: Dictionary = state.players
 	assert_true(players.has(_my_session), "players map should contain our session id")
-	var me: Dictionary = players[_my_session]
-	assert_true(me.has("x") and me.has("y"), "Player should carry its NUMBER fields")
-	assert_true(typeof(me["x"]) == TYPE_FLOAT or typeof(me["x"]) == TYPE_INT, "Player.x should decode as a number")
+	var me = players[_my_session]
+	assert_true(me is Player, "map values are the user's Player instances")
+	assert_true(typeof(me.x) == TYPE_FLOAT or typeof(me.x) == TYPE_INT, "Player.x should decode as a number")
 
 	# ARRAY + schema child — server pushes one Item ("sword") on join.
-	assert_true(me.has("items"), "Player should expose the ARRAY 'items' field")
-	var items: Array = me["items"]
+	var items: Array = me.items
 	assert_gt(items.size(), 0, "Player.items should contain the starting item")
-	assert_eq(str((items[0] as Dictionary)["name"]), "sword", "Item.name (STRING) should decode to the server value")
+	assert_true(items[0] is Item, "array items are the user's Item instances")
+	assert_eq(str(items[0].name), "sword", "Item.name (STRING) should decode to the server value")
 
-	# REF field — host references the first player and decodes to its own entry.
-	assert_true(state.has("host"), "state should expose the REF 'host' field")
-	assert_eq(typeof(state["host"]), TYPE_DICTIONARY, "host (REF) should decode to the referenced player")
-	assert_true((state["host"] as Dictionary).has("items"), "host should carry the referenced player's fields")
+	# REF field — host references the first player and decodes to its instance.
+	assert_true(state.host is Player, "host (REF) should decode to the referenced player")
 
 # True once the initial state batch has fully arrived (currentTurn set and the
 # starting item pushed into our player's array).
 func _state_ready(state) -> bool:
-	if typeof(state) != TYPE_DICTIONARY:
+	if not (state is TestRoomState):
 		return false
-	if str(state.get("currentTurn", "")).is_empty():
+	if str(state.currentTurn).is_empty():
 		return false
-	var players = state.get("players", {})
+	var players = state.players
 	if not (players is Dictionary) or not players.has(_my_session):
 		return false
-	var me = players[_my_session]
-	return me is Dictionary and (me.get("items", []) as Array).size() > 0
+	var items = players[_my_session].items
+	return items is Array and items.size() > 0

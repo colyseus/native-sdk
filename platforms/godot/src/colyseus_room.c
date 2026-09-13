@@ -2,10 +2,12 @@
 #include "colyseus_state.h"
 #include "colyseus_schema_registry.h"
 #include "colyseus_gdscript_schema.h"
+#include "colyseus_callbacks.h"
 #include "colyseus_netdelay.h"
 #include "msgpack_encoder.h"
 #include <colyseus/room.h>
 #include <colyseus/schema.h>
+#include <colyseus/schema/decoder.h>
 #include <colyseus/schema/dynamic_schema.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,25 +16,39 @@
 // Used to pass wrapper reference from constructor to caller
 static ColyseusRoomWrapper* g_last_created_room_wrapper = NULL;
 
-// Room wrapper registry for lookup by instance ID
-#define MAX_ROOM_WRAPPERS 64
-static struct {
+// Room wrapper registry for lookup by instance ID. Grows: a fixed table used to
+// refuse room #65, and Callbacks.of() on it then had no room behind it.
+typedef struct {
     GDObjectInstanceID instance_id;
     ColyseusRoomWrapper* wrapper;
-} g_room_registry[MAX_ROOM_WRAPPERS] = {0};
+} room_slot_t;
+static room_slot_t* g_room_registry = NULL;
+static int g_room_registry_capacity = 0;
 
 static void register_room_wrapper(GDObjectInstanceID instance_id, ColyseusRoomWrapper* wrapper) {
-    for (int i = 0; i < MAX_ROOM_WRAPPERS; i++) {
+    for (int i = 0; i < g_room_registry_capacity; i++) {
         if (g_room_registry[i].wrapper == NULL) {
             g_room_registry[i].instance_id = instance_id;
             g_room_registry[i].wrapper = wrapper;
             return;
         }
     }
+    int capacity = g_room_registry_capacity ? g_room_registry_capacity * 2 : 64;
+    room_slot_t* grown = (room_slot_t*)realloc(g_room_registry, (size_t)capacity * sizeof(room_slot_t));
+    if (!grown) {
+        gdext_push_error("Colyseus: out of memory registering room #%d", g_room_registry_capacity + 1);
+        return;
+    }
+    memset(grown + g_room_registry_capacity, 0,
+           (size_t)(capacity - g_room_registry_capacity) * sizeof(room_slot_t));
+    grown[g_room_registry_capacity].instance_id = instance_id;
+    grown[g_room_registry_capacity].wrapper = wrapper;
+    g_room_registry = grown;
+    g_room_registry_capacity = capacity;
 }
 
 static void unregister_room_wrapper(ColyseusRoomWrapper* wrapper) {
-    for (int i = 0; i < MAX_ROOM_WRAPPERS; i++) {
+    for (int i = 0; i < g_room_registry_capacity; i++) {
         if (g_room_registry[i].wrapper == wrapper) {
             g_room_registry[i].instance_id = 0;
             g_room_registry[i].wrapper = NULL;
@@ -42,12 +58,20 @@ static void unregister_room_wrapper(ColyseusRoomWrapper* wrapper) {
 }
 
 ColyseusRoomWrapper* gdext_colyseus_room_get_wrapper_by_id(GDObjectInstanceID instance_id) {
-    for (int i = 0; i < MAX_ROOM_WRAPPERS; i++) {
-        if (g_room_registry[i].instance_id == instance_id) {
+    for (int i = 0; i < g_room_registry_capacity; i++) {
+        if (g_room_registry[i].wrapper && g_room_registry[i].instance_id == instance_id) {
             return g_room_registry[i].wrapper;
         }
     }
     return NULL;
+}
+
+void gdext_rooms_flush_joined(void) {
+    /* by index: a `joined` handler may create rooms (and grow the table) */
+    for (int i = 0; i < g_room_registry_capacity; i++) {
+        ColyseusRoomWrapper* wrapper = g_room_registry[i].wrapper;
+        if (wrapper && wrapper->join_pending) gdext_room_deliver_joined(wrapper);
+    }
 }
 
 ColyseusRoomWrapper* gdext_colyseus_room_get_last_wrapper(void) {
@@ -97,14 +121,10 @@ GDExtensionObjectPtr gdext_colyseus_room_constructor(void* p_class_userdata) {
     if (!object) return NULL;
     
     // Create our wrapper instance data
-    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)malloc(sizeof(ColyseusRoomWrapper));
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)calloc(1, sizeof(ColyseusRoomWrapper));
     if (!wrapper) return NULL;
-    
-    wrapper->native_room = NULL;
+
     wrapper->godot_object = object;
-    wrapper->pending_vtable = NULL;
-    wrapper->gdscript_schema_ctx = NULL;
-    wrapper->gdscript_state_instance = NULL;
     
     // Attach our wrapper to the Godot object
     StringName class_name;
@@ -122,35 +142,34 @@ GDExtensionObjectPtr gdext_colyseus_room_constructor(void* p_class_userdata) {
     return object;
 }
 
+static void room_wrapper_release(void* data) {
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)data;
+    /* Callbacks hook the decoder: unhook them before it goes */
+    gdext_callbacks_detach_room(wrapper);
+    if (wrapper->native_room) {
+        /* retire any latency-injector wrap before the transport dies */
+        if (wrapper->native_room->transport) {
+            gdext_colyseus_netdelay_unwrap(wrapper->native_room->transport);
+        }
+        colyseus_room_free(wrapper->native_room);
+    }
+    if (wrapper->gdscript_schema_ctx) {
+        gdscript_schema_context_free(wrapper->gdscript_schema_ctx);
+    }
+    free(wrapper);
+}
+
 void gdext_colyseus_room_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
     (void)p_class_userdata;
-    
+
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
-    if (wrapper) {
-        // Unregister from global registry
-        unregister_room_wrapper(wrapper);
-        
-        if (wrapper->native_room) {
-            /* retire any latency-injector wrap before the transport dies */
-            if (wrapper->native_room->transport) {
-                gdext_colyseus_netdelay_unwrap(wrapper->native_room->transport);
-            }
-            colyseus_room_free(wrapper->native_room);
-        }
-        
-        // Free GDScript schema context if present
-        if (wrapper->gdscript_schema_ctx) {
-            gdscript_schema_context_free(wrapper->gdscript_schema_ctx);
-        }
-        
-        // Free GDScript state instance if present
-        if (wrapper->gdscript_state_instance) {
-            destructors.variant_destroy(wrapper->gdscript_state_instance);
-            free(wrapper->gdscript_state_instance);
-        }
-        
-        free(wrapper);
-    }
+    if (!wrapper) return;
+
+    unregister_room_wrapper(wrapper);
+    gdext_room_events_forget(wrapper->godot_object);
+    wrapper->godot_object = NULL;
+    /* dropped from inside one of its own callbacks: the decode is still on the stack */
+    gdext_after_dispatch(room_wrapper_release, wrapper);
 }
 
 // Reference counting callbacks (unused, let Godot handle RefCounted)
@@ -269,7 +288,8 @@ void gdext_colyseus_room_leave(void* p_method_userdata, GDExtensionClassInstance
     
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
     if (wrapper && wrapper->native_room) {
-        colyseus_room_leave(wrapper->native_room, false);
+        /* consented, like the TS SDK's leave() default — else onLeave sees a drop */
+        colyseus_room_leave(wrapper->native_room, true);
     }
 }
 
@@ -425,41 +445,38 @@ void gdext_colyseus_room_set_reconnection_options(void* p_method_userdata, GDExt
 
 /*
  * get_state() - Returns the room state
- * 
- * If a GDScript schema class was set via set_state_type(), returns the typed
- * GDScript instance. Otherwise, returns a Dictionary representation.
+ *
+ * With set_state_type(GDScript class): the typed root instance — the same
+ * object on every call, kept current by the decoder (null until the room has
+ * joined). Otherwise a Dictionary snapshot, rebuilt per call.
  */
-// get_state - uses ptrcall signature like other working methods (is_connected, get_id, etc.)
-void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
-    (void)p_method_userdata;
-    (void)p_args;
-    
+void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
+    (void)p_method_userdata; (void)p_args; (void)p_argument_count; (void)r_error;
+    if (!r_return) return;
+
     ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)p_instance;
-    
-    // Create a Dictionary to return
-    Dictionary* result = (Dictionary*)r_ret;
-    constructors.dictionary_constructor(result, NULL);
-    
-    if (!wrapper || !wrapper->native_room) {
-        // Return empty dictionary
-        return;
-    }
-    
-    // Get the state from the room
-    void* state = colyseus_room_get_state(wrapper->native_room);
-    const colyseus_schema_vtable_t* vtable = wrapper->native_room->state_vtable;
-    
-    if (state && vtable) {
-        // Check if this is a dynamic schema
-        if (colyseus_vtable_is_dynamic(vtable)) {
-            colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)state;
-            colyseus_dynamic_schema_to_dictionary(dyn_schema, result);
-        } else {
-            // Static schema - convert to dictionary
-            colyseus_schema_to_dictionary((colyseus_schema_t*)state, vtable, result);
+    colyseus_schema_t* state = (wrapper && wrapper->native_room)
+        ? colyseus_room_get_state(wrapper->native_room) : NULL;
+
+    if (state && state->__vtable && colyseus_vtable_is_dynamic(state->__vtable)) {
+        colyseus_dynamic_schema_t* dyn_schema = (colyseus_dynamic_schema_t*)state;
+        if (dyn_schema->userdata) {
+            api.variant_new_copy(r_return, (Variant*)dyn_schema->userdata);
+            return;
         }
     }
-    // If no state, just return the empty dictionary we created
+    if (wrapper && wrapper->gdscript_schema_ctx && !state) {
+        gdext_variant_new_nil((Variant*)r_return);
+        return;
+    }
+
+    Dictionary result;
+    constructors.dictionary_constructor(&result, NULL);
+    if (state && state->__vtable) {
+        colyseus_schema_to_dictionary(state, state->__vtable, &result);
+    }
+    constructors.variant_from_dictionary_constructor(r_return, &result);
+    destructors.dictionary_destructor(&result);
 }
 
 /*
@@ -483,7 +500,14 @@ void gdext_colyseus_room_set_state_type(void* p_method_userdata, GDExtensionClas
     if (!wrapper) {
         return;
     }
-    
+
+    /* the decoder already runs on the current vtables; swapping them frees them */
+    if (wrapper->native_room && wrapper->native_room->serializer) {
+        gdext_push_error("Room.set_state_type() must be called before the room joins "
+                         "(right after join_or_create()/create()/join() returns); ignored.");
+        return;
+    }
+
     // Check the type of the first argument
     GDExtensionVariantType arg_type = api.variant_get_type((GDExtensionVariantPtr)p_args[0]);
     
@@ -542,8 +566,46 @@ void gdext_colyseus_room_set_state_type(void* p_method_userdata, GDExtensionClas
             wrapper->pending_vtable = vtable;
         }
     }
-    
+
     if (r_error) {
         r_error->error = GDEXTENSION_CALL_OK;
     }
+}
+
+/* First in the decoder's listener order (hooked at JOIN, before any Callbacks
+ * or Predict exists): typed collections are current by the time app
+ * callbacks run, and registrations made from here on know a decode is open. */
+static void room_change_listener(colyseus_changes_t* changes, void* userdata) {
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)userdata;
+    wrapper->decoding = true;
+    if (wrapper->gdscript_schema_ctx && wrapper->hooked_decoder) {
+        gdscript_live_apply(wrapper->gdscript_schema_ctx, wrapper->hooked_decoder->refs, changes);
+    }
+}
+
+/* The decoder's GC let go of a ref: its id is free for the server to reuse. */
+static void room_ref_collected(int ref_id, void* userdata) {
+    ColyseusRoomWrapper* wrapper = (ColyseusRoomWrapper*)userdata;
+    gdext_callbacks_ref_collected(wrapper, ref_id);
+    if (wrapper->gdscript_schema_ctx) gdscript_live_collect(wrapper->gdscript_schema_ctx, ref_id);
+}
+
+void gdext_room_hook_decoder(ColyseusRoomWrapper* wrapper) {
+    if (!wrapper || !wrapper->native_room || !wrapper->native_room->serializer) return;
+    colyseus_decoder_t* decoder = wrapper->native_room->serializer->decoder;
+    if (!decoder || decoder == wrapper->hooked_decoder) return;
+    if (!colyseus_decoder_set_trigger_callback(decoder, room_change_listener, wrapper)) {
+        gdext_push_error("Colyseus: the room's decoder has no change-listener slot left "
+                         "(COLYSEUS_DECODER_MAX_TRIGGERS); typed collections won't update");
+        return;
+    }
+    if (!colyseus_ref_tracker_add_collect_listener(decoder->refs, room_ref_collected, wrapper)) {
+        gdext_push_error("Colyseus: the room's ref tracker has no collect-listener slot left; "
+                         "removed instances keep their __ref_id");
+    }
+    wrapper->hooked_decoder = decoder;
+}
+
+void gdext_room_after_decode(ColyseusRoomWrapper* wrapper) {
+    if (wrapper) wrapper->decoding = false;
 }

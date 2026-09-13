@@ -1,9 +1,11 @@
 #include "colyseus_predict.h"
+#include "colyseus_callbacks.h"
 
 #include <colyseus/room.h>
 #include <colyseus/schema.h>
 #include <colyseus/schema/decoder.h>
 #include <colyseus/schema/ref_tracker.h>
+#include <colyseus/schema/dynamic_schema.h>
 
 #include <math.h>
 #include <stdlib.h>
@@ -41,44 +43,51 @@ static bool pv_to_bool(GDExtensionConstVariantPtr var) {
     return v != 0;
 }
 
-/* Object OR Dictionary target — both answer get("__ref_id"). */
-static int pv_ref_id(GDExtensionConstVariantPtr target) {
-    StringName get_method;
-    constructors.string_name_new_with_latin1_chars(&get_method, "get", false);
-
-    String prop_str;
-    constructors.string_new_with_utf8_chars(&prop_str, "__ref_id");
-    Variant prop_var;
-    constructors.variant_from_string_constructor(&prop_var, &prop_str);
-
-    GDExtensionConstVariantPtr args[1] = { &prop_var };
-    Variant result;
-    GDExtensionCallError error;
-    api.variant_call((GDExtensionVariantPtr)target, &get_method, args, 1, &result, &error);
-
-    destructors.string_name_destructor(&get_method);
-    destructors.variant_destroy(&prop_var);
-    destructors.string_destructor(&prop_str);
-
-    int ref_id = -1;
-    if (error.error == GDEXTENSION_CALL_OK) {
-        int64_t v = 0;
-        constructors.int_from_variant_constructor(&v, &result);
-        ref_id = (int)v;
-    }
-    destructors.variant_destroy(&result);
-    return ref_id;
-}
-
 /* Resolve a GDScript-side schema reference to the decoded C instance.
- * Exported — the reconciler binding resolves its truth instance through it. */
+ * Exported — the reconciler binding resolves its truth instance through it.
+ * Ref ids get recycled, so a removed entity's object must resolve to nothing
+ * rather than to whatever was decoded under its old id (a stale id once
+ * aliased a collection → crash). */
 colyseus_schema_t* gdext_colyseus_predict_resolve_instance(ColyseusPredictWrapper* w, GDExtensionConstVariantPtr target) {
     if (!w || !w->room || !w->room->native_room) return NULL;
-    colyseus_room_t* room = w->room->native_room;
-    if (!room->serializer || !room->serializer->decoder || !room->serializer->decoder->refs) return NULL;
-    int ref_id = pv_ref_id(target);
-    if (ref_id < 0) return NULL;
-    return (colyseus_schema_t*)colyseus_ref_tracker_get(room->serializer->decoder->refs, ref_id);
+    return gdext_resolve_schema(w->room->native_room, target);
+}
+
+/* The field as the object last received it — for an entity this room no
+ * longer tracks (removed, fading out) or never decoded. NAN when the object
+ * has no numeric field by that name. */
+static double pv_raw_field(GDExtensionConstVariantPtr target, const char* field) {
+    GDExtensionVariantType t = api.variant_get_type(target);
+    if (t != GDEXTENSION_VARIANT_TYPE_OBJECT && t != GDEXTENSION_VARIANT_TYPE_DICTIONARY) return NAN;
+
+    static StringName get_sn;
+    static bool ready = false;
+    if (!ready) {
+        constructors.string_name_new_with_latin1_chars(&get_sn, "get", false);
+        ready = true;
+    }
+    String name_str;
+    constructors.string_new_with_utf8_chars(&name_str, field);
+    Variant name_var;
+    constructors.variant_from_string_constructor(&name_var, &name_str);
+    GDExtensionConstVariantPtr args[1] = { &name_var };
+    Variant result;
+    GDExtensionCallError error;
+    api.variant_call((GDExtensionVariantPtr)target, &get_sn, args, 1, &result, &error);
+    destructors.variant_destroy(&name_var);
+    destructors.string_destructor(&name_str);
+
+    double v = NAN;
+    if (error.error == GDEXTENSION_CALL_OK) {
+        GDExtensionVariantType rt = api.variant_get_type(&result);
+        if (rt == GDEXTENSION_VARIANT_TYPE_INT || rt == GDEXTENSION_VARIANT_TYPE_FLOAT) {
+            v = pv_to_double(&result);
+        } else if (rt == GDEXTENSION_VARIANT_TYPE_BOOL) {
+            v = pv_to_bool(&result) ? 1.0 : 0.0;
+        }
+    }
+    destructors.variant_destroy(&result);
+    return v;
 }
 
 /* args[mode..angle] -> field options. 0 keeps the reference defaults. */
@@ -126,14 +135,18 @@ GDExtensionObjectPtr gdext_colyseus_predict_constructor(void* p_class_userdata) 
     return object;
 }
 
+static void predict_release(void* data) {
+    ColyseusPredictWrapper* wrapper = (ColyseusPredictWrapper*)data;
+    if (wrapper->native) colyseus_predict_free(wrapper->native);
+    gdext_colyseus_predict_free_reckon_ctxs(wrapper);
+    free(wrapper);
+}
+
 void gdext_colyseus_predict_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
     (void)p_class_userdata;
     ColyseusPredictWrapper* wrapper = (ColyseusPredictWrapper*)p_instance;
-    if (wrapper) {
-        if (wrapper->native) colyseus_predict_free(wrapper->native);
-        gdext_colyseus_predict_free_reckon_ctxs(wrapper);
-        free(wrapper);
-    }
+    /* its listeners sit on the decoder, which may be mid-decode right now */
+    if (wrapper) gdext_after_dispatch(predict_release, wrapper);
 }
 
 /* ── _ColyseusRoom.predict() ─────────────────────────────────────────── */
@@ -145,7 +158,15 @@ void gdext_colyseus_room_predict_method(void* p_method_userdata, GDExtensionClas
     if (!rw || !rw->native_room) return;
 
     colyseus_predict_t* native = colyseus_predict_for_room(rw->native_room);
-    if (!native) return;
+    if (!native) {
+        if (!rw->native_room->serializer) {
+            gdext_push_error("Colyseus.Predict.of(): the room hasn't joined yet — create it from `joined` on");
+        } else {
+            gdext_push_error("Colyseus.Predict.of(): the room's decoder has no change-listener slot left "
+                             "(COLYSEUS_DECODER_MAX_TRIGGERS); reuse Predict objects");
+        }
+        return;
+    }
 
     GDExtensionObjectPtr object = gdext_colyseus_predict_constructor(NULL);
     if (!object || !g_last_predict_wrapper) {
@@ -230,12 +251,12 @@ void gdext_colyseus_predict_value(void* p_method_userdata, GDExtensionClassInsta
         return;
     }
     ColyseusPredictWrapper* w = (ColyseusPredictWrapper*)p_instance;
-    if (!w || !w->native) return;
-    colyseus_schema_t* instance = gdext_colyseus_predict_resolve_instance(w, p_args[0]);
-    if (!instance) return;
     char* field = pv_string_to_c_str(p_args[1]);
     if (!field) return;
-    pv_return_float(r_return, colyseus_predict_value(w->native, instance, field));
+    colyseus_schema_t* instance = w && w->native ? gdext_colyseus_predict_resolve_instance(w, p_args[0]) : NULL;
+    pv_return_float(r_return, instance
+        ? colyseus_predict_value(w->native, instance, field)
+        : pv_raw_field(p_args[0], field));
     free(field);
 }
 
@@ -247,12 +268,12 @@ void gdext_colyseus_predict_value_at(void* p_method_userdata, GDExtensionClassIn
         return;
     }
     ColyseusPredictWrapper* w = (ColyseusPredictWrapper*)p_instance;
-    if (!w || !w->native) return;
-    colyseus_schema_t* instance = gdext_colyseus_predict_resolve_instance(w, p_args[0]);
-    if (!instance) return;
     char* field = pv_string_to_c_str(p_args[1]);
     if (!field) return;
+    colyseus_schema_t* instance = w && w->native ? gdext_colyseus_predict_resolve_instance(w, p_args[0]) : NULL;
     double time = pv_to_double(p_args[2]);
-    pv_return_float(r_return, colyseus_predict_value_at(w->native, instance, field, time));
+    pv_return_float(r_return, instance
+        ? colyseus_predict_value_at(w->native, instance, field, time)
+        : pv_raw_field(p_args[0], field));
     free(field);
 }

@@ -178,6 +178,7 @@ typedef struct {
     GDExtensionInterfaceCallableCustomCreate callable_custom_create;
     GDExtensionInterfaceVariantNewCopy variant_new_copy;
     GDExtensionInterfaceVariantStringify variant_stringify;
+    GDExtensionInterfacePrintError print_error;
 } GDExtensionInterface;
 
 // GDExtension interface globals
@@ -214,6 +215,30 @@ static inline void gdext_variant_set_indexed(Variant *container, GDExtensionInt 
     api.variant_set_indexed(container, index, value, &valid, &oob);
 }
 
+/*
+ * Dispatch scope — the body of Colyseus.poll() on the thread that called it.
+ *
+ * With polled sockets, decoding and every room/schema callback happen inside
+ * this scope, so signals and Callbacks are delivered synchronously (the order
+ * the TS SDK uses). Anything reached outside it — another thread, or a web
+ * socket event arriving from the browser's event loop — is queued/deferred
+ * instead. Destructors that would tear down state a callback is walking use
+ * gdext_after_dispatch() to wait for the scope to close.
+ */
+void gdext_dispatch_begin(void);
+void gdext_dispatch_end(void);
+bool gdext_in_dispatch(void);
+/* Runs fn(data) when the outermost scope closes — right away when none is open. */
+void gdext_after_dispatch(void (*fn)(void* data), void* data);
+
+/* Engine error (Output panel + debugger), printf-style. */
+void gdext_push_error(const char* fmt, ...);
+
+/* The engine's main thread (marked at extension init) — the only one allowed
+ * to touch GDScript objects outside a queued/deferred call. */
+void gdext_mark_main_thread(void);
+bool gdext_on_main_thread(void);
+
 // ColyseusClientWrapper type
 typedef struct ColyseusClientWrapper {
     colyseus_client_t* native_client;
@@ -223,15 +248,30 @@ typedef struct ColyseusClientWrapper {
 
 // Forward declaration for GDScript schema context
 typedef struct gdscript_schema_context gdscript_schema_context_t;
+struct ColyseusCallbacksWrapper;
+struct colyseus_decoder;
 
-// ColyseusRoomWrapper type (forward declaration)
-typedef struct {
+typedef struct ColyseusRoomWrapper {
     colyseus_room_t* native_room;
-    GDExtensionObjectPtr godot_object;
+    GDExtensionObjectPtr godot_object;               // NULL once the object is gone
     const colyseus_schema_vtable_t* pending_vtable;  // Vtable to set when native room is assigned
     gdscript_schema_context_t* gdscript_schema_ctx;  // GDScript schema context (if using GDScript classes)
-    Variant* gdscript_state_instance;                 // GDScript state instance (for get_state())
+    struct ColyseusCallbacksWrapper* callbacks;      // Callbacks.of(room) instances, linked via next_in_room
+    struct colyseus_decoder* hooked_decoder;         // decoder our change listener sits on
+    bool join_pending;                               // `joined` held until the JOIN message is fully handled
+    bool decoding;                                   // from a decode's change listeners to its state_changed
 } ColyseusRoomWrapper;
+
+/* Emits `joined`, then registers the Callbacks buffered before it. */
+void gdext_room_deliver_joined(ColyseusRoomWrapper* room_wrapper);
+/* JOIN: puts the room's change listener on its (just created) decoder. */
+void gdext_room_hook_decoder(ColyseusRoomWrapper* room_wrapper);
+/* After a decode and its GC: ends the decode window. */
+void gdext_room_after_decode(ColyseusRoomWrapper* room_wrapper);
+/* Rooms whose JOIN arrived this poll without a state after it. */
+void gdext_rooms_flush_joined(void);
+/* Drops queued events aimed at a room object that is going away. */
+void gdext_room_events_forget(GDExtensionObjectPtr room_object);
 
 // ColyseusClient methods
 GDExtensionObjectPtr gdext_colyseus_client_constructor(void* p_class_userdata);
@@ -311,8 +351,8 @@ void gdext_colyseus_room_is_connected(void* p_method_userdata, GDExtensionClassI
 void gdext_colyseus_room_is_reconnecting(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 void gdext_colyseus_room_set_reconnection_options(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 
-// get_state() - returns current state as Dictionary (uses ptrcall signature like other methods)
-void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
+// get_state() - the typed root instance with set_state_type(GDScript class), else a Dictionary snapshot
+void gdext_colyseus_room_get_state(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);
 
 // set_state_type(type) - sets the schema vtable for state decoding
 // Accepts either:

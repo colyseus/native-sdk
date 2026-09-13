@@ -208,14 +208,8 @@ func test_join_by_id():
 	var room_id = room.get_id()
 	assert_gt(room_id.length(), 0, "Room should have an ID")
 
-	# Leave first room
-	room.leave()
-	_left_received = false
-	room.left.connect(_on_left)
-	start = Time.get_ticks_msec()
-	while not _left_received and (Time.get_ticks_msec() - start) < 3000:
-		Colyseus.poll()
-		OS.delay_msec(10)
+	# join while the first client is still in: a consented leave disposes the empty room
+	var first := room
 	room = null
 
 	# Now join by ID
@@ -231,6 +225,7 @@ func test_join_by_id():
 		OS.delay_msec(10)
 	assert_true(_joined, "Should join via join_by_id()")
 	assert_eq(room.get_id(), room_id, "Should join the same room")
+	first.leave()
 
 # =============================================================================
 # Error

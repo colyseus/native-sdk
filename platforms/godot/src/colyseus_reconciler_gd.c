@@ -6,6 +6,7 @@
 #include <colyseus/schema/field_access.h>
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -101,8 +102,26 @@ GDExtensionBool gdext_colyseus_sim_state_get(GDExtensionClassInstancePtr p_insta
     colyseus_field_ref_t f;
     bool ok = colyseus_vtable_find_field(w->target->__vtable, name, &f);
     if (ok && colyseus_field_ref_is_scalar(&f)) {
+        /* the schema's own type: ints index arrays, bools test plainly */
         double v = colyseus_schema_read_field(w->target, &f);
-        constructors.variant_from_float_constructor(r_ret, &v);
+        switch (f.type) {
+            case COLYSEUS_FIELD_INT8: case COLYSEUS_FIELD_INT16:
+            case COLYSEUS_FIELD_INT32: case COLYSEUS_FIELD_INT64:
+            case COLYSEUS_FIELD_UINT8: case COLYSEUS_FIELD_UINT16:
+            case COLYSEUS_FIELD_UINT32: case COLYSEUS_FIELD_UINT64: {
+                int64_t iv = (int64_t)v;
+                constructors.variant_from_int_constructor(r_ret, &iv);
+                break;
+            }
+            case COLYSEUS_FIELD_BOOLEAN: {
+                GDExtensionBool bv = v != 0 ? 1 : 0;
+                constructors.variant_from_bool_constructor(r_ret, &bv);
+                break;
+            }
+            default:
+                constructors.variant_from_float_constructor(r_ret, &v);
+                break;
+        }
     } else if (ok && f.type == COLYSEUS_FIELD_STRING) {
         /* string fields read-only (owner ids etc.) */
         const char* sv = NULL;
@@ -138,9 +157,37 @@ GDExtensionObjectPtr gdext_colyseus_step_ctx_constructor(void* p_class_userdata)
     return w->godot_object;
 }
 
+static void memo_slot_clear(ColyseusMemoSlot* s) {
+    for (int i = 0; i < s->count; i++) {
+        free(s->keys[i]);
+        destructors.variant_destroy(&s->values[i]);
+    }
+    s->count = 0;
+}
+
 void gdext_colyseus_step_ctx_destructor(void* p_class_userdata, GDExtensionClassInstancePtr p_instance) {
     (void)p_class_userdata;
-    free((ColyseusStepCtxWrapper*)p_instance);
+    ColyseusStepCtxWrapper* w = (ColyseusStepCtxWrapper*)p_instance;
+    if (!w) return;
+    for (int i = 0; i < w->memo_slots; i++) {
+        memo_slot_clear(&w->memos[i]);
+        free(w->memos[i].keys);
+        free(w->memos[i].values);
+    }
+    free(w->memos);
+    free(w);
+}
+
+/* One slot per seq the rollback can still replay. */
+static void gd_memo_init(ColyseusStepCtxWrapper* w, colyseus_input_handle_t* input) {
+    if (!w) return;
+    int slots = input ? colyseus_input_handle_replay_buffer_size(input) : 0;
+    if (slots < 64) slots = 64;
+    w->memos = (ColyseusMemoSlot*)calloc((size_t)slots, sizeof(ColyseusMemoSlot));
+    if (!w->memos) return;
+    for (int i = 0; i < slots; i++) w->memos[i].seq = -1;
+    w->memo_slots = slots;
+    w->input = input;
 }
 
 ColyseusStepCtxWrapper* gdext_colyseus_step_ctx_last_wrapper(void) { return g_last_step_ctx; }
@@ -336,6 +383,7 @@ void gdext_colyseus_predict_reconciler_method(void* p_method_userdata, GDExtensi
     {
         GDExtensionObjectPtr ctx_obj = gdext_colyseus_step_ctx_constructor(NULL);
         w->ctx_w = gdext_colyseus_step_ctx_last_wrapper();
+        gd_memo_init(w->ctx_w, input_w->native);
         GDExtensionObjectPtr state_obj = gdext_colyseus_sim_state_constructor(NULL);
         w->state_w = gdext_colyseus_sim_state_last_wrapper();
         GDExtensionObjectPtr cmd_obj = gdext_colyseus_sim_state_constructor(NULL);
@@ -470,6 +518,7 @@ void gdext_colyseus_predict_sim_method(void* p_method_userdata, GDExtensionClass
 
         GDExtensionObjectPtr ctx_obj = gdext_colyseus_step_ctx_constructor(NULL);
         w->ctx_w = gdext_colyseus_step_ctx_last_wrapper();
+        gd_memo_init(w->ctx_w, input_w->native);
         GDExtensionObjectPtr cmd_obj = gdext_colyseus_sim_state_constructor(NULL);
         w->cmd_w = gdext_colyseus_sim_state_last_wrapper();
         GDExtensionObjectPtr world_obj = gdext_colyseus_sim_world_constructor(NULL);
@@ -724,109 +773,109 @@ void gdext_colyseus_event_clear(void* p_method_userdata, GDExtensionClassInstanc
 
 /* ── step-context memo / predict ─────────────────────────────────────── */
 
-typedef struct { GDExtensionConstVariantPtr callable; } memo_call_t;
-
-static double memo_compute_tramp(void* userdata) {
-    memo_call_t* mc = (memo_call_t*)userdata;
-    Variant ret;
-    GDExtensionCallError err;
-    api.variant_call((GDExtensionVariantPtr)mc->callable, rc_call_sn(), NULL, 0, &ret, &err);
-    double v = NAN;
-    if (err.error == GDEXTENSION_CALL_OK) constructors.float_from_variant_constructor(&v, &ret);
-    destructors.variant_destroy(&ret);
-    return v;
+/* The live step claims the seq's slot; a replay only reads it. NULL = no memo. */
+static ColyseusMemoSlot* memo_slot(ColyseusStepCtxWrapper* w, bool claim) {
+    if (!w->memos || w->memo_slots <= 0) return NULL;
+    int seq = w->ctx->tick;
+    int epoch = w->input ? colyseus_input_handle_epoch(w->input) : 0;
+    ColyseusMemoSlot* s = &w->memos[((seq % w->memo_slots) + w->memo_slots) % w->memo_slots];
+    if (s->seq == seq && s->epoch == epoch) return s;
+    if (!claim) return NULL;
+    memo_slot_clear(s);
+    s->seq = seq;
+    s->epoch = epoch;
+    return s;
 }
 
-static int memo_vec_compute_tramp(double* out, void* userdata) {
-    memo_call_t* mc = (memo_call_t*)userdata;
+static Variant* memo_lookup(ColyseusMemoSlot* s, const char* key) {
+    for (int i = 0; i < s->count; i++) {
+        if (strcmp(s->keys[i], key) == 0) return &s->values[i];
+    }
+    return NULL;
+}
+
+static void memo_store(ColyseusMemoSlot* s, const char* key, const Variant* value) {
+    Variant* existing = memo_lookup(s, key);
+    if (existing) {
+        gdext_variant_assign(existing, value);
+        return;
+    }
+    if (s->count == s->capacity) {
+        int capacity = s->capacity ? s->capacity * 2 : 4;
+        char** keys = (char**)realloc(s->keys, (size_t)capacity * sizeof(char*));
+        if (!keys) return;
+        s->keys = keys;
+        Variant* values = (Variant*)realloc(s->values, (size_t)capacity * sizeof(Variant));
+        if (!values) return;
+        s->values = values;
+        s->capacity = capacity;
+    }
+    s->keys[s->count] = strdup(key);
+    api.variant_new_copy(&s->values[s->count], value);
+    s->count++;
+}
+
+/* memo / memo_vec: the compute Callable runs ONCE, on the live step for this
+ * seq; its Variant is frozen and handed back on every replay of the seq. */
+static void step_ctx_memo(ColyseusStepCtxWrapper* w, const GDExtensionConstVariantPtr* p_args,
+    const char* namespace_prefix, Variant* out) {
+    char* raw_key = rc_string_to_c_str(p_args[0]);
+    if (!raw_key) return;
+    size_t len = strlen(namespace_prefix) + strlen(raw_key) + 1;
+    char* key = (char*)malloc(len);
+    if (!key) { free(raw_key); return; }
+    snprintf(key, len, "%s%s", namespace_prefix, raw_key);
+    free(raw_key);
+
+    if (w->ctx->is_replay) {
+        ColyseusMemoSlot* s = memo_slot(w, false);
+        Variant* frozen = s ? memo_lookup(s, key) : NULL;
+        if (frozen) gdext_variant_assign(out, frozen);
+        free(key);
+        return;
+    }
     Variant ret;
     GDExtensionCallError err;
-    api.variant_call((GDExtensionVariantPtr)mc->callable, rc_call_sn(), NULL, 0, &ret, &err);
-    int count = 0;
-    if (err.error == GDEXTENSION_CALL_OK
-        && api.variant_get_type(&ret) == GDEXTENSION_VARIANT_TYPE_ARRAY) {
-        Array arr;
-        constructors.array_from_variant_constructor(&arr, &ret);
-        static StringName size_sn;
-        static bool size_ready = false;
-        if (!size_ready) {
-            constructors.string_name_new_with_latin1_chars(&size_sn, "size", false);
-            size_ready = true;
-        }
-        Variant size_ret;
-        int64_t n = 0;
-        api.variant_call(&ret, &size_sn, NULL, 0, &size_ret, &err);
-        if (err.error == GDEXTENSION_CALL_OK) constructors.int_from_variant_constructor(&n, &size_ret);
-        destructors.variant_destroy(&size_ret);
-        if (n > COLYSEUS_MEMO_VEC_MAX) n = COLYSEUS_MEMO_VEC_MAX;
-        for (int64_t i = 0; i < n; i++) {
-            double v = 0;
-            constructors.float_from_variant_constructor(&v, api.array_operator_index(&arr, i));
-            out[count++] = v;
-        }
-        destructors.array_destructor(&arr);
-    }
-    destructors.variant_destroy(&ret);
-    return count;
+    api.variant_call((GDExtensionVariantPtr)p_args[1], rc_call_sn(), NULL, 0, &ret, &err);
+    if (err.error != GDEXTENSION_CALL_OK) gdext_variant_new_nil(&ret);
+    ColyseusMemoSlot* s = memo_slot(w, true);
+    if (s) memo_store(s, key, &ret);
+    gdext_variant_move_assign(out, &ret);
+    free(key);
 }
 
 void gdext_colyseus_step_ctx_memo(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
     (void)p_method_userdata;
-    double nanv = NAN;
-    if (r_return) constructors.variant_from_float_constructor(r_return, &nanv);
+    if (!r_return) return;
+    gdext_variant_new_nil((Variant*)r_return);
     if (p_argument_count < 2) {
         if (r_error) { r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS; r_error->argument = 2; }
         return;
     }
     ColyseusStepCtxWrapper* w = (ColyseusStepCtxWrapper*)p_instance;
     if (!w || !w->ctx) return;
-    char* key = rc_string_to_c_str(p_args[0]);
-    if (!key) return;
-    memo_call_t mc = { p_args[1] };
-    double v = colyseus_step_memo(w->ctx, key, memo_compute_tramp, &mc);
-    if (r_return) constructors.variant_from_float_constructor(r_return, &v);
-    free(key);
+    step_ctx_memo(w, p_args, "", (Variant*)r_return);
 }
 
 void gdext_colyseus_step_ctx_memo_vec(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
     (void)p_method_userdata;
-    if (r_return) gdext_variant_new_nil((Variant*)r_return);
+    if (!r_return) return;
+    gdext_variant_new_nil((Variant*)r_return);
     if (p_argument_count < 2) {
         if (r_error) { r_error->error = GDEXTENSION_CALL_ERROR_TOO_FEW_ARGUMENTS; r_error->argument = 2; }
-        return;
+    } else {
+        ColyseusStepCtxWrapper* w = (ColyseusStepCtxWrapper*)p_instance;
+        if (w && w->ctx) step_ctx_memo(w, p_args, "[]", (Variant*)r_return);
     }
-    ColyseusStepCtxWrapper* w = (ColyseusStepCtxWrapper*)p_instance;
-    if (!w || !w->ctx || !r_return) return;
-    char* key = rc_string_to_c_str(p_args[0]);
-    if (!key) return;
-    memo_call_t mc = { p_args[1] };
-    double out[COLYSEUS_MEMO_VEC_MAX];
-    int count = colyseus_step_memo_vec(w->ctx, key, memo_vec_compute_tramp, &mc, out);
-    free(key);
-
-    /* results as a Godot Array of floats (empty = nothing this seq) */
-    Array arr;
-    constructors.array_constructor((GDExtensionTypePtr)&arr, NULL);
-    Variant arr_var;
-    constructors.variant_from_array_constructor(&arr_var, &arr);
-    static StringName append_sn;
-    static bool append_ready = false;
-    if (!append_ready) {
-        constructors.string_name_new_with_latin1_chars(&append_sn, "append", false);
-        append_ready = true;
+    /* always an Array: [] means nothing this seq */
+    if (api.variant_get_type(r_return) != GDEXTENSION_VARIANT_TYPE_ARRAY) {
+        Array arr;
+        constructors.array_constructor((GDExtensionTypePtr)&arr, NULL);
+        Variant arr_var;
+        constructors.variant_from_array_constructor(&arr_var, &arr);
+        gdext_variant_move_assign((Variant*)r_return, &arr_var);
+        destructors.array_destructor(&arr);
     }
-    for (int i = 0; i < count; i++) {
-        Variant v;
-        constructors.variant_from_float_constructor(&v, &out[i]);
-        GDExtensionConstVariantPtr args[1] = { &v };
-        Variant ret;
-        GDExtensionCallError err;
-        api.variant_call(&arr_var, &append_sn, args, 1, &ret, &err);
-        destructors.variant_destroy(&ret);
-        destructors.variant_destroy(&v);
-    }
-    gdext_variant_move_assign((Variant*)r_return, &arr_var);
-    destructors.array_destructor(&arr);
 }
 
 void gdext_colyseus_step_ctx_predict_event(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {

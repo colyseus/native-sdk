@@ -63,9 +63,21 @@ static func callbacks(room) -> Callbacks:
 ##   
 ##   room.set_state_type(RoomState)
 
-## Wraps native ColyseusCallbacks so users can type `var callbacks: Colyseus.Callbacks`.
+## Schema change callbacks over a room's state (`var callbacks: Colyseus.Callbacks`).
+##
+## Register whenever it suits you — right after join/create returns works:
+## root registrations made before the room joins are held and go live right
+## after `joined`, replaying what is already there (listen fires with the
+## current value, on_add once per existing item).
+##
+## Delivery is synchronous inside Colyseus.poll(), in wire order: `joined`,
+## then the first state's on_add/listen, then `state_changed`; each later
+## patch fires its callbacks, then `state_changed`. Every registration method
+## returns a handle for remove(), or -1 (with an engine error) when the
+## target isn't a live instance of this room or the field doesn't exist.
 class Callbacks extends RefCounted:
 	var _native
+	var _room ## the decoder these callbacks hook lives in the room
 
 	static func of(room) -> Callbacks:
 		var native_room = room._native if room is Room else room
@@ -81,6 +93,7 @@ class Callbacks extends RefCounted:
 			if native_cb:
 				var cb = Callbacks.new()
 				cb._native = native_cb
+				cb._room = native_room
 				return cb
 		push_error("Colyseus: ColyseusCallbacks not available. Make sure the GDExtension is properly loaded.")
 		return null
@@ -148,6 +161,11 @@ class Schema extends RefCounted:
 	const FLOAT32 = "float32"
 	## 64-bit float
 	const FLOAT64 = "float64"
+	## Bounded float carried as a fixed-width integer — the server's
+	## `t.quantized(...)`. Pass the same options as the Field's third
+	## argument: `Field.new("yaw", QUANTIZED, {"min": 0.0, "max": TAU, "mode": "wrap"})`
+	## (`bits` 8/16/32, default 16; `mode` "clamp" (default) or "wrap").
+	const QUANTIZED = "quantized"
 	
 	## Map collection type (key-value pairs)
 	const MAP = "map"
@@ -166,7 +184,10 @@ class Schema extends RefCounted:
 		var name: String
 		## Field type (one of the type constants above)
 		var type: String
-		## For collections (MAP, ARRAY) or REF: the child type (class reference or primitive type)
+		## For collections (MAP, ARRAY) or REF: the child type (class reference
+		## or primitive type). For QUANTIZED: its options Dictionary.
+		## A typed map/array field decodes into a plain Dictionary/Array that
+		## stays live — the same object, updated as the server changes it.
 		var child_type = null
 		## For MAP: the key type (defaults to STRING)
 		var key_type: String = Colyseus.Schema.STRING
@@ -196,7 +217,8 @@ class Schema extends RefCounted:
 	# =========================================================================
 	# Schema instance members
 	# =========================================================================
-	## Internal: Reference ID assigned by the decoder
+	## Internal: Reference ID assigned by the decoder; back to -1 once the
+	## entity is removed (ids are recycled for later entities).
 	var __ref_id: int = -1
 	## Internal: Stores field values by name
 	var __fields: Dictionary = {}
@@ -483,7 +505,7 @@ class _Poller extends Node:
 
 ## Check if a type string represents a primitive type
 static func is_primitive_type(type_str: String) -> bool:
-	return type_str in [Schema.STRING, Schema.NUMBER, Schema.BOOLEAN, Schema.INT8, Schema.UINT8, Schema.INT16, Schema.UINT16, Schema.INT32, Schema.UINT32, Schema.INT64, Schema.UINT64, Schema.FLOAT32, Schema.FLOAT64]
+	return type_str in [Schema.STRING, Schema.NUMBER, Schema.BOOLEAN, Schema.INT8, Schema.UINT8, Schema.INT16, Schema.UINT16, Schema.INT32, Schema.UINT32, Schema.INT64, Schema.UINT64, Schema.FLOAT32, Schema.FLOAT64, Schema.QUANTIZED]
 
 ## Check if a type string represents a collection type
 static func is_collection_type(type_str: String) -> bool:
@@ -494,12 +516,17 @@ static func get_default_value(type_str: String):
 	match type_str:
 		Schema.STRING:
 			return ""
-		Schema.NUMBER, Schema.FLOAT32, Schema.FLOAT64:
+		Schema.NUMBER, Schema.FLOAT32, Schema.FLOAT64, Schema.QUANTIZED:
 			return 0.0
 		Schema.BOOLEAN:
 			return false
 		Schema.INT8, Schema.UINT8, Schema.INT16, Schema.UINT16, Schema.INT32, Schema.UINT32, Schema.INT64, Schema.UINT64:
 			return 0
+		# the decoder adopts these empty ones as the live containers
+		Schema.MAP:
+			return {}
+		Schema.ARRAY:
+			return []
 		_:
 			return null
 
@@ -631,9 +658,19 @@ class Room extends RefCounted:
 	func set_reconnection_options(options: Dictionary) -> void:
 		_native.set_reconnection_options(options)
 
+	## With set_state_type(YourSchema): the typed root — the same object on
+	## every call, kept current by the decoder; its map/array fields are live
+	## Dictionaries/Arrays. null until the room joins. Without a schema class:
+	## a Dictionary snapshot, rebuilt per call.
 	func get_state() -> Variant:
 		return _native.get_state()
 
+	## Same as get_state().
+	var state: Variant:
+		get: return _native.get_state()
+
+	## Decode into your Colyseus.Schema classes. Call it right after
+	## join/create returns — once the room has joined it is ignored.
 	func set_state_type(state_type) -> void:
 		_native.set_state_type(state_type)
 
@@ -663,8 +700,8 @@ class Room extends RefCounted:
 	## split evenly across the two directions, so `delay_ms` is what
 	## clock.smoothed_rtt() converges to — the same meaning the JS SDK's
 	## __net() has. Never reorders; the handshake is never delayed (call
-	## after join). Call net_pump() once per frame, right after
-	## Colyseus.poll(), or delayed packets never deliver.
+	## after join). Colyseus.poll() releases due packets every frame;
+	## net_pump() only releases them again mid-frame.
 	func set_latency(delay_ms: float, jitter_ms := 0.0) -> void:
 		_native.set_latency(delay_ms, jitter_ms)
 
@@ -773,7 +810,7 @@ class Clock extends RefCounted:
 
 ## Smoothed reads over decoded entities you DON'T control. One read idiom:
 ## `predict.value(instance, "x")` — lerp / damped / extrapolate / raw per
-## attached field, raw fallback when untracked, NAN for unknown fields.
+## attached field, the plain decoded value otherwise (see value()).
 ##
 ##   var predict = Colyseus.Predict.of(room)
 ##   predict.attach_all("players", {
@@ -846,6 +883,10 @@ class Predict extends RefCounted:
 			now_ms = _room_native.clock_now()
 		return _native.tick(now_ms)
 
+	## The smoothed value of an attached field; the decoded value of any
+	## other numeric field; for an entity that was removed (or that this room
+	## never decoded) the last value the object received. NAN only when
+	## `field` isn't a numeric field of `instance`.
 	func value(instance, field: String) -> float:
 		return _native.value(instance, field)
 
@@ -857,7 +898,18 @@ class Predict extends RefCounted:
 	## same deterministic function the server runs, written in GDScript — it
 	## receives (ctx, state, cmd) where `state` is the predicted mirror
 	## (mutate it: `state.x += state.vx * ctx.dt`) and `cmd` the input being
-	## applied. Options: input (InputHandle), fields (Array[String]),
+	## applied. Mirror and cmd fields read back as their schema type: int for
+	## integer fields, bool for booleans, float otherwise.
+	##
+	## Anything the step derives from the world outside the mirror can't be
+	## re-derived on replay — freeze it per input with
+	## `ctx.memo(key, func(): return ...)`: the Callable runs once, on the live
+	## step, and any Variant it returns (a Dictionary, an Array, an int…) comes
+	## back unchanged on every replay of that input (null if that input never
+	## memoized `key`). Treat the result as read-only. `ctx.memo_vec` is the
+	## same for Array results and returns [] instead of null.
+	##
+	## Options: input (InputHandle), fields (Array[String]),
 	## smooth_ms (-1 = default), snap (0 = off), step (Callable).
 	func reconciler(instance, opts: Dictionary) -> Reconciler:
 		var input = opts.get("input")

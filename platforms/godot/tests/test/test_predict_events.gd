@@ -10,6 +10,8 @@ const GOAL_Y := 21.0
 const GOAL_H := 18.0
 const COOLDOWN_TICKS := 50
 
+const Playground = preload("res://helpers/playground.gd")
+
 var client: Colyseus.Client
 var room: Colyseus.Room
 var _joined := false
@@ -19,7 +21,7 @@ var _rejected := 0
 var _goals   # EventChannel — the step callable reaches it through self
 
 func before_all():
-	client = Colyseus.Client.new("ws://127.0.0.1:5173")
+	client = Colyseus.Client.new(Playground.url())
 
 func after_all():
 	client = null

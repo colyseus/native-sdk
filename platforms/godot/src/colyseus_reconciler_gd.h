@@ -2,6 +2,7 @@
 #define COLYSEUS_GODOT_RECONCILER_H
 
 #include "godot_colyseus.h"
+#include <colyseus/input_handle.h>
 #include <colyseus/predict/reconciler.h>
 #include <colyseus/predict/sim_reconciler.h>
 #include <colyseus/predict/events.h>
@@ -30,9 +31,22 @@ typedef struct {
     GDExtensionObjectPtr godot_object;
 } ColyseusSimStateWrapper;
 
+/* One seq's memos. Valid while seq AND input epoch match: a reconnect resets
+ * the input handle and restarts seqs, which must not replay old memos. */
+typedef struct {
+    int seq;                 /* -1 = empty */
+    int epoch;
+    int count, capacity;
+    char** keys;             /* owned */
+    Variant* values;         /* owned */
+} ColyseusMemoSlot;
+
 typedef struct {
     const colyseus_step_ctx_t* ctx;
     GDExtensionObjectPtr godot_object;
+    colyseus_input_handle_t* input;    /* borrowed: epoch for memo validity */
+    ColyseusMemoSlot* memos;           /* ring by seq, sized to the replay window */
+    int memo_slots;
 } ColyseusStepCtxWrapper;
 
 #define COLYSEUS_GD_MAX_PARTS 8
@@ -119,8 +133,11 @@ void gdext_colyseus_event_pending_count(void* p_method_userdata, GDExtensionClas
 void gdext_colyseus_event_clear(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret);
 
 /* step-context extras (vararg):
- *   memo(key, compute) -> float        — frozen on the live step, replayed after
- *   memo_vec(key, compute) -> Array    — one derivation for a whole tuple
+ *   memo(key, compute) -> Variant      — compute runs on the live step, its result
+ *                                        (any Variant) is frozen and returned on
+ *                                        every replay of that seq; null when a
+ *                                        replayed seq never memoized the key
+ *   memo_vec(key, compute) -> Array    — memo() for an Array result; [] when absent
  *   predict(channel, key)              — sim-born optimistic event (live-only)
  */
 void gdext_colyseus_step_ctx_memo(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error);

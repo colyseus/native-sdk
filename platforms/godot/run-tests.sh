@@ -59,8 +59,12 @@ source "$ROOT_DIR/../../tests/dev-servers.sh"
 servers_ensure --room my_room --room view_test_room example-server 2567 "$ROOT_DIR/../../example-server" \
     npx tsx src/index.ts || warn "tests that need :2567 will fail"
 # the predict/input suites join the playground's lab rooms, not example-server
-servers_ensure --room lab-move playground 5173 "$ROOT_DIR/../../../demos/prediction-tools" \
-    npx vite --port 5173 --strictPort --host 0.0.0.0 || warn "predict suites will fail without :5173"
+# COLYSEUS_PLAYGROUND_PORT moves it off :5173 when another dev server holds that
+# port; the suites read the same variable (tests/helpers/playground.gd)
+export COLYSEUS_PLAYGROUND_PORT="${COLYSEUS_PLAYGROUND_PORT:-5173}"
+servers_ensure --room lab-move playground "$COLYSEUS_PLAYGROUND_PORT" "$ROOT_DIR/../../../demos/prediction-tools" \
+    npx vite --port "$COLYSEUS_PLAYGROUND_PORT" --strictPort --host 0.0.0.0 \
+    || warn "predict suites will fail without :$COLYSEUS_PLAYGROUND_PORT"
 
 TLS_DIR="$TEST_DIR/tls"
 if [[ ! -f "$TLS_DIR/server.pem" ]]; then
