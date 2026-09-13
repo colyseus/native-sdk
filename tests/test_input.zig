@@ -211,8 +211,9 @@ test "handle_reliable_stamped_both" {
     NOW = 1493.4; // serverNow = 1033.4 → stamp 1033
     _ = c.colyseus_input_handle_send(ctx.handle);
 
-    // [19|0x80][varint Δreckon][uint16 renderDelta=90][delta body]
-    try expectFrame(0, &[_]u8{ 147, 205, 232, 3, 90, 0, 128, 202, 0, 0, 192, 63 });
+    // [19|0x80][varint Δreckon][uint16 renderDelta=90][delta body] — the first
+    // body carries every struct field, zeros included
+    try expectFrame(0, &[_]u8{ 147, 205, 232, 3, 90, 0, 128, 202, 0, 0, 192, 63, 129, 0, 130, 0, 131, 0 });
     try expectFrame(1, &[_]u8{ 147, 17, 90, 0, 128, 2 });
     try expectFrame(2, &[_]u8{ 147, 16, 90, 0 });
 
@@ -237,7 +238,7 @@ test "handle_reliable_stamped_render_only" {
     ctx.instance.*.vx = 2;
     _ = c.colyseus_input_handle_send(ctx.handle);
 
-    try expectFrame(0, &[_]u8{ 147, 205, 142, 3, 128, 202, 0, 0, 192, 63 });
+    try expectFrame(0, &[_]u8{ 147, 205, 142, 3, 128, 202, 0, 0, 192, 63, 129, 0, 130, 0, 131, 0 });
     try expectFrame(1, &[_]u8{ 147, 50, 128, 2 });
     try testing.expectEqual(@as(f64, 0), c.colyseus_input_handle_reckon_time_at(ctx.handle, 1)); // reckon ring off
 }
@@ -253,7 +254,7 @@ test "handle_unstamped_before_sync" {
 
     ctx.instance.*.vx = 1;
     _ = c.colyseus_input_handle_send(ctx.handle);
-    try expectFrame(0, &[_]u8{ 147, 0, 0, 0, 128, 1 });
+    try expectFrame(0, &[_]u8{ 147, 0, 0, 0, 128, 1, 129, 0, 130, 0, 131, 0 });
 }
 
 test "handle_unreliable" {
@@ -272,8 +273,8 @@ test "handle_unreliable" {
     try testing.expectEqual(@as(c_int, 2), c.colyseus_input_handle_sent_count(ctx.handle));
 
     // [20][baseSeq][len][slot]… — unreliable is never stamped
-    try expectFrame(0, &[_]u8{ 20, 1, 6, 128, 202, 0, 0, 192, 63 });
-    try expectFrame(1, &[_]u8{ 20, 1, 6, 128, 202, 0, 0, 192, 63, 6, 128, 202, 0, 0, 32, 64 });
+    try expectFrame(0, &[_]u8{ 20, 1, 12, 128, 202, 0, 0, 192, 63, 129, 0, 130, 0, 131, 0 });
+    try expectFrame(1, &[_]u8{ 20, 1, 12, 128, 202, 0, 0, 192, 63, 129, 0, 130, 0, 131, 0, 6, 128, 202, 0, 0, 32, 64 });
 }
 
 test "handle_ack_rtt" {
@@ -419,25 +420,69 @@ fn roomStubIsOpen(transport: [*c]const c.colyseus_transport_t) callconv(.c) bool
 
 var room_stub_transport = std.mem.zeroInit(c.colyseus_transport_t, .{});
 
-test "room_input_options_and_timed_routing" {
+// JOIN_ROOM fixture with INPUT_REFLECTION (number fields x, y) + INPUT_OPTIONS
+// sections (flags FIXED|PATCH|SUB, tickRate 20, patchRate 50, subSteps 2) —
+// from PORTING/generate-phase0-fixtures.cts.
+const p0_join = [_]u8{ 10, 6, 116, 111, 107, 49, 50, 51, 6, 115, 99, 104, 101, 109, 97, 49, 128, 1, 255, 1, 128, 0, 2, 255, 2, 128, 0, 130, 3, 255, 3, 128, 0, 4, 128, 1, 5, 255, 4, 128, 163, 109, 115, 103, 129, 166, 115, 116, 114, 105, 110, 103, 255, 5, 128, 161, 110, 129, 166, 110, 117, 109, 98, 101, 114, 1, 47, 128, 1, 255, 1, 128, 0, 2, 255, 2, 128, 0, 130, 3, 255, 3, 128, 0, 4, 128, 1, 5, 255, 4, 128, 161, 120, 129, 166, 110, 117, 109, 98, 101, 114, 255, 5, 128, 161, 121, 129, 166, 110, 117, 109, 98, 101, 114, 2, 4, 14, 20, 50, 2 };
+
+fn joinedP0Room() *c.colyseus_room_t {
     useScriptedNow();
     room_sent_count = 0;
     room_stub_transport.send = roomStubSend;
     room_stub_transport.is_open = roomStubIsOpen;
-
     const room = c.colyseus_room_create("phase0", null).?;
     c.colyseus_room_set_state_type(room, &c.p0_state_vtable);
     room.*.transport = &room_stub_transport;
-    defer {
-        room.*.transport = null; // the stub is not heap-allocated
-        c.colyseus_room_free(room);
-    }
+    c.colyseus_room_process_message(room, &p0_join, p0_join.len);
+    return room;
+}
 
-    // JOIN_ROOM fixture with INPUT_REFLECTION + INPUT_OPTIONS sections
-    // (flags FIXED|PATCH|SUB, tickRate 20, patchRate 50, subSteps 2) —
-    // from PORTING/generate-phase0-fixtures.cts.
-    const join = [_]u8{ 10, 6, 116, 111, 107, 49, 50, 51, 6, 115, 99, 104, 101, 109, 97, 49, 128, 1, 255, 1, 128, 0, 2, 255, 2, 128, 0, 130, 3, 255, 3, 128, 0, 4, 128, 1, 5, 255, 4, 128, 163, 109, 115, 103, 129, 166, 115, 116, 114, 105, 110, 103, 255, 5, 128, 161, 110, 129, 166, 110, 117, 109, 98, 101, 114, 1, 47, 128, 1, 255, 1, 128, 0, 2, 255, 2, 128, 0, 130, 3, 255, 3, 128, 0, 4, 128, 1, 5, 255, 4, 128, 161, 120, 129, 166, 110, 117, 109, 98, 101, 114, 255, 5, 128, 161, 121, 129, 166, 110, 117, 109, 98, 101, 114, 2, 4, 14, 20, 50, 2 };
-    c.colyseus_room_process_message(room, &join, join.len);
+fn freeP0Room(room: *c.colyseus_room_t) void {
+    room.*.transport = null; // the stub is not heap-allocated
+    c.colyseus_room_free(room);
+}
+
+fn lastRoomFrame() []const u8 {
+    return room_sent_frames[room_sent_count - 1][0..room_sent_lens[room_sent_count - 1]];
+}
+
+// The server's fresh input holds `undefined` for any field no frame has carried
+// yet, and a defineInput `sanitize` range turns that into its minimum — a
+// client staging moveX = 0 drove the server at moveX = -1 until the first
+// non-zero key. This client reads an unassigned field as 0, so the first frame
+// carries every field, defaults included.
+test "input_first_frame_carries_every_field" {
+    // codegen'd struct: every field holds a value, so the first frame carries all
+    const instance = c.move_input_create().?;
+    defer c.move_input_vtable.destroy.?(@ptrCast(instance));
+    const encoder = c.colyseus_input_encoder_create(
+        @ptrCast(instance), &c.move_input_vtable, false, 0).?;
+    defer c.colyseus_input_encoder_free(encoder);
+    var out_len: usize = 0;
+    var out = c.colyseus_input_encoder_encode(encoder, &out_len);
+    try testing.expectEqualSlices(u8, &[_]u8{ 128, 0, 129, 0, 130, 0, 131, 0 }, out[0..out_len]);
+    out = c.colyseus_input_encoder_encode(encoder, &out_len);
+    try testing.expectEqual(@as(usize, 0), out_len);
+
+    // reflection-built input: an unwritten field goes out too, as the 0 this
+    // client's prediction reads for it
+    const room = joinedP0Room();
+    defer freeP0Room(room);
+    const handle = c.colyseus_room_input(room, null, null).?;
+    const data: *c.colyseus_dynamic_schema_t = @ptrCast(@alignCast(c.colyseus_input_handle_data(handle)));
+    const x_value = c.colyseus_dynamic_value_create(c.COLYSEUS_FIELD_NUMBER);
+    x_value.*.data.num = 0;
+    c.colyseus_dynamic_schema_set(data, 0, "x", x_value);
+    try testing.expectEqual(@as(c_int, 1), c.colyseus_input_handle_send(handle));
+    try testing.expectEqualSlices(u8, &[_]u8{ 19, 128, 0, 129, 0 }, lastRoomFrame());
+    // unchanged afterwards: nothing more to carry
+    _ = c.colyseus_input_handle_send(handle);
+    try testing.expectEqualSlices(u8, &[_]u8{19}, lastRoomFrame());
+}
+
+test "room_input_options_and_timed_routing" {
+    const room = joinedP0Room();
+    defer freeP0Room(room);
 
     const clock = c.colyseus_room_get_clock(room).?;
     try testing.expectEqual(@as(f64, 50), c.colyseus_room_clock_patch_interval(clock));

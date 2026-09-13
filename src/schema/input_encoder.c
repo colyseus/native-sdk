@@ -172,17 +172,11 @@ colyseus_input_encoder_t* colyseus_input_encoder_create(
     colyseus_wbuf_init(&encoder->delta);
     colyseus_wbuf_init(&encoder->out);
 
-    /* diff against construction defaults from the start — an unassigned
-     * field is not dirty (the JS ChangeTree behaves the same way) */
-    encoder->has_baseline = true;
-    for (int i = 0; i < encoder->field_count; i++) {
-        if (encoder->fields[i].type == COLYSEUS_FIELD_STRING) {
-            const char* s = read_str(encoder, &encoder->fields[i]);
-            encoder->baseline_str[i] = s ? strdup(s) : NULL;
-        } else {
-            encoder->baseline_num[i] = read_num(encoder, &encoder->fields[i]);
-        }
-    }
+    /* The first frame is a full snapshot. The server's fresh input holds
+     * `undefined` until a frame carries a value (a sanitize range clamps that
+     * to its minimum), while this client reads any unassigned field as 0 —
+     * so every field goes out once, at whatever it holds. */
+    encoder->has_baseline = false;
 
     return encoder;
 
