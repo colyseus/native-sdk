@@ -33,8 +33,12 @@ suite(function() {
             // pump-serialized inbound adds a frame of baseline latency
             expect(_base).toBeLessThan(150);
 
-            // 300ms round trip, split both ways → rtt tracks past 200
-            colyseus_netdelay_set(_t.room, 300, 0);
+            // The clock drops samples over 4x its smoothed RTT (a tab-resume
+            // guard), so size the injection from the baseline: a fixed 300ms
+            // is never accepted once a fast poll brings the baseline under 100.
+            var _delay = min(300, _base * 2.5);
+            var _raised = _base + _delay * 0.5;
+            colyseus_netdelay_set(_t.room, _delay, 0);
             var _env = { saw_in_flight: 0 };
             var _start = current_time;
             while (current_time - _start < 5000) {
@@ -43,10 +47,10 @@ suite(function() {
                 repeat (_steps) { _input.send(); }   // paced — floods overflow the server buffer
                 var _n = colyseus_netdelay_in_flight();
                 if (_n > _env.saw_in_flight) _env.saw_in_flight = _n;
-                if (_predict.clock.rtt() > 200) break;
+                if (_predict.clock.rtt() > _raised) break;
             }
             expect(_env.saw_in_flight).toBeGreaterThan(0);
-            expect(_predict.clock.rtt()).toBeGreaterThan(200);
+            expect(_predict.clock.rtt()).toBeGreaterThan(_raised);
 
             // clearing the delay brings it back down
             colyseus_netdelay_set(_t.room, 0, 0);
@@ -55,9 +59,9 @@ suite(function() {
                 colyseus_process();
                 var _steps = _predict.tick(colyseus_predict_now());
                 repeat (_steps) { _input.send(); }
-                if (_predict.clock.rtt() < 120) break;
+                if (_predict.clock.rtt() < _raised) break;
             }
-            expect(_predict.clock.rtt()).toBeLessThan(120);
+            expect(_predict.clock.rtt()).toBeLessThan(_raised);
             _predict.free_native();
         });
     });
