@@ -107,6 +107,9 @@ colyseus_decoder_t* colyseus_decoder_create(const colyseus_schema_vtable_t* stat
     return decoder;
 }
 
+/* callbacks.c: drops a callbacks layer's pointer to a decoder being freed */
+void colyseus_callbacks_forget_decoder(colyseus_trigger_changes_fn fn, void* userdata);
+
 void colyseus_decoder_free(colyseus_decoder_t* decoder) {
     if (!decoder) return;
 
@@ -114,6 +117,12 @@ void colyseus_decoder_free(colyseus_decoder_t* decoder) {
     colyseus_ref_tracker_free(decoder->refs);
     colyseus_type_context_free(decoder->context);
     colyseus_changes_free(decoder->changes);
+
+    /* a callbacks layer can outlive its decoder — bindings free theirs after
+     * the room — and its own free must not reach back in here */
+    for (int i = 0; i < decoder->trigger_count; i++) {
+        colyseus_callbacks_forget_decoder(decoder->trigger_changes[i], decoder->trigger_userdata[i]);
+    }
 
     free(decoder);
 }

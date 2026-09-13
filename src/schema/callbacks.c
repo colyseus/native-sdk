@@ -168,6 +168,12 @@ void colyseus_callbacks_free(colyseus_callbacks_t* callbacks) {
     free(callbacks);
 }
 
+/* Called by colyseus_decoder_free() for each of its trigger listeners. */
+void colyseus_callbacks_forget_decoder(colyseus_trigger_changes_fn fn, void* userdata) {
+    if (fn != colyseus_callbacks_trigger_changes || !userdata) return;
+    ((colyseus_callbacks_t*)userdata)->decoder = NULL;
+}
+
 /* ============================================================================
  * Internal: Add callback
  * ============================================================================ */
@@ -613,7 +619,7 @@ static void on_collection_available(void* value, void* previous_value, void* use
      * Skipped while this layer is still delivering the patch — the ADD
      * changes in it reach the new registration anyway.
      */
-    if (immediate && !suppress_immediate(callbacks) && operation == (int)COLYSEUS_OP_ADD) {
+    if (immediate && callbacks->decoder && !suppress_immediate(callbacks) && operation == (int)COLYSEUS_OP_ADD) {
         colyseus_ref_entry_t* entry = colyseus_ref_tracker_get_entry(
             callbacks->decoder->refs, collection_ref_id);
 
@@ -701,7 +707,7 @@ static colyseus_callback_handle_t add_collection_callback_or_wait(
     int collection_ref_id = COLYSEUS_REF_ID(collection);
 
     /* If immediate and ADD operation, call for existing items */
-    immediate = immediate && !suppress_immediate(callbacks);
+    immediate = immediate && callbacks->decoder && !suppress_immediate(callbacks);
 
     if (operation == (int)COLYSEUS_OP_ADD && immediate) {
         colyseus_ref_entry_t* entry = colyseus_ref_tracker_get_entry(

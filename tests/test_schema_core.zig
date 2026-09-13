@@ -233,6 +233,19 @@ fn onLabel(value: ?*anyopaque, prev: ?*anyopaque, ud: ?*anyopaque) callconv(.c) 
 // one patch, and a collection field swapped for a new one.
 // ============================================================================
 
+// A binding may free its callbacks layer after the room (GameMaker did): the
+// layer's free must not reach into the decoder that died first. The junk
+// allocation takes the freed decoder's place, so a dangling read crashes.
+test "callbacks_freed_after_their_decoder" {
+    const decoder = c.colyseus_decoder_create(&c.core_state_vtable);
+    const cb = c.colyseus_callbacks_create(decoder).?;
+    c.colyseus_decoder_free(decoder);
+    const junk: [*]u8 = @ptrCast(std.c.malloc(@sizeOf(c.colyseus_decoder_t)).?);
+    defer std.c.free(junk);
+    @memset(junk[0..@sizeOf(c.colyseus_decoder_t)], 0xAA);
+    c.colyseus_callbacks_free(cb);
+}
+
 test "callbacks_match_ts_reflection" {
     const dyn = Dyn.open();
     defer dyn.close();
