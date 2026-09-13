@@ -571,7 +571,25 @@ static void web_ws_destroy_impl(colyseus_transport_t* transport) {
     free(transport);
 }
 
+/* Callbacks already run on the browser's event loop. */
+void colyseus_ws_poll(void) {}
+
 #endif /* GDEXTENSION_SIDE_MODULE */
+
+/* Web is single-threaded: every mode is already polled. */
+void colyseus_ws_set_polled(bool polled) {
+    (void)polled;
+}
+
+/* Internal (room.c, latency.c): no modes to pin on the web. */
+bool colyseus_ws_polled_default(void) {
+    return false;
+}
+
+void colyseus_ws_pin_polled(colyseus_transport_t* transport, bool polled) {
+    (void)transport;
+    (void)polled;
+}
 
 /* Web stub: browser handles TLS natively, so settings are ignored */
 void colyseus_websocket_connect_with_settings(colyseus_transport_t* transport,

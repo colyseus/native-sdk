@@ -53,6 +53,8 @@ typedef struct {
     wslay_event_context_ptr wslay_ctx;  /* wslay_event_context_ptr */
     void* tick_thread;  /* Thread handle (platform specific) */
     void* tls_ctx;  /* colyseus_tls_context_t* */
+    void* addr_list;  /* struct addrinfo* — every resolved address, tried in order */
+    void* addr_cur;   /* next address to try on a refused connect */
     const unsigned char* ca_pem_data;  /* CA certificates in PEM format */
 
     /* size_t fields (8 bytes on 64-bit) */
@@ -74,6 +76,9 @@ typedef struct {
     char* pending_close_reason;  /* Close reason for deferred close (must free) */
     bool use_tls;                /* True for wss:// */
     bool tls_skip_verify;        /* Skip certificate verification */
+    bool polled;                 /* ticked by colyseus_ws_poll(); fixed at connect */
+    bool send_failed;            /* an inline flush hit a write error; the next tick closes */
+    int connect_mode;            /* colyseus_ws_pin_polled(): 0 follows the process default */
 
     /* Outbound messages wait here until the tick thread moves them into
      * wslay, whose context is not thread-safe: the tick thread is its only
