@@ -1,6 +1,15 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
-pub fn build(b: *std.Build) void {
+// Same toolchain as the core: name the version instead of failing on the
+// first std API that 0.16 moved.
+pub const build = if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 15)
+    buildGameMaker
+else
+    @compileError("the Colyseus GameMaker extension builds with zig 0.15.x (CI uses 0.15.2); this is zig " ++
+        builtin.zig_version_string ++ ". Get 0.15.2 from https://ziglang.org/download/");
+
+fn buildGameMaker(b: *std.Build) void {
     // Build for all Game Maker supported platforms
     const build_all = b.option(bool, "all", "Build for all Game Maker platforms (Windows, macOS, Linux)") orelse false;
 

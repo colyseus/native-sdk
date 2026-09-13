@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 // Windows-only: cJSON marks its API __declspec(dllexport) by default, and one
 // dllexport anywhere makes MinGW's linker export ONLY marked symbols. A
@@ -7,7 +8,18 @@ const std = @import("std");
 // nothing but cJSON in it. Opt in to hide them and get export-all back.
 const cjson_hide_symbols_flag = "-DCJSON_HIDE_SYMBOLS";
 
-pub fn build(b: *std.Build) void {
+// 0.16 moved std.process, std.fs and std.net onto std.Io, and both this file
+// and the test suites use the 0.15 APIs. Name the version here rather than
+// fail on the first of them.
+pub const build = if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 15)
+    buildSdk
+else
+    @compileError("the Colyseus native SDK builds with zig 0.15.x (CI uses 0.15.2); this is zig " ++
+        builtin.zig_version_string ++ ". Get 0.15.2 from https://ziglang.org/download/");
+
+fn buildSdk(b: *std.Build) void {
+    requireSubmodules(b);
+
     // Standard target options
     const target = b.standardTargetOptions(.{});
 
@@ -860,11 +872,13 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&b.addRunArtifact(consumer).step);
     }
 
-    // Define all Zig test files
+    // Define all Zig test files. `.server` marks an integration suite: the
+    // server it needs, probed on localhost before the suite is wired in.
     const zig_test_files = [_]struct {
         name: []const u8,
         file: []const u8,
         description: []const u8,
+        server: ?TestServer = null,
     }{
         .{ .name = "test_http", .file = "tests/test_http.zig", .description = "Run HTTP tests" },
         .{ .name = "test_auth", .file = "tests/test_auth.zig", .description = "Run authentication tests" },
@@ -875,43 +889,51 @@ pub fn build(b: *std.Build) void {
         .{ .name = "test_schema_resync", .file = "tests/test_schema_resync.zig", .description = "Run decodeResync reconciliation tests (byte fixtures)" },
         .{ .name = "test_room_protocol", .file = "tests/test_room_protocol.zig", .description = "Run 0.18 room wire-compat tests (byte fixtures)" },
         .{ .name = "test_quantized", .file = "tests/test_quantized.zig", .description = "Run 5.0 reflection + t.quantized tests (byte fixtures)" },
+        .{ .name = "test_schema_core", .file = "tests/test_schema_core.zig", .description = "Run change-listener + callbacks-vs-TS tests (byte fixtures)" },
         .{ .name = "test_input", .file = "tests/test_input.zig", .description = "Run input layer + RoomClock tests (byte fixtures)" },
         .{ .name = "test_predict", .file = "tests/test_predict.zig", .description = "Run Predict layer tests (behavior fixtures)" },
         .{ .name = "test_netdelay", .file = "tests/test_netdelay.zig", .description = "Run network-delay injector tests (offline)" },
         .{ .name = "test_msgpack_builder", .file = "tests/test_msgpack_builder.zig", .description = "Run message builder ownership tests (offline)" },
+        .{ .name = "test_transport", .file = "tests/test_transport.zig", .description = "Run WebSocket transport tests: address fallthrough, refusal, SIGPIPE, polled mode (offline)" },
+        .{ .name = "test_poll", .file = "tests/test_poll.zig", .description = "Run colyseus_poll() tests: poll-thread delivery, nested poll, send flush, latency (offline)" },
         .{ .name = "test_gamemaker_predict", .file = "tests/test_gamemaker_predict.zig", .description = "Run GameMaker predict-bridge tests (offline, drives the GML FFI surface)" },
         .{ .name = "test_gamemaker_schema", .file = "tests/test_gamemaker_schema.zig", .description = "Run GameMaker schema-bridge tests (offline)" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
-        .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)" },
-        .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)" },
-        .{ .name = "test_schema_reflection", .file = "tests/test_schema_reflection.zig", .description = "Run reflection-vtable decode tests (requires server)" },
-        .{ .name = "test_messages", .file = "tests/test_messages.zig", .description = "Run message types tests (requires server)" },
-        .{ .name = "test_request", .file = "tests/test_request.zig", .description = "Run room.request() outcome tests (requires server)" },
-        .{ .name = "test_view_callbacks", .file = "tests/test_view_callbacks.zig", .description = "Run StateView callback tests (requires server)" },
-        .{ .name = "test_reconnect", .file = "tests/test_reconnect.zig", .description = "Run automatic reconnection tests (requires server)" },
-        .{ .name = "test_tls", .file = "tests/test_tls.zig", .description = "Run WSS/TLS verification tests (requires wss echo server)" },
+        .{ .name = "test_integration", .file = "tests/test_integration.zig", .description = "Run integration tests (requires server)", .server = .example },
+        .{ .name = "test_schema_callbacks", .file = "tests/test_schema_callbacks.zig", .description = "Run schema callbacks tests (requires server)", .server = .example },
+        .{ .name = "test_schema_reflection", .file = "tests/test_schema_reflection.zig", .description = "Run reflection-vtable decode tests (requires server)", .server = .example },
+        .{ .name = "test_messages", .file = "tests/test_messages.zig", .description = "Run message types tests (requires server)", .server = .example },
+        .{ .name = "test_request", .file = "tests/test_request.zig", .description = "Run room.request() outcome tests (requires server)", .server = .example },
+        .{ .name = "test_view_callbacks", .file = "tests/test_view_callbacks.zig", .description = "Run StateView callback tests (requires server)", .server = .example },
+        .{ .name = "test_reconnect", .file = "tests/test_reconnect.zig", .description = "Run automatic reconnection tests (requires server)", .server = .example },
+        .{ .name = "test_poll_integration", .file = "tests/test_poll_integration.zig", .description = "Run colyseus_poll() session + reconnection thread-affinity tests (requires server)", .server = .example },
+        .{ .name = "test_gamemaker_net", .file = "tests/test_gamemaker_net.zig", .description = "Run GameMaker bridge session tests: polled delivery on the GML thread (requires server)", .server = .example },
+        .{ .name = "test_tls", .file = "tests/test_tls.zig", .description = "Run WSS/TLS verification tests (requires wss echo server)", .server = .wss_echo },
     };
+
+    // A suite whose server is down fails up front, naming the server and how
+    // to start it — rather than as a bare waitForJoin/ConnectionRefused deep
+    // inside. `zig build test` off CI skips it instead, and says so at the end.
+    const ci = isCi(b);
+    var server_up = std.EnumArray(TestServer, ?bool).initFill(null);
+    var skipped = std.EnumArray(TestServer, std.ArrayList(u8)).initFill(.empty);
+    var run_steps: std.ArrayList(*std.Build.Step) = .empty;
 
     // Build each Zig test
     for (zig_test_files) |test_file| {
-        // Skip integration tests if requested (these require a running server)
-        if (skip_integration and
-            (std.mem.eql(u8, test_file.name, "test_integration") or
-                std.mem.eql(u8, test_file.name, "test_schema_callbacks") or
-                std.mem.eql(u8, test_file.name, "test_schema_reflection") or
-                std.mem.eql(u8, test_file.name, "test_messages") or
-                std.mem.eql(u8, test_file.name, "test_request") or
-                std.mem.eql(u8, test_file.name, "test_view_callbacks") or
-                std.mem.eql(u8, test_file.name, "test_reconnect") or
-                std.mem.eql(u8, test_file.name, "test_tls")))
-        {
-            continue;
-        }
+        if (skip_integration and test_file.server != null) continue;
 
         // test_tls needs a self-signed wss echo-server fixture that isn't wired
         // up on the Windows CI runner (Git-Bash openssl / process substitution).
         // The TLS code is OS-agnostic and is exercised on Linux + macOS.
         if (std.mem.eql(u8, test_file.name, "test_tls") and
+            target.result.os.tag == .windows)
+        {
+            continue;
+        }
+        // Their in-test peer is BSD sockets, and SIGPIPE is POSIX-only.
+        if ((std.mem.eql(u8, test_file.name, "test_transport") or
+            std.mem.eql(u8, test_file.name, "test_poll")) and
             target.result.os.tag == .windows)
         {
             continue;
@@ -960,14 +982,134 @@ pub fn build(b: *std.Build) void {
 
         // Create run command for this test
         const run_test = b.addRunArtifact(test_exe);
-
-        // Add to main test step
-        test_step.dependOn(&run_test.step);
-
-        // Also create individual test steps
         const individual_test_step = b.step(test_file.name, test_file.description);
+
+        if (test_file.server) |server| {
+            const up = server_up.getPtr(server);
+            if (up.* == null) up.* = serverAnswers(b, server.port());
+            if (!up.*.?) {
+                const fail = &b.addFail(b.fmt(
+                    "{s} needs the {s} on localhost:{d}, and nothing answers there. Start it with:\n    {s}",
+                    .{ test_file.name, server.label(), server.port(), server.startCommand() },
+                )).step;
+                individual_test_step.dependOn(fail);
+                if (ci) {
+                    test_step.dependOn(fail);
+                } else {
+                    skipped.getPtr(server).print(b.allocator, " {s}", .{test_file.name}) catch @panic("OOM");
+                }
+                continue;
+            }
+        }
+
+        test_step.dependOn(&run_test.step);
+        run_steps.append(b.allocator, &run_test.step) catch @panic("OOM");
         individual_test_step.dependOn(&run_test.step);
     }
+
+    var notice: std.ArrayList(u8) = .empty;
+    for (std.enums.values(TestServer)) |server| {
+        const names = skipped.get(server).items;
+        if (names.len == 0) continue;
+        notice.print(b.allocator, "warning: SKIPPED{s}\nwarning:   nothing answers on localhost:{d} ({s}). Start it with:\nwarning:     {s}\n", .{
+            names, server.port(), server.label(), server.startCommand(),
+        }) catch @panic("OOM");
+    }
+    if (notice.items.len > 0) {
+        notice.appendSlice(b.allocator, "warning: -Dskip-integration=true skips them without this note; with CI set they fail instead.\n") catch @panic("OOM");
+        // after every suite that did run, so it is the last thing on screen
+        const step = Notice.create(b, notice.items);
+        for (run_steps.items) |run| step.dependOn(run);
+        test_step.dependOn(step);
+    }
+}
+
+/// A server an integration suite talks to.
+const TestServer = enum {
+    example,
+    wss_echo,
+
+    fn port(self: TestServer) u16 {
+        return switch (self) {
+            .example => 2567,
+            .wss_echo => 2569,
+        };
+    }
+
+    fn label(self: TestServer) []const u8 {
+        return switch (self) {
+            .example => "example-server",
+            .wss_echo => "wss echo server",
+        };
+    }
+
+    fn startCommand(self: TestServer) []const u8 {
+        return switch (self) {
+            .example => "cd example-server && npm install && npx tsx src/index.ts",
+            .wss_echo => "bash tests/tls/gen-certs.sh && node tests/tls/wss-echo-server.mjs --port 2569",
+        };
+    }
+};
+
+/// Probed while the graph is configured, the way the suites will connect.
+fn serverAnswers(b: *std.Build, port: u16) bool {
+    const stream = std.net.tcpConnectToHost(b.allocator, "localhost", port) catch return false;
+    stream.close();
+    return true;
+}
+
+/// CI never auto-skips: a server that failed to start must fail the run.
+fn isCi(b: *std.Build) bool {
+    const v = b.graph.env_map.get("CI") orelse return false;
+    return v.len > 0 and !std.mem.eql(u8, v, "0") and !std.ascii.eqlIgnoreCase(v, "false");
+}
+
+/// A step that prints `text` when it runs.
+const Notice = struct {
+    step: std.Build.Step,
+    text: []const u8,
+
+    fn create(b: *std.Build, text: []const u8) *std.Build.Step {
+        const self = b.allocator.create(Notice) catch @panic("OOM");
+        self.* = .{
+            .step = std.Build.Step.init(.{ .id = .custom, .name = "integration skip notice", .owner = b, .makeFn = make }),
+            .text = text,
+        };
+        return &self.step;
+    }
+
+    fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
+        const self: *Notice = @fieldParentPtr("step", step);
+        std.debug.print("{s}", .{self.text});
+    }
+};
+
+/// Without its submodules the build dies deep inside, on
+/// `unable to read ... wslayver.h.in: FileNotFound`. Say what is wrong instead.
+fn requireSubmodules(b: *std.Build) void {
+    const probes = [_]struct { dir: []const u8, file: []const u8 }{
+        .{ .dir = "third_party/cJSON", .file = "cJSON.c" },
+        .{ .dir = "third_party/mbedtls", .file = "include/mbedtls/ssl.h" },
+        .{ .dir = "third_party/sds", .file = "sds.c" },
+        .{ .dir = "third_party/uthash", .file = "src/uthash.h" },
+        .{ .dir = "third_party/wslay", .file = "lib/includes/wslay/wslayver.h.in" },
+    };
+    var missing: std.ArrayList(u8) = .empty;
+    for (probes) |p| {
+        b.build_root.handle.access(b.fmt("{s}/{s}", .{ p.dir, p.file }), .{}) catch {
+            missing.print(b.allocator, " {s}", .{p.dir}) catch @panic("OOM");
+        };
+    }
+    if (missing.items.len == 0) return;
+
+    if (b.pkg_hash.len != 0) {
+        std.debug.print("error: the colyseus package was fetched without its git submodules (missing:{s}).\n" ++
+            "       Depend on a source archive that vendors third_party/, or on a local checkout.\n", .{missing.items});
+    } else {
+        std.debug.print("error: git submodules are not checked out (missing:{s}). Run:\n" ++
+            "           git submodule update --init --recursive\n", .{missing.items});
+    }
+    std.process.exit(1);
 }
 
 // ============================================================================

@@ -1,6 +1,15 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
-pub fn build(b: *std.Build) void {
+// Same toolchain as the core: name the version instead of failing on the
+// first std API that 0.16 moved.
+pub const build = if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 15)
+    buildGodot
+else
+    @compileError("the Colyseus Godot extension builds with zig 0.15.x (CI uses 0.15.2); this is zig " ++
+        builtin.zig_version_string ++ ". Get 0.15.2 from https://ziglang.org/download/");
+
+fn buildGodot(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const godot_double_precision = b.option(bool, "godot-double-precision", "Build against a double-precision Godot engine") orelse false;
@@ -698,9 +707,7 @@ pub fn build(b: *std.Build) void {
                 lib.root_module.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
                 lib.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
                 lib.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/usr/lib", .{sysroot}) });
-            } else {
-                const builtin = @import("builtin");
-                if (builtin.os.tag == .macos) {
+            } else {                if (builtin.os.tag == .macos) {
                     // Prefer the active SDK reported by `xcrun --show-sdk-path`
                     // (full Xcode install or the Command Line Tools fallback).
                     // Falling back to the hardcoded CLT path tickled framework
@@ -767,9 +774,7 @@ pub fn build(b: *std.Build) void {
             // CI symbol audit guards against future drift above 24.
             const api_level = "24";
 
-            if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME")) |ndk_home| {
-                const builtin = @import("builtin");
-                const ndk_host = switch (builtin.os.tag) {
+            if (std.process.getEnvVarOwned(b.allocator, "ANDROID_NDK_HOME")) |ndk_home| {                const ndk_host = switch (builtin.os.tag) {
                     .macos => "darwin-x86_64",
                     .linux => "linux-x86_64",
                     .windows => "windows-x86_64",

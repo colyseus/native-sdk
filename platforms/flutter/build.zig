@@ -1,11 +1,20 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 // Deployment minimums must match the podspecs, or the linker warns that the
 // vendored library was built for a newer OS than the app targets.
 const macos_min: std.SemanticVersion = .{ .major = 10, .minor = 15, .patch = 0 };
 const ios_min: std.SemanticVersion = .{ .major = 13, .minor = 0, .patch = 0 };
 
-pub fn build(b: *std.Build) void {
+// Same toolchain as the core: name the version instead of failing on the
+// first std API that 0.16 moved.
+pub const build = if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 15)
+    buildFlutter
+else
+    @compileError("the Colyseus Flutter native library builds with zig 0.15.x (CI uses 0.15.2); this is zig " ++
+        builtin.zig_version_string ++ ". Get 0.15.2 from https://ziglang.org/download/");
+
+fn buildFlutter(b: *std.Build) void {
     // Build for all Flutter supported platforms
     const build_all = b.option(bool, "all", "Build for all Flutter platforms") orelse false;
 

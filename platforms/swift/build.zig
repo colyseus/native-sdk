@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 // Must match the platforms list in Package.swift. A library stamped with a
 // newer minimum than the app targets makes the linker warn on every build.
@@ -6,7 +7,15 @@ const macos_min: std.SemanticVersion = .{ .major = 13, .minor = 0, .patch = 0 };
 const ios_min: std.SemanticVersion = .{ .major = 15, .minor = 0, .patch = 0 };
 const tvos_min: std.SemanticVersion = .{ .major = 15, .minor = 0, .patch = 0 };
 
-pub fn build(b: *std.Build) void {
+// Same toolchain as the core: name the version instead of failing on the
+// first std API that 0.16 moved.
+pub const build = if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 15)
+    buildSwift
+else
+    @compileError("the Colyseus Swift xcframework builds with zig 0.15.x (CI uses 0.15.2); this is zig " ++
+        builtin.zig_version_string ++ ". Get 0.15.2 from https://ziglang.org/download/");
+
+fn buildSwift(b: *std.Build) void {
     const target = appleTarget(b);
     const optimize = b.standardOptimizeOption(.{});
     const apple_sdk_path = resolveAppleSdk(b, target.result);
