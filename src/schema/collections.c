@@ -21,6 +21,7 @@ colyseus_changes_t* colyseus_changes_create(void) {
 
 void colyseus_changes_free(colyseus_changes_t* changes) {
     if (!changes) return;
+    colyseus_changes_clear(changes);
     free(changes->items);
     free(changes);
 }
@@ -43,11 +44,11 @@ void colyseus_changes_add(colyseus_changes_t* changes, colyseus_data_change_t* c
 void colyseus_changes_clear(colyseus_changes_t* changes) {
     if (!changes) return;
     
-    /* Free owned previous_value strings for deleted string fields */
     for (int i = 0; i < changes->count; i++) {
-        if (changes->items[i].owns_previous_value && changes->items[i].previous_value) {
-            free(changes->items[i].previous_value);
-        }
+        colyseus_data_change_t* change = &changes->items[i];
+        if (change->owns_previous_value) free(change->previous_value);
+        if (change->owns_value) free(change->value);
+        free(change->dynamic_index);
     }
     
     changes->count = 0;

@@ -82,7 +82,15 @@ typedef struct {
     bool wrap;      /* false = clamp */
 } colyseus_quantized_descriptor_t;
 
-/* Data change record */
+/*
+ * Data change record.
+ *
+ * On a schema's scalar or string field, `value` and `previous_value` are the
+ * record's own copies of what that op decoded and replaced — the same field
+ * can be written again later in the patch, so they never point into the
+ * instance. Both stay valid until the next decode. Ref/collection values are
+ * the tracked instances themselves.
+ */
 typedef struct {
     int ref_id;
     uint8_t op;
@@ -90,8 +98,9 @@ typedef struct {
     void* dynamic_index;        /* int* for array, char* for map */
     void* value;
     void* previous_value;
-    colyseus_field_type_t field_type;  /* Field type - used for cleanup of string previous_value */
-    bool owns_previous_value;   /* If true, previous_value should be freed (for deleted strings) */
+    colyseus_field_type_t field_type;
+    bool owns_previous_value;   /* freed with the record */
+    bool owns_value;            /* freed with the record */
 } colyseus_data_change_t;
 
 /* Iterator for decoding */

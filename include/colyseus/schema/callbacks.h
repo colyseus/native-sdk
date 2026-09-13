@@ -34,6 +34,24 @@ extern "C" {
  *   colyseus_callbacks_remove(cb, h2);
  *   
  *   colyseus_callbacks_free(cb);
+ *
+ * Semantics match @colyseus/schema's Callbacks:
+ *
+ *  - Register any time after the decoder exists — including before the first
+ *    state arrives (a room's on_join). A collection callback waits for its
+ *    collection, and the handle it returned keeps working once it binds.
+ *  - `immediate` is skipped while this callbacks layer is still delivering
+ *    the current patch: a registration made from inside a callback receives
+ *    that patch's changes through the dispatch, exactly once.
+ *  - Several layers can share one decoder (a room's predict layer, the app's
+ *    own); each dispatches the patch to its own registrations.
+ *  - When the decoder garbage-collects a ref, its registrations are dropped.
+ *    Servers reuse refIds (a StateView re-adding an entity), and the new
+ *    instance must not inherit the old one's listeners.
+ *  - A scalar or string field only reports a change when its value differs.
+ *    Codegen'd (static) scalars have no "unset" state, so a first value equal
+ *    to the zero default is not reported; use `immediate` to read it.
+ *  - Values and keys handed to callbacks are valid only during the call.
  */
 
 /* Forward declarations */
@@ -87,7 +105,8 @@ typedef void (*colyseus_collection_change_callback_fn)(void* key, void* value, v
 /**
  * Create a callbacks manager for a decoder
  * @param decoder The schema decoder to attach callbacks to
- * @return New callbacks manager (caller owns)
+ * @return New callbacks manager (caller owns), or NULL when the decoder
+ *         already has COLYSEUS_DECODER_MAX_TRIGGERS listeners (logged)
  */
 colyseus_callbacks_t* colyseus_callbacks_create(colyseus_decoder_t* decoder);
 

@@ -84,8 +84,8 @@ colyseus_decoder_t* colyseus_decoder_create(const colyseus_schema_vtable_t* stat
     decoder->context = colyseus_type_context_create();
     decoder->changes = colyseus_changes_create();
     decoder->state_vtable = state_vtable;
-    decoder->trigger_changes = NULL;
-    decoder->trigger_userdata = NULL;
+    decoder->trigger_count = 0;
+    decoder->trigger_index = -1;
     decoder->resync_visited = NULL;
     decoder->resync_active = false;
     decoder->resync_damaged = false;
@@ -118,11 +118,46 @@ void colyseus_decoder_free(colyseus_decoder_t* decoder) {
     free(decoder);
 }
 
-void colyseus_decoder_set_trigger_callback(colyseus_decoder_t* decoder,
+bool colyseus_decoder_set_trigger_callback(colyseus_decoder_t* decoder,
+    colyseus_trigger_changes_fn callback, void* userdata) {
+    if (!decoder || !callback) return false;
+    for (int i = 0; i < decoder->trigger_count; i++) {
+        if (decoder->trigger_changes[i] == callback && decoder->trigger_userdata[i] == userdata) return true;
+    }
+    if (decoder->trigger_count >= COLYSEUS_DECODER_MAX_TRIGGERS) {
+        fprintf(stderr, "colyseus-schema: decoder already has %d change listeners; this one is NOT registered and will never fire.\n",
+            COLYSEUS_DECODER_MAX_TRIGGERS);
+        return false;
+    }
+    decoder->trigger_changes[decoder->trigger_count] = callback;
+    decoder->trigger_userdata[decoder->trigger_count] = userdata;
+    decoder->trigger_count++;
+    return true;
+}
+
+void colyseus_decoder_remove_trigger_callback(colyseus_decoder_t* decoder,
     colyseus_trigger_changes_fn callback, void* userdata) {
     if (!decoder) return;
-    decoder->trigger_changes = callback;
-    decoder->trigger_userdata = userdata;
+    for (int i = 0; i < decoder->trigger_count; i++) {
+        if (decoder->trigger_changes[i] != callback || decoder->trigger_userdata[i] != userdata) continue;
+        for (int j = i + 1; j < decoder->trigger_count; j++) {
+            decoder->trigger_changes[j - 1] = decoder->trigger_changes[j];
+            decoder->trigger_userdata[j - 1] = decoder->trigger_userdata[j];
+        }
+        decoder->trigger_count--;
+        /* keep an in-flight dispatch on the listener that followed it */
+        if (decoder->trigger_index >= 0 && i <= decoder->trigger_index) decoder->trigger_index--;
+        return;
+    }
+}
+
+bool colyseus_decoder_trigger_pending(const colyseus_decoder_t* decoder,
+    colyseus_trigger_changes_fn callback, void* userdata) {
+    if (!decoder || decoder->trigger_index < 0) return false;
+    for (int i = decoder->trigger_index; i < decoder->trigger_count; i++) {
+        if (decoder->trigger_changes[i] == callback && decoder->trigger_userdata[i] == userdata) return true;
+    }
+    return false;
 }
 
 colyseus_schema_t* colyseus_decoder_get_state(colyseus_decoder_t* decoder) {
@@ -269,97 +304,48 @@ static int array_find_index_by_ref(colyseus_array_schema_t* arr, void* ref) {
     return -1;
 }
 
-/* Set field value in dynamic schema */
-static void set_dyn_schema_field(colyseus_dynamic_schema_t* schema, 
+/* Byte width of a scalar field's storage — the codegen'd struct member and
+ * the matching member of the dynamic value union alike. */
+static size_t scalar_size(colyseus_field_type_t type) {
+    switch (type) {
+        case COLYSEUS_FIELD_BOOLEAN: return sizeof(bool);
+        case COLYSEUS_FIELD_INT8:
+        case COLYSEUS_FIELD_UINT8:   return 1;
+        case COLYSEUS_FIELD_INT16:
+        case COLYSEUS_FIELD_UINT16:  return 2;
+        case COLYSEUS_FIELD_INT32:
+        case COLYSEUS_FIELD_UINT32:
+        case COLYSEUS_FIELD_FLOAT32: return 4;
+        default:                     return 8; /* number, float64, quantized, int64, uint64 */
+    }
+}
+
+static bool is_ref_field(colyseus_field_type_t type) {
+    return type == COLYSEUS_FIELD_REF || type == COLYSEUS_FIELD_ARRAY || type == COLYSEUS_FIELD_MAP;
+}
+
+/* Store into a dynamic schema. Adopts a string or ref; a scalar is copied out
+ * of `value`, which stays the caller's. */
+static void set_dyn_schema_field(colyseus_dynamic_schema_t* schema,
     const colyseus_dynamic_field_t* field, void* value) {
     if (!schema || !field) return;
-    
+
     colyseus_dynamic_value_t* dyn_value = colyseus_dynamic_value_create(field->type);
-    if (!dyn_value) return;
-    
+    if (!dyn_value) {
+        if (field->type == COLYSEUS_FIELD_STRING) free(value);
+        return;
+    }
+
     switch (field->type) {
-        case COLYSEUS_FIELD_STRING:
-            dyn_value->data.str = (char*)value;  /* Transfer ownership */
-            break;
-        case COLYSEUS_FIELD_NUMBER:
-        case COLYSEUS_FIELD_FLOAT64:
-        case COLYSEUS_FIELD_QUANTIZED: /* dequantized double */
-            if (value) {
-                dyn_value->data.num = *(double*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_FLOAT32:
-            if (value) {
-                dyn_value->data.f32 = *(float*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_BOOLEAN:
-            if (value) {
-                dyn_value->data.boolean = *(bool*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_INT8:
-            if (value) {
-                dyn_value->data.i8 = *(int8_t*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_UINT8:
-            if (value) {
-                dyn_value->data.u8 = *(uint8_t*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_INT16:
-            if (value) {
-                dyn_value->data.i16 = *(int16_t*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_UINT16:
-            if (value) {
-                dyn_value->data.u16 = *(uint16_t*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_INT32:
-            if (value) {
-                dyn_value->data.i32 = *(int32_t*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_UINT32:
-            if (value) {
-                dyn_value->data.u32 = *(uint32_t*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_INT64:
-            if (value) {
-                dyn_value->data.i64 = *(int64_t*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_UINT64:
-            if (value) {
-                dyn_value->data.u64 = *(uint64_t*)value;
-                free(value);
-            }
-            break;
-        case COLYSEUS_FIELD_REF:
-            dyn_value->data.ref = (colyseus_dynamic_schema_t*)value;
-            break;
-        case COLYSEUS_FIELD_ARRAY:
-            dyn_value->data.array = (colyseus_array_schema_t*)value;
-            break;
-        case COLYSEUS_FIELD_MAP:
-            dyn_value->data.map = (colyseus_map_schema_t*)value;
+        case COLYSEUS_FIELD_STRING: dyn_value->data.str = (char*)value; break;
+        case COLYSEUS_FIELD_REF:    dyn_value->data.ref = (colyseus_dynamic_schema_t*)value; break;
+        case COLYSEUS_FIELD_ARRAY:  dyn_value->data.array = (colyseus_array_schema_t*)value; break;
+        case COLYSEUS_FIELD_MAP:    dyn_value->data.map = (colyseus_map_schema_t*)value; break;
+        default:
+            if (value) memcpy(&dyn_value->data, value, scalar_size(field->type));
             break;
     }
-    
+
     colyseus_dynamic_schema_set(schema, field->index, field->name, dyn_value);
 }
 
@@ -385,7 +371,8 @@ static void* get_dyn_schema_field(colyseus_dynamic_schema_t* schema,
     }
 }
 
-/* Set field value in schema based on type (static schema) */
+/* Store into a codegen'd schema. Adopts a string (freeing the old one) or a
+ * ref; a scalar is copied out of `value`, which stays the caller's. */
 static void set_schema_field(colyseus_schema_t* schema, const colyseus_field_t* field, void* value) {
     if (!schema || !field) return;
 
@@ -393,96 +380,18 @@ static void set_schema_field(colyseus_schema_t* schema, const colyseus_field_t* 
 
     switch (field->type) {
         case COLYSEUS_FIELD_STRING:
-            /* Free old string if present */
-            if (*(char**)field_ptr) {
-                free(*(char**)field_ptr);
-            }
+            free(*(char**)field_ptr);
             *(char**)field_ptr = (char*)value;
-            break;
-
-        case COLYSEUS_FIELD_FLOAT32:
-            if (value) {
-                *(float*)field_ptr = *(float*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_NUMBER:
-        case COLYSEUS_FIELD_FLOAT64:
-        case COLYSEUS_FIELD_QUANTIZED: /* dequantized double */
-            if (value) {
-                *(double*)field_ptr = *(double*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_BOOLEAN:
-            if (value) {
-                *(bool*)field_ptr = *(bool*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_INT8:
-            if (value) {
-                *(int8_t*)field_ptr = *(int8_t*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_UINT8:
-            if (value) {
-                *(uint8_t*)field_ptr = *(uint8_t*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_INT16:
-            if (value) {
-                *(int16_t*)field_ptr = *(int16_t*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_UINT16:
-            if (value) {
-                *(uint16_t*)field_ptr = *(uint16_t*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_INT32:
-            if (value) {
-                *(int32_t*)field_ptr = *(int32_t*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_UINT32:
-            if (value) {
-                *(uint32_t*)field_ptr = *(uint32_t*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_INT64:
-            if (value) {
-                *(int64_t*)field_ptr = *(int64_t*)value;
-                free(value);
-            }
-            break;
-
-        case COLYSEUS_FIELD_UINT64:
-            if (value) {
-                *(uint64_t*)field_ptr = *(uint64_t*)value;
-                free(value);
-            }
             break;
 
         case COLYSEUS_FIELD_REF:
         case COLYSEUS_FIELD_ARRAY:
         case COLYSEUS_FIELD_MAP:
             *(void**)field_ptr = value;
+            break;
+
+        default:
+            if (value) memcpy(field_ptr, value, scalar_size(field->type));
             break;
     }
 }
@@ -669,33 +578,31 @@ static void* decode_value(
  * Schema decode
  * ============================================================================ */
 
-/*
- * Copy a field's outgoing value so a change record outlives the store that is
- * about to free it. Rewrites *value to the copy and returns true when the
- * caller now owns it; ref/array/map are ref_tracker-owned and stay put.
- */
-static bool copy_previous_value(colyseus_field_type_t field_type, void** value) {
-    switch (field_type) {
-        case COLYSEUS_FIELD_STRING: {
-            char* copy = strdup((const char*)*value);
-            if (!copy) return false;
-            *value = copy;
-            return true;
-        }
+/* Heap copy of a scalar or string field value, for a change record to own. */
+static void* copy_field_value(colyseus_field_type_t type, const void* value) {
+    if (type == COLYSEUS_FIELD_STRING) return strdup((const char*)value);
+    void* copy = calloc(1, sizeof(double));
+    if (copy) memcpy(copy, value, scalar_size(type));
+    return copy;
+}
 
-        case COLYSEUS_FIELD_REF:
-        case COLYSEUS_FIELD_ARRAY:
-        case COLYSEUS_FIELD_MAP:
-            return false;
-
-        default: {
-            /* every primitive fits in a double, and so does the dynamic union */
-            void* copy = malloc(sizeof(double));
-            if (!copy) return false;
-            memcpy(copy, *value, sizeof(double));
-            *value = copy;
-            return true;
-        }
+/* The TS decoder's `previousValue !== value` on decoded scalars: NaN never
+ * equals itself, +0 equals -0, strings compare by content. */
+static bool field_values_equal(colyseus_field_type_t type, const void* a, const void* b) {
+    if (!a || !b) return a == b;
+    switch (type) {
+        case COLYSEUS_FIELD_STRING:  return strcmp((const char*)a, (const char*)b) == 0;
+        case COLYSEUS_FIELD_BOOLEAN: return *(const bool*)a == *(const bool*)b;
+        case COLYSEUS_FIELD_INT8:    return *(const int8_t*)a == *(const int8_t*)b;
+        case COLYSEUS_FIELD_UINT8:   return *(const uint8_t*)a == *(const uint8_t*)b;
+        case COLYSEUS_FIELD_INT16:   return *(const int16_t*)a == *(const int16_t*)b;
+        case COLYSEUS_FIELD_UINT16:  return *(const uint16_t*)a == *(const uint16_t*)b;
+        case COLYSEUS_FIELD_INT32:   return *(const int32_t*)a == *(const int32_t*)b;
+        case COLYSEUS_FIELD_UINT32:  return *(const uint32_t*)a == *(const uint32_t*)b;
+        case COLYSEUS_FIELD_INT64:   return *(const int64_t*)a == *(const int64_t*)b;
+        case COLYSEUS_FIELD_UINT64:  return *(const uint64_t*)a == *(const uint64_t*)b;
+        case COLYSEUS_FIELD_FLOAT32: return *(const float*)a == *(const float*)b;
+        default:                     return *(const double*)a == *(const double*)b;
     }
 }
 
@@ -743,64 +650,43 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
         child_primitive_type = field->child_primitive_type;
     }
 
-    void* previous_value = is_dynamic 
+    void* previous_value = is_dynamic
         ? get_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field)
         : get_schema_field(schema, field);
     void* value = NULL;
+    bool is_ref = is_ref_field(field_type);
 
-    /* Storing into the field frees what previous_value points at, so the change
-     * record needs its own copy: a static string field frees the old string, and
-     * the dynamic store frees the whole entry a primitive points into. */
-    void* previous_value_for_change = previous_value;
-    bool owns_previous_value = false;
-    if (previous_value != NULL &&
-        (operation & (uint8_t)COLYSEUS_OP_DELETE) == (uint8_t)COLYSEUS_OP_DELETE &&
-        (field_type == COLYSEUS_FIELD_STRING || is_dynamic)) {
-        owns_previous_value = copy_previous_value(field_type, &previous_value_for_change);
-    }
-
-    /* Handle DELETE operations */
-    if ((operation & (uint8_t)COLYSEUS_OP_DELETE) == (uint8_t)COLYSEUS_OP_DELETE) {
-        if (previous_value != NULL) {
-            /* Check if previous value is a ref type */
-            if (field_type == COLYSEUS_FIELD_REF ||
-                field_type == COLYSEUS_FIELD_ARRAY ||
-                field_type == COLYSEUS_FIELD_MAP) {
-                colyseus_ref_tracker_remove(decoder->refs, COLYSEUS_REF_ID(previous_value));
-            }
-        }
-
-        if (operation != (uint8_t)COLYSEUS_OP_DELETE_AND_ADD) {
-            if (is_dynamic) {
-                set_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field, NULL);
-            } else {
-                set_schema_field(schema, field, NULL);
-            }
-            value = NULL;
-        }
+    if ((operation & (uint8_t)COLYSEUS_OP_DELETE) == (uint8_t)COLYSEUS_OP_DELETE &&
+        previous_value != NULL && is_ref) {
+        colyseus_ref_tracker_remove(decoder->refs, COLYSEUS_REF_ID(previous_value));
     }
 
     if (operation == (uint8_t)COLYSEUS_OP_DELETE) {
-        /* Record change and return */
-        if (previous_value != value) {
-            colyseus_data_change_t change = {
-                .ref_id = schema->__refId,
-                .op = operation,
-                .field = field_name,
-                .dynamic_index = NULL,
-                .value = value,
-                .previous_value = previous_value_for_change,
-                .field_type = field_type,
-                .owns_previous_value = owns_previous_value
-            };
-            colyseus_changes_add(decoder->changes, &change);
-            /* Transfer ownership of duplicated string to changes - don't free here */
-            owns_previous_value = false;
+        if (previous_value == NULL) return true;
+
+        /* copied first: the store below frees or zeroes it */
+        void* previous_for_change = is_ref
+            ? previous_value
+            : copy_field_value(field_type, previous_value);
+
+        if (is_dynamic) {
+            set_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field, NULL);
+        } else {
+            set_schema_field(schema, field, NULL);
         }
-        /* Free duplicated string if change wasn't added */
-        if (owns_previous_value) {
-            free(previous_value_for_change);
-        }
+
+        colyseus_data_change_t change = {
+            .ref_id = schema->__refId,
+            .op = operation,
+            .field = field_name,
+            .dynamic_index = NULL,
+            .value = NULL,
+            .previous_value = previous_for_change,
+            .field_type = field_type,
+            .owns_previous_value = !is_ref && previous_for_change != NULL,
+            .owns_value = false
+        };
+        colyseus_changes_add(decoder->changes, &change);
         return true;
     }
 
@@ -834,72 +720,62 @@ static bool decode_schema(colyseus_decoder_t* decoder, const uint8_t* bytes, siz
             operation, previous_value);
     }
 
-    /* Change gate — decided BEFORE the set: the static-branch re-point below
-     * makes `value` alias the field storage (the same pointer
-     * get_schema_field returned for previous_value), which would otherwise
-     * suppress every scalar change record. */
-    bool record_change = previous_value != value;
+    /* the TS decoder's gate: a scalar re-sent unchanged (a full re-encode, a
+     * view re-add next to the tick's delta) is not a change */
+    bool record_change = is_ref
+        ? previous_value != value
+        : value != NULL && !field_values_equal(field_type, previous_value, value);
 
-    /* Set field value */
-    if (value != NULL || operation == (uint8_t)COLYSEUS_OP_DELETE) {
-        if (is_dynamic) {
-            /* For dynamic schemas, set_dyn_schema_field frees:
-             * - The heap-allocated primitive from decode_value (value pointer)
-             * - The old dyn_value entry (where previous_value points into)
-             * Save previous_value before, and re-fetch value after. */
-            if (previous_value_for_change != NULL && !owns_previous_value) {
-                owns_previous_value = copy_previous_value(field_type, &previous_value_for_change);
-            }
-
-            set_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field, value);
-
-            /* Re-fetch — points into stable dynamic value storage */
-            value = get_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field);
+    void* previous_for_change = NULL;
+    bool owns_previous_value = false;
+    if (record_change && previous_value != NULL) {
+        if (is_ref) {
+            previous_for_change = previous_value;
         } else {
-            bool value_was_set = value != NULL;
-            set_schema_field(schema, field, value);
-            /* set_schema_field CONSUMES (frees) the decoded temp for scalar
-             * primitives — re-point the change payload at the stable field
-             * storage, or the change record carries a dangling pointer.
-             * Strings transfer ownership into the field (pointer stays valid)
-             * and ref/collection pointers are ref-tracked — both unchanged.
-             * Only when a value was actually consumed: a DELETE (value NULL)
-             * must keep NULL so the changed-gate below still sees it. */
-            if (value_was_set) {
-                switch (field_type) {
-                    case COLYSEUS_FIELD_STRING:
-                    case COLYSEUS_FIELD_REF:
-                    case COLYSEUS_FIELD_ARRAY:
-                    case COLYSEUS_FIELD_MAP:
-                        break;
-                    default:
-                        value = (char*)schema + field->offset;
-                        break;
-                }
-            }
+            /* copied first: the store below overwrites (strings: frees) it */
+            previous_for_change = copy_field_value(field_type, previous_value);
+            owns_previous_value = previous_for_change != NULL;
         }
     }
 
-    /* Record change */
+    if (value != NULL) {
+        if (is_dynamic) {
+            set_dyn_schema_field((colyseus_dynamic_schema_t*)schema, dyn_field, value);
+        } else {
+            set_schema_field(schema, field, value);
+        }
+    }
+
+    /* The record keeps what THIS op decoded: a later op on the same field in
+     * this patch stores into the field again. */
+    void* value_for_change = value;
+    bool owns_value = false;
+    if (!is_ref && value != NULL) {
+        if (field_type == COLYSEUS_FIELD_STRING) {
+            if (record_change) {          /* the field adopted `value` */
+                value_for_change = strdup((const char*)value);
+                owns_value = value_for_change != NULL;
+            }
+        } else if (record_change) {
+            owns_value = true;            /* the decoded temp is the record's now */
+        } else {
+            free(value);
+        }
+    }
+
     if (record_change) {
         colyseus_data_change_t change = {
             .ref_id = schema->__refId,
             .op = operation,
             .field = field_name,
             .dynamic_index = NULL,
-            .value = value,
-            .previous_value = previous_value_for_change,
+            .value = value_for_change,
+            .previous_value = previous_for_change,
             .field_type = field_type,
-            .owns_previous_value = owns_previous_value
+            .owns_previous_value = owns_previous_value,
+            .owns_value = owns_value
         };
         colyseus_changes_add(decoder->changes, &change);
-        /* Transfer ownership of duplicated string to changes - don't free here */
-        owns_previous_value = false;
-    }
-
-    /* Free duplicated string if change wasn't added */
-    if (owns_previous_value) {
-        free(previous_value_for_change);
     }
 
     return true;
@@ -1375,6 +1251,17 @@ static bool decode_array_schema(colyseus_decoder_t* decoder, const uint8_t* byte
         value = decode_value(decoder, bytes, length, it,
             field_type, child_vtable, NULL, operation, previous_value);
 
+        /* the TS decoder's `value !== previousValue`: a primitive re-sent
+         * unchanged (full state, then a patch carrying the same ADD) is no
+         * change — else the ADD lands on an occupied index and inserts a copy */
+        if (value != NULL && previous_value != NULL && !arr->has_schema_child
+                && (operation & (uint8_t)COLYSEUS_OP_DELETE) == 0
+                && field_values_equal(colyseus_field_type_from_string(arr->child_primitive_type),
+                                      previous_value, value)) {
+            free(value);
+            value = previous_value;
+        }
+
         if (value != NULL) {
             /* resync snapshot ADDs are positional overwrites, not inserts */
             colyseus_array_schema_set(arr, index, value,
@@ -1526,10 +1413,13 @@ void colyseus_decoder_decode(colyseus_decoder_t* decoder, const uint8_t* bytes, 
      * previous_value) and before GC (ref_tracker_remove feeds the list). */
     if (decoder->resync_active) { resync_sweep(decoder); }
 
-    /* Trigger changes callback */
-    if (decoder->trigger_changes) {
-        decoder->trigger_changes(decoder->changes, decoder->trigger_userdata);
+    /* trigger_index lives on the decoder so a listener removed mid-dispatch
+     * can't make the loop skip the one after it */
+    for (decoder->trigger_index = 0; decoder->trigger_index < decoder->trigger_count; decoder->trigger_index++) {
+        int i = decoder->trigger_index;
+        decoder->trigger_changes[i](decoder->changes, decoder->trigger_userdata[i]);
     }
+    decoder->trigger_index = -1;
 
     /* Run garbage collection */
     colyseus_ref_tracker_gc(decoder->refs);

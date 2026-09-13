@@ -14,6 +14,12 @@ colyseus_dynamic_value_t* colyseus_dynamic_value_create(colyseus_field_type_t ty
     return value;
 }
 
+/* Stored inside the value cell itself (no owned or ref-tracked pointer). */
+static bool dynamic_value_is_inline(colyseus_field_type_t type) {
+    return type != COLYSEUS_FIELD_STRING && type != COLYSEUS_FIELD_REF
+        && type != COLYSEUS_FIELD_ARRAY && type != COLYSEUS_FIELD_MAP;
+}
+
 void colyseus_dynamic_value_free(colyseus_dynamic_value_t* value) {
     if (!value) return;
     
@@ -263,10 +269,18 @@ void colyseus_dynamic_schema_set(colyseus_dynamic_schema_t* schema, int field_in
     HASH_FIND_INT(schema->fields, &field_index, entry);
     
     if (entry) {
-        /* Free old value */
-        colyseus_dynamic_value_free(entry->value);
-        entry->value = value;
-        
+        if (entry->value && value && value != entry->value
+            && entry->value->type == value->type && dynamic_value_is_inline(value->type)) {
+            /* Overwrite in place so a pointer to this cell stays valid across
+             * sets — a view re-add writes the same field twice in one patch. */
+            entry->value->data = value->data;
+            free(value);
+            value = entry->value;
+        } else if (entry->value != value) {
+            colyseus_dynamic_value_free(entry->value);
+            entry->value = value;
+        }
+
         /* Update name if provided and entry doesn't have one */
         if (field_name && !entry->name) {
             entry->name = strdup(field_name);

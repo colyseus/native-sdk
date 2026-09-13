@@ -161,8 +161,40 @@ colyseus_ref_tracker_t* colyseus_ref_tracker_create(void) {
 
     tracker->refs = NULL;
     tracker->deleted = NULL;
+    tracker->collect_count = 0;
 
     return tracker;
+}
+
+bool colyseus_ref_tracker_add_collect_listener(colyseus_ref_tracker_t* tracker,
+    colyseus_ref_collect_fn listener, void* userdata) {
+    if (!tracker || !listener) return false;
+    for (int i = 0; i < tracker->collect_count; i++) {
+        if (tracker->collect_listeners[i] == listener && tracker->collect_userdata[i] == userdata) return true;
+    }
+    if (tracker->collect_count >= COLYSEUS_REF_TRACKER_MAX_COLLECT_LISTENERS) {
+        fprintf(stderr, "colyseus-schema: ref tracker already has %d collect listeners; this one is NOT registered.\n",
+            COLYSEUS_REF_TRACKER_MAX_COLLECT_LISTENERS);
+        return false;
+    }
+    tracker->collect_listeners[tracker->collect_count] = listener;
+    tracker->collect_userdata[tracker->collect_count] = userdata;
+    tracker->collect_count++;
+    return true;
+}
+
+void colyseus_ref_tracker_remove_collect_listener(colyseus_ref_tracker_t* tracker,
+    colyseus_ref_collect_fn listener, void* userdata) {
+    if (!tracker) return;
+    for (int i = 0; i < tracker->collect_count; i++) {
+        if (tracker->collect_listeners[i] != listener || tracker->collect_userdata[i] != userdata) continue;
+        for (int j = i + 1; j < tracker->collect_count; j++) {
+            tracker->collect_listeners[j - 1] = tracker->collect_listeners[j];
+            tracker->collect_userdata[j - 1] = tracker->collect_userdata[j];
+        }
+        tracker->collect_count--;
+        return;
+    }
 }
 
 void colyseus_ref_tracker_free(colyseus_ref_tracker_t* tracker) {
@@ -409,8 +441,13 @@ void colyseus_ref_tracker_gc(colyseus_ref_tracker_t* tracker) {
                 schedule_children_for_removal(tracker, entry);
 
                 /* Then remove this entry */
+                int collected_id = entry->ref_id;
                 HASH_DEL(tracker->refs, entry);
                 free(entry);
+
+                for (int i = 0; i < tracker->collect_count; i++) {
+                    tracker->collect_listeners[i](collected_id, tracker->collect_userdata[i]);
+                }
             }
 
             colyseus_deleted_ref_t* to_delete = curr;

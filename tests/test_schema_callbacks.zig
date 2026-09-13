@@ -42,6 +42,19 @@ var on_change_collection_count: i32 = 0;
 var last_change_collection_key: ?[*:0]const u8 = null;
 var last_change_collection_value: ?*c.player_t = null;
 
+// Callback keys and string values live only for the callback — keep copies.
+var current_turn_buf: [128]u8 = undefined;
+var player_key_buf: [128]u8 = undefined;
+var change_key_buf: [128]u8 = undefined;
+
+fn copyStr(buf: *[128]u8, p: *anyopaque) [*:0]const u8 {
+    const s = std.mem.span(@as([*:0]const u8, @ptrCast(p)));
+    const n = @min(s.len, buf.len - 1);
+    @memcpy(buf[0..n], s[0..n]);
+    buf[n] = 0;
+    return @ptrCast(buf);
+}
+
 // --- Item array test globals ---
 var captured_player_ptr: ?*c.player_t = null;
 var item_add_count: i32 = 0;
@@ -59,7 +72,7 @@ fn onCurrentTurnChange(value: ?*anyopaque, previous_value: ?*anyopaque, userdata
     _ = userdata;
     listen_callback_count += 1;
     if (value) |v| {
-        last_current_turn = @ptrCast(v);
+        last_current_turn = copyStr(&current_turn_buf, v);
     }
 }
 
@@ -69,7 +82,7 @@ fn onPlayerAdd(value: ?*anyopaque, key: ?*anyopaque, userdata: ?*anyopaque) call
     on_add_callback_count += 1;
 
     if (key) |k| {
-        last_player_key = @ptrCast(k);
+        last_player_key = copyStr(&player_key_buf, k);
     }
 }
 
@@ -118,7 +131,7 @@ fn onCollectionChange(key: ?*anyopaque, value: ?*anyopaque, userdata: ?*anyopaqu
     _ = userdata;
     on_change_collection_count += 1;
     if (key) |k| {
-        last_change_collection_key = @ptrCast(k);
+        last_change_collection_key = copyStr(&change_key_buf, k);
     }
     if (value) |v| {
         last_change_collection_value = @ptrCast(@alignCast(v));

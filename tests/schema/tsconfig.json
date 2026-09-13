@@ -1,0 +1,12 @@
+{
+  // Only for the fixture generators here: @type() needs legacy decorators.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "skipLibCheck": true
+  },
+  "include": ["*.ts", "../../../schema-5.0/src/**/*.ts"]
+}

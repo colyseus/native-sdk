@@ -31,6 +31,8 @@ typedef struct colyseus_type_context {
 /* Callback for triggering changes after decode */
 typedef void (*colyseus_trigger_changes_fn)(colyseus_changes_t* changes, void* userdata);
 
+#define COLYSEUS_DECODER_MAX_TRIGGERS 8
+
 /*
  * Resync ("full-snapshot reconciliation") bookkeeping — identities visited
  * per collection refId during a colyseus_decoder_decode_resync() walk.
@@ -64,9 +66,12 @@ struct colyseus_decoder {
     /* Changes accumulated during decode */
     colyseus_changes_t* changes;
 
-    /* Callback for triggering changes */
-    colyseus_trigger_changes_fn trigger_changes;
-    void* trigger_userdata;
+    /* Change listeners, fired in registration order. Several can coexist: a
+     * room's predict layer and the app's own callbacks each hook in. */
+    colyseus_trigger_changes_fn trigger_changes[COLYSEUS_DECODER_MAX_TRIGGERS];
+    void* trigger_userdata[COLYSEUS_DECODER_MAX_TRIGGERS];
+    int trigger_count;
+    int trigger_index;  /* listener being dispatched; -1 between patches */
 
     /* Resync mode — an empty uthash is NULL, so the explicit bool is the
      * mode flag; `resync_visited` holds the per-collection identities. */
@@ -85,8 +90,27 @@ const colyseus_schema_vtable_t* colyseus_type_context_get(colyseus_type_context_
 colyseus_decoder_t* colyseus_decoder_create(const colyseus_schema_vtable_t* state_vtable);
 void colyseus_decoder_free(colyseus_decoder_t* decoder);
 
-/* Set change callback */
-void colyseus_decoder_set_trigger_callback(colyseus_decoder_t* decoder, 
+/*
+ * Adds a change listener; every decoded patch is handed to each listener in
+ * registration order. Re-adding a registered pair is a no-op. Returns false
+ * (and logs) when COLYSEUS_DECODER_MAX_TRIGGERS listeners are already in —
+ * the listener would otherwise never fire.
+ */
+bool colyseus_decoder_set_trigger_callback(colyseus_decoder_t* decoder,
+    colyseus_trigger_changes_fn callback, void* userdata);
+
+/* Removes the listener registered with this exact callback + userdata. Safe
+ * from inside a dispatch: listeners after it still run for that patch. */
+void colyseus_decoder_remove_trigger_callback(colyseus_decoder_t* decoder,
+    colyseus_trigger_changes_fn callback, void* userdata);
+
+/*
+ * True while a patch is being dispatched and this listener has not finished
+ * it yet (it is running, or queued behind the current one). Whatever it
+ * registers now will still see this patch's changes through it — which is
+ * how the callbacks layer decides to skip an `immediate` call.
+ */
+bool colyseus_decoder_trigger_pending(const colyseus_decoder_t* decoder,
     colyseus_trigger_changes_fn callback, void* userdata);
 
 /* Decode state update */
