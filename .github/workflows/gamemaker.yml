@@ -35,8 +35,8 @@ jobs:
   check-version:
     runs-on: ubuntu-latest
     outputs:
-      changed: ${{ steps.version-check.outputs.changed || 'true' }}
-      version: ${{ steps.version-check.outputs.version }}
+      changed: ${{ github.event_name == 'workflow_dispatch' || steps.version-check.outputs.changed || 'true' }}
+      version: ${{ steps.version-check.outputs.version || steps.manual.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,6 +49,7 @@ jobs:
       # HEAD^ is the previous commit on a push and the base branch on a
       # pull_request, so one comparison answers it without a commit list.
       - name: Check version changes
+        if: github.event_name != 'workflow_dispatch'
         id: version-check
         run: |
           file=platforms/gamemaker/version.json
@@ -57,6 +58,13 @@ jobs:
           if [ "$version" = "$before" ]; then changed=false; else changed=true; fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      # A manual run (workflow_dispatch) releases whatever version.json says —
+      # the way to re-cut a version whose push-triggered build failed.
+      - name: Read version (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        id: manual
+        run: echo "version=$(jq -r .version platforms/gamemaker/version.json)" >> "$GITHUB_OUTPUT"
 
       - name: Log version info
         run: |

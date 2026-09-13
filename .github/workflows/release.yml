@@ -1,6 +1,9 @@
 name: Native SDK Pre-built Binaries
 
 on:
+  # A manual run releases whatever build.zig.zon says — the way to re-cut a
+  # version whose push-triggered run failed.
+  workflow_dispatch:
   push:
     paths:
       - 'src/**'
