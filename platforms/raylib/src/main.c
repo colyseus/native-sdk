@@ -371,6 +371,10 @@ static void draw_players(void) {
 }
 
 static void update_draw_frame(void) {
+    // Network IO, decode and every callback happen here, on this thread, so
+    // the state walked by draw_players() can't change under it mid-frame.
+    colyseus_poll();
+
     // Setup callbacks once we have state
     if (joined && !callbacks_setup && room && room->serializer) {
         setup_state_callbacks();
@@ -412,10 +416,17 @@ static void update_draw_frame(void) {
     EndDrawing();
 }
 
-int main(void) {
+int main(int argc, char** argv) {
     printf("Colyseus Raylib Example\n");
     printf("=======================\n");
     fflush(stdout);
+
+    // Optional frame budget, for unattended smoke runs: `raylib_colyseus 300`
+    int max_frames = argc > 1 ? atoi(argv[1]) : 0;
+
+    // Before any connect: the SDK then delivers everything inside
+    // colyseus_poll(), which the frame loop calls.
+    colyseus_set_polled(true);
 
     // Initialize raylib
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Colyseus Raylib Example");
@@ -458,7 +469,7 @@ int main(void) {
 
 #else
     // Native main game loop
-    while (!WindowShouldClose()) {
+    for (int frame = 0; !WindowShouldClose() && (max_frames <= 0 || frame < max_frames); frame++) {
         update_draw_frame();
     }
 

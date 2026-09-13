@@ -104,4 +104,6 @@ Then open `http://localhost:8080` in your browser.
 - Schema types come from `src/test_room_state.h`, generated against the
   `test_room` state in `example-server/`
 - Messages are encoded using msgpack via zig-msgpack
-- Network I/O runs on a background thread (automatic polling)
+- Runs the SDK polled: `colyseus_set_polled(true)` at startup and one
+  `colyseus_poll()` per frame, so network IO, decode and every callback happen
+  on the main thread and the state `draw_players()` walks never changes under it

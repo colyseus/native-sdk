@@ -18,6 +18,7 @@
 
 #include "gamemaker_internal.h"
 
+#include "../../../include/colyseus/client.h"
 #include "../../../include/colyseus/room.h"
 #include "../../../include/colyseus/room_clock.h"
 #include "../../../include/colyseus/input_handle.h"
@@ -361,8 +362,10 @@ GM_EXPORT double colyseus_gm_clock_stat(double clock_h, double which) {
     }
 }
 
+/* colyseus_process()'s per-frame drive: sockets, decode, matchmaking results,
+ * latency and reconnection, all on the GML thread. */
 GM_EXPORT void colyseus_gm_reconnect_poll(void) {
-    colyseus_reconnect_poll();
+    colyseus_poll();
 }
 
 // =============================================================================

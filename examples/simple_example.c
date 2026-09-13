@@ -90,6 +90,10 @@ int main() {
 
     signal(SIGINT, sigint_handler);
 
+    // Deliver every callback inside colyseus_poll(), on this thread. Set it
+    // before connecting.
+    colyseus_set_polled(true);
+
     colyseus_settings_t* settings = colyseus_settings_create();
     if (!settings) {
         printf("Failed to create settings\n");
@@ -128,8 +132,10 @@ int main() {
     printf("Waiting for connection (Ctrl+C to exit)\n\n");
     fflush(stdout);
 
+    // The frame loop: one poll per frame
     while (keep_running) {
-        sleep(1);
+        colyseus_poll();
+        usleep(16000);
     }
 
     printf("\nCleaning up\n");
@@ -139,7 +145,11 @@ int main() {
         printf("Leaving room\n");
         fflush(stdout);
         colyseus_room_leave(room, true);
-        sleep(1);
+        // keep polling, or on_leave never arrives
+        for (int i = 0; i < 60; i++) {
+            colyseus_poll();
+            usleep(16000);
+        }
         colyseus_room_free(room);
     }
 

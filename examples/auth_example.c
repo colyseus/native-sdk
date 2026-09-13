@@ -36,6 +36,9 @@ int main() {
 
     signal(SIGINT, sigint_handler);
 
+    // Deliver every callback inside colyseus_poll(), on this thread
+    colyseus_set_polled(true);
+
     colyseus_settings_t* settings = colyseus_settings_create();
     if (!settings) {
         printf("Failed to create settings\n");
@@ -84,9 +87,11 @@ int main() {
         NULL
     );
 
-    // Wait for authentication to complete
+    // Auth calls block and answer before returning; a real app would also be
+    // polling here, once per frame
     while (keep_running) {
-        usleep(100000); // 100ms
+        colyseus_poll();
+        usleep(16000);
     }
 
     colyseus_client_free(client);

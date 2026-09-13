@@ -7,6 +7,7 @@
  *   2) blackholed host   -> fails at ~timeout_ms (not an OS-length hang)
  *   3) select over both  -> picks the healthy endpoint
  */
+#include <colyseus/client.h>
 #include <colyseus/latency.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -32,13 +33,20 @@ static void on_select(const char* best_endpoint, double best_latency_ms, void* u
     g_done++;
 }
 
+/* results arrive inside colyseus_poll(), on this thread */
 static void wait_for(int n, int max_ms) {
     int waited = 0;
-    while (g_done < n && waited < max_ms) { usleep(20000); waited += 20; }
+    while (g_done < n && waited < max_ms) {
+        colyseus_poll();
+        usleep(16000);
+        waited += 16;
+    }
 }
 
 int main(int argc, char** argv) {
     const char* host = (argc > 1) ? argv[1] : "ws://127.0.0.1:2567";
+
+    colyseus_set_polled(true);
     const char* blackhole = "ws://10.255.255.1:9999";
 
     colyseus_latency_options_t opt = {0};

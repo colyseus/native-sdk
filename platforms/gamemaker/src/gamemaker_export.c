@@ -583,7 +583,20 @@ GM_EXPORT double colyseus_gm_is_ready(void) {
 // GameMaker Exported Functions — Client
 // =============================================================================
 
+/* Everything the core delivers — sockets, matchmaking results, reconnects,
+ * latency probes — runs inside colyseus_poll(), which colyseus_process()
+ * drives on the GML thread. Set before the first connect: a socket keeps
+ * the mode it started in. */
+static void gm_runtime_init(void) {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    colyseus_set_polled(true);
+}
+
 GM_EXPORT double colyseus_gm_client_create(const char* endpoint) {
+    gm_runtime_init();
+
     colyseus_settings_t* settings = colyseus_settings_create();
     if (!settings) {
         return 0.0;
@@ -1392,11 +1405,10 @@ GM_EXPORT double colyseus_gm_poll_event(void) {
     }
 
     if (!event_queue_pop(&g_current_event)) {
-        // Queue drained — deliver anything already RECEIVED (sitting in the
-        // serializing netdelay queue) within this same poll loop, so the
-        // wrap's thread serialization never delays a packet that has landed
-        // (JOIN and its state arrive in the same colyseus_process() call).
-        colyseus_netdelay_pump();
+        // Queue drained — poll again, so anything that landed meanwhile is
+        // delivered within this same colyseus_process() call (JOIN and its
+        // state arrive together) instead of a frame later.
+        colyseus_poll();
         if (!event_queue_pop(&g_current_event)) {
             memset(&g_current_event, 0, sizeof(g_current_event));
             return 0.0;
