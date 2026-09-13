@@ -16,6 +16,7 @@ var test_failed: c_int = 0;
 var joined: c_int = 0;
 var state_received: c_int = 0;
 var message_received: c_int = 0;
+var left = std.atomic.Value(bool).init(false); // set on the transport thread
 
 fn onJoin(userdata: ?*anyopaque) callconv(.c) void {
     _ = userdata;
@@ -44,6 +45,7 @@ fn onLeave(code: c_int, reason: [*c]const u8, userdata: ?*anyopaque) callconv(.c
     _ = code;
     _ = reason;
     _ = userdata;
+    left.store(true, .seq_cst);
 }
 
 fn onError(code: c_int, message: [*c]const u8, userdata: ?*anyopaque) callconv(.c) void {
@@ -140,9 +142,15 @@ test "integration: full connection flow" {
     try testing.expectEqualStrings("Hello world", std.mem.span(state.mySynchronizedProperty));
 
     c.colyseus_room_leave(room.?, true);
-    defer c.colyseus_room_free(room.?);
+    // Free only once the leave has been dispatched: the transport thread runs
+    // the room's callbacks, and a free under them trips room.c's guard.
+    var waited: u64 = 0;
+    while ((!left.load(.seq_cst) or @atomicLoad(c_int, &room.?.*.dispatch_depth, .seq_cst) != 0) and
+        waited < 5000) : (waited += 10)
+    {
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
+    c.colyseus_room_free(room.?);
 
     try testing.expect(test_passed == 1);
-
-    std.Thread.sleep(100 * std.time.ns_per_ms);
 }

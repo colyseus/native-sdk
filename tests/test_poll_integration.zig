@@ -272,7 +272,8 @@ test "poll: a reconnect that gives up tears down and reports on the polling thre
 
     forceDrop();
     try testing.expect(pollUntil(S.dropped, 5000));
-    try testing.expect(pollUntil(S.gaveUp, 5000));
+    // Windows takes ~2s to refuse each connect to a closed local port
+    try testing.expect(pollUntil(S.gaveUp, 20000));
     try testing.expect(!c.colyseus_room_is_reconnecting(S.room));
     try testing.expectEqual(@as(u32, 0), S.reconnects.load(.seq_cst));
     try testing.expectEqual(@as(u32, 0), aff.wrong.load(.seq_cst));
