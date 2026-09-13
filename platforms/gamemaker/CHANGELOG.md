@@ -2,6 +2,22 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.2
+
+### Fixed
+
+- Input fields staged at 0 now reach the server: the first input frame carries
+  every field. A field left at 0 used to stay unset on the server, and a
+  `defineInput` `sanitize` range turns unset into its minimum — a player moved
+  on its own until the first key press.
+- Freeing a room no longer reads memory that was freed with it, which could
+  crash the game when a room closed.
+- The SDK now runs entirely on the game thread, inside `colyseus_process()`:
+  joins, state, reconnection and latency results no longer come from background
+  threads, so a reconnect that gives up can't tear state down while GML reads
+  it. Messages sent from GML also leave immediately instead of on the next
+  frame. No GML changes needed.
+
 ## 0.18.1
 
 ### Fixed

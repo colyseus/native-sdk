@@ -6,10 +6,32 @@ All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
 ### Fixed
 
+- Input fields staged at 0 now reach the server: the first input frame carries
+  every field. A field left at 0 used to stay unset on the server, and a
+  `defineInput` `sanitize` range turns unset into its minimum — a player moved
+  on its own until the first key press.
 - `onAdd` with `immediate` now replays already-present `ArraySchema` items
   oldest-first. It replayed them newest-first, so anything built from that
   first pass came out reversed. Thanks @zahmad12!
   [#30](https://github.com/colyseus/native-sdk/issues/30)
+- State callbacks keep firing once a `Predict` is attached to the room. Creating
+  one silenced `listen`, `onAdd` and `onRemove` after the first state.
+- `listen` reports the value each change carried, even when one patch sets a
+  field twice, as an entity re-entering a `StateView` does. It could report
+  another field's value, or read a freed string.
+- State callbacks now behave like the JS SDK's: a re-sent unchanged value isn't
+  reported, `immediate` from inside a callback doesn't deliver twice, an entity
+  re-entering view doesn't inherit its old listeners, and an `onAdd` registered
+  before its collection exists can be removed with its handle.
+- Every room event — join, state, messages, leave, drop and reconnect — now
+  reaches Dart inside `Colyseus.pump()` or the poll timer, never from one of the
+  SDK's own threads, so disposing a room no longer races a leave or drop in
+  flight.
+
+### Deprecated
+
+- `Colyseus.serializedInbound` does nothing: decoding always happens inside
+  `Colyseus.pump()`.
 
 ## 0.18.1
 

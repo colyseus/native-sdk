@@ -2,6 +2,24 @@
 
 All notable changes to the Colyseus Swift SDK will be documented in this file.
 
+## 0.18.5
+
+### Fixed
+
+- Input fields staged at 0 now reach the server: the first input frame carries
+  every field. A field left at 0 used to stay unset on the server, and a
+  `defineInput` `sanitize` range turns unset into its minimum — a player moved
+  on its own until the first key press.
+
+### Changed
+
+- Every room callback, `onJoin`, `onDrop`, `onReconnect` and `onLeave`
+  included, now runs inside `Colyseus.pump()` on the thread that pumps — the
+  main queue unless you pump yourself. Some used to arrive on the SDK's own
+  threads, racing your frame loop.
+- `Colyseus.serializedInbound` is deprecated: inbound traffic is always decoded
+  inside the pump.
+
 ## 0.18.2
 
 ### Fixed

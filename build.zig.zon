@@ -1,6 +1,8 @@
 .{
     .name = .colyseus_sdk,
-    .version = "0.18.4",
+    .version = "0.18.5",
+    // Advisory only; build.zig enforces 0.15.x, since 0.16 reworked the std APIs it uses.
+    .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .zig_msgpack = .{
             .url = "git+https://github.com/zigcc/zig-msgpack?ref=main#47c15d217efebd17a585dd04125f9b6b6f659d5a",

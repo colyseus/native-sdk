@@ -2,6 +2,67 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.18.2
+
+### Added
+
+- `room.state`, the same value as `room.get_state()`.
+- Typed schemas can declare the server's `t.quantized(...)` fields:
+  `Field.new("yaw", Colyseus.Schema.QUANTIZED, {"min": 0.0, "max": TAU, "mode": "wrap"})`.
+
+### Changed
+
+- Schema callbacks and room signals now fire synchronously inside
+  `Colyseus.poll()`, in the order the server sent them: `joined`, the first
+  state's `on_add`/`listen`, then `state_changed`. They used to arrive a frame
+  late through `call_deferred`. Web exports still defer.
+- With `set_state_type(YourSchema)`, `room.get_state()` returns your typed root
+  (one object, kept current) instead of rebuilding a Dictionary on every call.
+- Map and array fields on typed instances are live: the same Dictionary/Array
+  stays current as the server adds, removes and reorders items, primitive
+  collections like `array<uint8>` included.
+- A removed entity's `__ref_id` goes back to `-1` once the SDK lets go of it,
+  since the server reuses ids.
+- `predict.value()` returns the decoded value for fields that aren't attached,
+  and the last received value for an entity that's gone. NAN now only means the
+  object has no such numeric field.
+- In a reconciler step, `state` and `cmd` read integer fields as `int` and
+  booleans as `bool`, and `ctx.memo()` can freeze any value (a Dictionary, an
+  Array...), not just one float.
+- `Colyseus.Callbacks.of(room)` returns the same registry every time for a room.
+- With `room.set_latency()`, delayed packets now arrive without calling
+  `room.net_pump()` each frame; `Colyseus.poll()` releases them.
+- Matchmaking results, automatic reconnection (including giving up) and
+  latency probes are also handled inside `Colyseus.poll()` on the main thread,
+  so a failed reconnect no longer tears the room down from a worker thread.
+
+### Fixed
+
+- Input fields staged at 0 now reach the server: the first input frame carries
+  every field. A field left at 0 used to stay unset on the server, and a
+  `defineInput` `sanitize` range turns unset into its minimum — a player moved
+  on its own until the first key press.
+- `listen()` on `number` and quantized fields delivered `null` instead of the value.
+- `room.leave()` is a consented leave again: the server runs `onLeave` right
+  away and `left` reports code 4000. It used to look like a dropped connection,
+  so the server held the seat for `allowReconnection()`.
+- Games no longer crash after a few minutes of play: state is decoded on the
+  main thread, inside `Colyseus.poll()`, instead of on the socket's thread.
+- `Colyseus.Callbacks` went silent after the first state once a
+  `Colyseus.Predict` existed on the same room.
+- `predict.value()` on a removed entity could read a different entity that the
+  server later sent under the same id.
+- Callbacks registered before the room joined never fired; they now go live
+  right after `joined` and replay what's already there.
+- Registrations past the 256th on one `Colyseus.Callbacks` silently did nothing.
+  There's no cap now, and a registration that can't work (unknown field,
+  removed target) returns `-1` with an error.
+- `set_state_type()` after the room joined could crash; it's ignored with an
+  error now.
+- Arrays of primitives (`array<uint8>`, `array<string>`...) could list their
+  first items twice when you joined right after the room filled them, with
+  `on_add` firing twice per item.
+
 ## 0.18.1
 
 ### Fixed

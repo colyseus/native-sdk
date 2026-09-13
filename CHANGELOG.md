@@ -3,6 +3,54 @@
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
 Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
 
+## 0.18.5
+
+### Added
+
+- `colyseus_poll()`: with `colyseus_set_polled(true)` set once at startup, every
+  callback — matchmaking results, room and state events, auto-reconnection,
+  latency probes — runs inside the poll, on the thread that calls it, so a frame
+  loop can read room state without racing a background decoder. This is the
+  recommended setup for native apps; threaded delivery stays the default for now.
+- In polled mode a message sent from the polling thread goes out immediately
+  instead of on the next poll, so input doesn't gain a frame of latency.
+
+### Changed
+
+- Callback keys and string values are now valid only during the callback —
+  copy them if you keep them past it. They used to point into the decoded state
+  and could be freed or overwritten before your callback read them.
+- A decoder takes up to 8 change listeners: `colyseus_callbacks_create` returns
+  NULL once they're taken, and `colyseus_decoder_set_trigger_callback` returns
+  `bool`.
+- A connection refused on the spot is reported as
+  `on_close(1006, "Connection refused")` from the thread driving the socket,
+  instead of a synchronous `on_error` inside the connect call.
+- Building with a zig other than 0.15.x stops with a message naming the version
+  to install, and a checkout missing its submodules says which command to run.
+  Outside CI, `zig build test` skips the server-backed suites with a warning
+  when no example-server is running.
+
+### Fixed
+
+- Input fields staged at 0 now reach the server: the first input frame carries
+  every field. A field that never changed from 0 used to stay unset on the
+  server, and a `defineInput` `sanitize` range turns unset into its minimum — a
+  player drifted left/up on its own until the first key press.
+- Schema callbacks keep firing after a `colyseus_predict` is created for the
+  same room; the predict layer used to take over the decoder's only change hook.
+- Connecting to `localhost` works when the server only listens on IPv6 (Vite's
+  default), and writing to a closed connection no longer kills the process with
+  SIGPIPE.
+- An entity re-entering a `StateView` no longer hands callbacks a freed value —
+  one patch sets its fields twice — and no longer fires the listeners of the
+  instance it replaced.
+- Callbacks now match the TypeScript SDK: a value re-sent unchanged doesn't fire
+  `listen`, and removing a callback while callbacks are being dispatched is
+  safe.
+- Freeing a room before a callbacks layer created on it no longer reads freed
+  memory when that layer is freed afterwards.
+
 ## 0.18.4
 
 ### Fixed
