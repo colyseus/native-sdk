@@ -50,6 +50,8 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   safe.
 - Freeing a room before a callbacks layer created on it no longer reads freed
   memory when that layer is freed afterwards.
+- On Windows, a connection the server refuses now fails instead of waiting
+  forever, so auto-reconnection gives up as it should.
 
 ## 0.18.4
 

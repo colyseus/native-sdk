@@ -12,6 +12,8 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
   on its own until the first key press.
 - Freeing a room no longer reads memory that was freed with it, which could
   crash the game when a room closed.
+- On Windows, a connection the server refuses now fails instead of waiting
+  forever, so automatic reconnection gives up as it should.
 - The SDK now runs entirely on the game thread, inside `colyseus_process()`:
   joins, state, reconnection and latency results no longer come from background
   threads, so a reconnect that gives up can't tear state down while GML reads

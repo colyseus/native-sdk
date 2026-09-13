@@ -828,18 +828,23 @@ static int ws_connect_tick(colyseus_ws_transport_data_t* data) {
         return -1;
     }
 
-    fd_set write_fds;
+    /* Windows reports a failed connect in the except set, never as writable —
+     * without it a refused connect stays "connecting" forever. */
+    fd_set write_fds, except_fds;
     FD_ZERO(&write_fds);
+    FD_ZERO(&except_fds);
     FD_SET(data->socket_fd, &write_fds);
+    FD_SET(data->socket_fd, &except_fds);
 
     struct timeval tv = {0, 0};
-    int ret = select(data->socket_fd + 1, NULL, &write_fds, NULL, &tv);
+    int ret = select(data->socket_fd + 1, NULL, &write_fds, &except_fds, &tv);
 
-    if (ret > 0 && FD_ISSET(data->socket_fd, &write_fds)) {
+    bool failed = ret > 0 && FD_ISSET(data->socket_fd, &except_fds);
+    if (ret > 0 && (failed || FD_ISSET(data->socket_fd, &write_fds))) {
         int error = 0;
         socklen_t len = sizeof(error);
         getsockopt(data->socket_fd, SOL_SOCKET, SO_ERROR, (char*)&error, &len);
-        if (error == 0) {
+        if (error == 0 && !failed) {
             ws_free_addrs(data);
             return 1;
         }

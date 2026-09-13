@@ -42,6 +42,8 @@ All notable changes to the Colyseus Godot SDK will be documented in this file.
   every field. A field left at 0 used to stay unset on the server, and a
   `defineInput` `sanitize` range turns unset into its minimum — a player moved
   on its own until the first key press.
+- On Windows, a connection the server refuses now fails instead of waiting
+  forever, so automatic reconnection gives up as it should.
 - `listen()` on `number` and quantized fields delivered `null` instead of the value.
 - `room.leave()` is a consented leave again: the server runs `onLeave` right
   away and `left` reports code 4000. It used to look like a dropped connection,
