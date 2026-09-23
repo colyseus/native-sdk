@@ -19,7 +19,12 @@ extern fn colyseus_gm_event_get_message() [*c]const u8;
 extern fn colyseus_gm_room_send(room: f64, type: [*c]const u8, data: [*c]const u8) void;
 extern fn colyseus_gm_room_leave(room: f64) void;
 extern fn colyseus_gm_room_free(room: f64) void;
+extern fn colyseus_gm_room_get_state(room: f64) f64;
+extern fn colyseus_gm_room_get_session_id(room: f64) [*c]const u8;
+extern fn colyseus_gm_schema_get_number(instance: f64, field: [*c]const u8) f64;
+extern fn colyseus_gm_map_get(instance: f64, field: [*c]const u8, key: [*c]const u8) f64;
 extern fn gm_room_ref_get(ref: c_int) ?*c.colyseus_room_t;
+extern fn gm_schema_resolve(handle: f64) ?*anyopaque;
 
 const EVENT_ROOM_JOIN: f64 = 1;
 const EVENT_ROOM_MESSAGE: f64 = 3;
@@ -101,3 +106,40 @@ test "gm: matchmaking, decode and sends run on the GML thread" {
     try testing.expect(processUntil(EVENT_ROOM_LEAVE, 5000));
     colyseus_gm_room_free(ref);
 }
+
+// Decoded instances cross to GML as room_ref * 2^32 + refId, never as
+// pointers (issue #32), and resolve through the room's ref tracker.
+test "gm: decoded instances are room-scoped handles, dead once the room is gone" {
+    const client = colyseus_gm_client_create("ws://localhost:2567");
+    try testing.expect(client != 0);
+    defer colyseus_gm_client_free(client);
+
+    const ref = colyseus_gm_client_create_room(client, "test_room", "{\"private\":true}");
+    try testing.expect(ref != 0);
+    try testing.expect(processUntil(EVENT_ROOM_JOIN, 10_000));
+
+    const scale: f64 = 4294967296.0;
+    const state = colyseus_gm_room_get_state(ref);
+    try testing.expectEqual(ref * scale, state); // the root is refId 0
+    try testing.expect(gm_schema_resolve(state) != null);
+
+    var me: f64 = 0;
+    var timer = std.time.Timer.start() catch unreachable;
+    while (me == 0 and timer.read() < 5000 * ms) : (std.Thread.sleep(5 * ms)) {
+        _ = process(0, null);
+        me = colyseus_gm_map_get(state, "players", colyseus_gm_room_get_session_id(ref));
+    }
+    const players = colyseus_gm_schema_get_number(state, "players");
+    for ([_]f64{ players, me }) |child| {
+        try testing.expect(child > ref * scale and child < (ref + 1) * scale);
+        try testing.expectEqual(@floor(child), child);
+        try testing.expect(gm_schema_resolve(child) != null);
+    }
+
+    colyseus_gm_room_leave(ref);
+    try testing.expect(processUntil(EVENT_ROOM_LEAVE, 5000));
+    colyseus_gm_room_free(ref);
+    try testing.expect(gm_schema_resolve(state) == null);
+    try testing.expect(gm_schema_resolve(me) == null);
+}
+

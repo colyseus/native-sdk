@@ -44,6 +44,8 @@ typedef struct {
     double room_handle;
     int value_type;      // colyseus_field_type_t
     int callback_type;   // 0=listen, 1=on_add, 2=on_remove, 3=on_change_instance, 4=on_change_collection
+    bool child_is_schema;  // ref field, or collection of schemas
+    int child_type;        // collection of primitives: the item's colyseus_field_type_t
     colyseus_callback_handle_t native_handle;
 } gm_callback_entry_t;
 
@@ -66,6 +68,8 @@ typedef struct {
 } gm_room_ref_t;
 
 static gm_room_ref_t g_room_refs[MAX_ROOM_REFS] = {0};
+
+static void gm_handle_drop_owner(int room_ref);
 
 // Global event queue
 static gm_event_queue_t g_event_queue = {0};
@@ -141,6 +145,7 @@ static void gm_callbacks_wrapper_free(gm_callbacks_wrapper_t* wrapper) {
     if (wrapper->native) {
         colyseus_callbacks_free(wrapper->native);
     }
+    gm_handle_drop_ptr(wrapper);
     free(wrapper);
 }
 
@@ -184,10 +189,117 @@ static void gm_room_ref_release(int ref) {
             entry->callbacks[i] = NULL;
         }
         entry->callbacks_count = 0;
+        gm_handle_drop_owner(ref);
 
         entry->room = NULL;
         entry->in_use = false;
     }
+}
+
+// =============================================================================
+// Handles (see gamemaker_internal.h)
+// =============================================================================
+
+#define GM_HANDLE_MAX_SLOTS 0xFFFF
+#define GM_SCHEMA_ROOM_SCALE 4294967296.0  // 2^32: room_ref * scale + refId
+
+typedef struct {
+    void* ptr;
+    uint16_t generation;
+    uint8_t kind;
+    uint8_t owner;  // room ref, 0 = none
+} gm_handle_slot_t;
+
+static gm_handle_slot_t* g_handle_slots = NULL;
+static int g_handle_slot_count = 0;
+
+static double gm_handle_encode(int slot) {
+    return (double)g_handle_slots[slot].generation * 65536.0 + (double)(slot + 1);
+}
+
+static gm_handle_slot_t* gm_handle_slot(double handle) {
+    if (!(handle >= 65536.0 && handle < 2147483648.0) || handle != (double)(int64_t)handle) return NULL;
+    int64_t h = (int64_t)handle;
+    int slot = (int)(h & 0xFFFF) - 1;
+    if (slot < 0 || slot >= g_handle_slot_count) return NULL;
+    gm_handle_slot_t* s = &g_handle_slots[slot];
+    return (s->ptr && s->generation == (uint16_t)(h >> 16)) ? s : NULL;
+}
+
+double gm_handle_put(void* ptr, gm_handle_kind_t kind, int owner_room_ref) {
+    if (!ptr) return 0.0;
+
+    // the same object keeps its handle: GML caches structs by handle
+    int free_slot = -1;
+    for (int i = 0; i < g_handle_slot_count; i++) {
+        if (g_handle_slots[i].ptr == ptr && g_handle_slots[i].kind == kind) return gm_handle_encode(i);
+        if (!g_handle_slots[i].ptr && free_slot < 0) free_slot = i;
+    }
+
+    if (free_slot < 0) {
+        if (g_handle_slot_count >= GM_HANDLE_MAX_SLOTS) return 0.0;
+        int cap = g_handle_slot_count ? g_handle_slot_count * 2 : 64;
+        if (cap > GM_HANDLE_MAX_SLOTS) cap = GM_HANDLE_MAX_SLOTS;
+        gm_handle_slot_t* grown = realloc(g_handle_slots, (size_t)cap * sizeof(*grown));
+        if (!grown) return 0.0;
+        memset(grown + g_handle_slot_count, 0, (size_t)(cap - g_handle_slot_count) * sizeof(*grown));
+        g_handle_slots = grown;
+        free_slot = g_handle_slot_count;
+        g_handle_slot_count = cap;
+    }
+
+    gm_handle_slot_t* s = &g_handle_slots[free_slot];
+    // generations run 1..0x7FFF: keeps every handle above the room refs and below 2^31
+    s->generation = (uint16_t)(s->generation % 0x7FFF + 1);
+    s->ptr = ptr;
+    s->kind = (uint8_t)kind;
+    s->owner = (uint8_t)(owner_room_ref > 0 ? owner_room_ref : 0);
+    return gm_handle_encode(free_slot);
+}
+
+void* gm_handle_get(double handle, gm_handle_kind_t kind) {
+    gm_handle_slot_t* s = gm_handle_slot(handle);
+    return (s && s->kind == kind) ? s->ptr : NULL;
+}
+
+void gm_handle_drop_ptr(const void* ptr) {
+    if (!ptr) return;
+    for (int i = 0; i < g_handle_slot_count; i++) {
+        if (g_handle_slots[i].ptr == ptr) g_handle_slots[i].ptr = NULL;
+    }
+}
+
+static void gm_handle_drop_owner(int room_ref) {
+    for (int i = 0; i < g_handle_slot_count; i++) {
+        if (g_handle_slots[i].owner == room_ref) g_handle_slots[i].ptr = NULL;
+    }
+}
+
+double gm_schema_handle(int room_ref, void* instance) {
+    if (!instance) return 0.0;
+    int ref_id = COLYSEUS_REF_ID(instance);
+    if (room_ref < 1 || ref_id < 0) return gm_handle_put(instance, GM_HANDLE_SCHEMA, room_ref);
+    return (double)room_ref * GM_SCHEMA_ROOM_SCALE + (double)ref_id;
+}
+
+double gm_schema_child_handle(double parent_handle, void* child) {
+    if (!child) return 0.0;
+    if (parent_handle >= GM_SCHEMA_ROOM_SCALE) {
+        return gm_schema_handle((int)(parent_handle / GM_SCHEMA_ROOM_SCALE), child);
+    }
+    gm_handle_slot_t* parent = gm_handle_slot(parent_handle);
+    return gm_handle_put(child, GM_HANDLE_SCHEMA, parent ? parent->owner : 0);
+}
+
+void* gm_schema_resolve(double handle) {
+    if (handle >= GM_SCHEMA_ROOM_SCALE) {
+        int room_ref = (int)(handle / GM_SCHEMA_ROOM_SCALE);
+        double ref_id = handle - (double)room_ref * GM_SCHEMA_ROOM_SCALE;
+        colyseus_room_t* room = gm_room_ref_get(room_ref);
+        if (!room || !room->serializer || !room->serializer->decoder) return NULL;
+        return colyseus_ref_tracker_get(room->serializer->decoder->refs, (int)ref_id);
+    }
+    return gm_handle_get(handle, GM_HANDLE_SCHEMA);
 }
 
 // =============================================================================
@@ -279,13 +391,19 @@ static void gm_resolve_field_type(void* instance, const char* property, gm_callb
                 colyseus_dynamic_vtable_find_field_by_name(dyn, property);
             if (field) {
                 entry->value_type = field->type;
+                entry->child_is_schema = field->child_vtable != NULL;
+                entry->child_type = field->child_primitive_type
+                    ? (int)colyseus_field_type_from_string(field->child_primitive_type) : -1;
             }
         }
     } else {
         for (int i = 0; i < schema->__vtable->field_count; i++) {
-            if (schema->__vtable->fields[i].name &&
-                strcmp(schema->__vtable->fields[i].name, property) == 0) {
-                entry->value_type = schema->__vtable->fields[i].type;
+            const colyseus_field_t* f = &schema->__vtable->fields[i];
+            if (f->name && strcmp(f->name, property) == 0) {
+                entry->value_type = f->type;
+                entry->child_is_schema = f->child_vtable != NULL;
+                entry->child_type = f->child_primitive_type
+                    ? (int)colyseus_field_type_from_string(f->child_primitive_type) : -1;
                 break;
             }
         }
@@ -298,8 +416,7 @@ static void gm_resolve_field_type(void* instance, const char* property, gm_callb
 
 // Snapshot a value into the event struct based on field type
 void gm_snapshot_value(int value_type, void* value,
-    double* out_number, char* out_string, size_t out_string_size,
-    double* out_instance)
+    double* out_number, char* out_string, size_t out_string_size)
 {
     if (!value) return;
 
@@ -341,12 +458,21 @@ void gm_snapshot_value(int value_type, void* value,
         case COLYSEUS_FIELD_UINT64:
             *out_number = (double)*(uint64_t*)value;
             break;
-        case COLYSEUS_FIELD_REF:
-            // previous-value snapshots pass NULL here — they have no instance slot
-            if (out_instance) *out_instance = (double)(uintptr_t)value;
-            break;
         default:
             break;
+    }
+}
+
+// A collection item into the event: a handle for schema children, the value
+// itself for primitives (value_type then names the primitive's type).
+static void gm_snapshot_item(const gm_callback_entry_t* entry, void* value, gm_event_t* event) {
+    if (!value) return;
+    if (entry->child_is_schema) {
+        event->schema.instance_handle = gm_schema_handle((int)entry->room_handle, value);
+    } else if (entry->child_type >= 0) {
+        event->schema.value_type = entry->child_type;
+        gm_snapshot_value(entry->child_type, value, &event->schema.value_number,
+            event->schema.value_string, sizeof(event->schema.value_string));
     }
 }
 
@@ -360,13 +486,16 @@ static void gm_property_change_trampoline(void* value, void* previous_value, voi
     event.callback_handle = (double)entry->index;
     event.schema.value_type = entry->value_type;
 
-    gm_snapshot_value(entry->value_type, value,
-        &event.schema.value_number, event.schema.value_string,
-        sizeof(event.schema.value_string), &event.schema.instance_handle);
-
-    gm_snapshot_value(entry->value_type, previous_value,
-        &event.schema.prev_value_number, event.schema.prev_value_string,
-        sizeof(event.schema.prev_value_string), NULL);
+    if (entry->value_type == COLYSEUS_FIELD_REF) {
+        event.schema.instance_handle = gm_schema_handle((int)entry->room_handle, value);
+    } else {
+        gm_snapshot_value(entry->value_type, value,
+            &event.schema.value_number, event.schema.value_string,
+            sizeof(event.schema.value_string));
+        gm_snapshot_value(entry->value_type, previous_value,
+            &event.schema.prev_value_number, event.schema.prev_value_string,
+            sizeof(event.schema.prev_value_string));
+    }
 
     gm_event_queue_push(&event);
 }
@@ -381,9 +510,7 @@ static void gm_item_add_trampoline(void* value, void* key, void* userdata) {
     event.callback_handle = (double)entry->index;
     event.schema.value_type = entry->value_type;
 
-    if (value) {
-        event.schema.instance_handle = (double)(uintptr_t)value;
-    }
+    gm_snapshot_item(entry, value, &event);
 
     if (key) {
         // MAP keys are char*, ARRAY keys are int*
@@ -409,9 +536,7 @@ static void gm_item_remove_trampoline(void* value, void* key, void* userdata) {
     event.callback_handle = (double)entry->index;
     event.schema.value_type = entry->value_type;
 
-    if (value) {
-        event.schema.instance_handle = (double)(uintptr_t)value;
-    }
+    gm_snapshot_item(entry, value, &event);
 
     if (key) {
         if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
@@ -447,9 +572,7 @@ static void gm_collection_change_trampoline(void* key, void* value, void* userda
     event.callback_handle = (double)entry->index;
     event.schema.value_type = entry->value_type;
 
-    if (value) {
-        event.schema.instance_handle = (double)(uintptr_t)value;
-    }
+    gm_snapshot_item(entry, value, &event);
 
     if (key) {
         if (entry->value_type == COLYSEUS_FIELD_ARRAY) {
@@ -646,18 +769,19 @@ GM_EXPORT double colyseus_gm_client_create(const char* endpoint) {
         return 0.0;
     }
 
-    return (double)(uintptr_t)client;
+    return gm_handle_put(client, GM_HANDLE_CLIENT, 0);
 }
 
 GM_EXPORT void colyseus_gm_client_free(double client_handle) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (client) {
+        gm_handle_drop_ptr(client);
         colyseus_client_free(client);
     }
 }
 
 GM_EXPORT double colyseus_gm_client_join_or_create(double client_handle, const char* room_name, const char* options_json) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client) {
         return 0.0;
     }
@@ -680,7 +804,7 @@ GM_EXPORT double colyseus_gm_client_join_or_create(double client_handle, const c
 }
 
 GM_EXPORT double colyseus_gm_client_create_room(double client_handle, const char* room_name, const char* options_json) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client) {
         return 0.0;
     }
@@ -703,7 +827,7 @@ GM_EXPORT double colyseus_gm_client_create_room(double client_handle, const char
 }
 
 GM_EXPORT double colyseus_gm_client_join(double client_handle, const char* room_name, const char* options_json) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client) {
         return 0.0;
     }
@@ -726,7 +850,7 @@ GM_EXPORT double colyseus_gm_client_join(double client_handle, const char* room_
 }
 
 GM_EXPORT double colyseus_gm_client_join_by_id(double client_handle, const char* room_id, const char* options_json) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client) {
         return 0.0;
     }
@@ -749,7 +873,7 @@ GM_EXPORT double colyseus_gm_client_join_by_id(double client_handle, const char*
 }
 
 GM_EXPORT double colyseus_gm_client_reconnect(double client_handle, const char* reconnection_token) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client) {
         return 0.0;
     }
@@ -900,15 +1024,14 @@ GM_EXPORT void colyseus_gm_room_set_reconnection_options(double room_handle,
 GM_EXPORT double colyseus_gm_room_get_state(double room_handle) {
     colyseus_room_t* room = gm_room_ref_get((int)room_handle);
     if (!room) return 0.0;
-    void* state = colyseus_room_get_state(room);
-    return (double)(uintptr_t)state;
+    return gm_schema_handle((int)room_handle, colyseus_room_get_state(room));
 }
 
 GM_EXPORT const char* colyseus_gm_schema_get_string(double instance_handle, const char* field_name) {
     static char buffer[4096];
     buffer[0] = '\0';
 
-    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    colyseus_schema_t* schema = gm_schema_resolve(instance_handle);
     if (!schema || !field_name) return buffer;
 
     if (colyseus_vtable_is_dynamic(schema->__vtable)) {
@@ -934,7 +1057,7 @@ GM_EXPORT const char* colyseus_gm_schema_get_string(double instance_handle, cons
 }
 
 GM_EXPORT double colyseus_gm_schema_get_field_type(double instance_handle, const char* field_name) {
-    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    colyseus_schema_t* schema = gm_schema_resolve(instance_handle);
     if (!schema || !field_name) return -1.0;
 
     if (colyseus_vtable_is_dynamic(schema->__vtable)) {
@@ -953,7 +1076,7 @@ GM_EXPORT double colyseus_gm_schema_get_field_type(double instance_handle, const
 }
 
 GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const char* field_name) {
-    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    colyseus_schema_t* schema = gm_schema_resolve(instance_handle);
     if (!schema || !field_name) return 0.0;
 
     if (colyseus_vtable_is_dynamic(schema->__vtable)) {
@@ -973,9 +1096,9 @@ GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const cha
             case COLYSEUS_FIELD_UINT32:  return (double)val->data.u32;
             case COLYSEUS_FIELD_INT64:   return (double)val->data.i64;
             case COLYSEUS_FIELD_UINT64:  return (double)val->data.u64;
-            case COLYSEUS_FIELD_REF:     return val->data.ref ? (double)(uintptr_t)val->data.ref : 0.0;
-            case COLYSEUS_FIELD_ARRAY:   return val->data.array ? (double)(uintptr_t)val->data.array : 0.0;
-            case COLYSEUS_FIELD_MAP:     return val->data.map ? (double)(uintptr_t)val->data.map : 0.0;
+            case COLYSEUS_FIELD_REF:
+            case COLYSEUS_FIELD_ARRAY:
+            case COLYSEUS_FIELD_MAP:     return gm_schema_child_handle(instance_handle, val->data.ptr);
             default: return 0.0;
         }
     } else {
@@ -998,10 +1121,8 @@ GM_EXPORT double colyseus_gm_schema_get_number(double instance_handle, const cha
                     case COLYSEUS_FIELD_UINT64:  return (double)*(uint64_t*)ptr;
                     case COLYSEUS_FIELD_REF:
                     case COLYSEUS_FIELD_ARRAY:
-                    case COLYSEUS_FIELD_MAP: {
-                        void* ref = *(void**)ptr;
-                        return ref ? (double)(uintptr_t)ref : 0.0;
-                    }
+                    case COLYSEUS_FIELD_MAP:
+                        return gm_schema_child_handle(instance_handle, *(void**)ptr);
                     default: return 0.0;
                 }
             }
@@ -1022,7 +1143,7 @@ GM_EXPORT double colyseus_gm_schema_get(double instance_handle, const char* fiel
     gm_schema_get_result.number = 0.0;
     gm_schema_get_result.string[0] = '\0';
 
-    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    colyseus_schema_t* schema = gm_schema_resolve(instance_handle);
     if (!schema || !field_name) return -1.0;
 
     double type = colyseus_gm_schema_get_field_type(instance_handle, field_name);
@@ -1050,7 +1171,7 @@ GM_EXPORT double colyseus_gm_schema_get_result_number(void) {
 // =============================================================================
 
 GM_EXPORT double colyseus_gm_schema_field_count(double instance_handle) {
-    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    colyseus_schema_t* schema = gm_schema_resolve(instance_handle);
     if (!schema || !schema->__vtable) return 0.0;
 
     if (colyseus_vtable_is_dynamic(schema->__vtable)) {
@@ -1062,7 +1183,7 @@ GM_EXPORT double colyseus_gm_schema_field_count(double instance_handle) {
 }
 
 GM_EXPORT const char* colyseus_gm_schema_field_name(double instance_handle, double index) {
-    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    colyseus_schema_t* schema = gm_schema_resolve(instance_handle);
     int idx = (int)index;
     if (!schema || !schema->__vtable || idx < 0) return "";
 
@@ -1077,7 +1198,7 @@ GM_EXPORT const char* colyseus_gm_schema_field_name(double instance_handle, doub
 }
 
 GM_EXPORT double colyseus_gm_schema_field_type_at(double instance_handle, double index) {
-    colyseus_schema_t* schema = (colyseus_schema_t*)(uintptr_t)instance_handle;
+    colyseus_schema_t* schema = gm_schema_resolve(instance_handle);
     int idx = (int)index;
     if (!schema || !schema->__vtable || idx < 0) return -1.0;
 
@@ -1092,32 +1213,35 @@ GM_EXPORT double colyseus_gm_schema_field_type_at(double instance_handle, double
 }
 
 // The collection behind a MAP/ARRAY field, or NULL when the field is absent
-// or of another type. get_number already hands collections back as handles.
+// or of another type.
 static void* gm_resolve_collection(double instance_handle, const char* field_name,
                                    colyseus_field_type_t want) {
     if (!field_name) return NULL;
     if ((int)colyseus_gm_schema_get_field_type(instance_handle, field_name) != (int)want) return NULL;
-    return (void*)(uintptr_t)colyseus_gm_schema_get_number(instance_handle, field_name);
+    return gm_schema_resolve(colyseus_gm_schema_get_number(instance_handle, field_name));
 }
 
 GM_EXPORT double colyseus_gm_map_get(double instance_handle, const char* field_name, const char* key) {
     colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
-    if (!map || !key) return 0.0;
-    void* item = colyseus_map_schema_get(map, key);
-    return (double)(uintptr_t)item;
+    if (!map || !key || !map->has_schema_child) return 0.0;
+    return gm_schema_child_handle(instance_handle, colyseus_map_schema_get(map, key));
 }
 
 // A collection entry lands in the schema_get result slot exactly like a
 // field read: the return is the COLYSEUS_FIELD_* type, the value is a handle
 // for schema children or the decoded primitive.
-static double gm_collection_item_result(void* item, bool has_schema_child,
-                                        const char* child_primitive_type) {
+static double gm_collection_item_result(double instance_handle, void* item,
+                                        bool has_schema_child, const char* child_primitive_type) {
     int t = has_schema_child ? COLYSEUS_FIELD_REF
                              : (int)colyseus_field_type_from_string(child_primitive_type);
     gm_schema_get_result.number = 0.0;
     gm_schema_get_result.string[0] = '\0';
-    gm_snapshot_value(t, item, &gm_schema_get_result.number, gm_schema_get_result.string,
-                      sizeof(gm_schema_get_result.string), &gm_schema_get_result.number);
+    if (has_schema_child) {
+        gm_schema_get_result.number = gm_schema_child_handle(instance_handle, item);
+    } else {
+        gm_snapshot_value(t, item, &gm_schema_get_result.number, gm_schema_get_result.string,
+                          sizeof(gm_schema_get_result.string));
+    }
     return (double)t;
 }
 
@@ -1147,14 +1271,14 @@ GM_EXPORT double colyseus_gm_map_value_at(double instance_handle, const char* fi
     colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
     colyseus_map_item_t* item = gm_map_item_at(map, (int)index);
     if (!item) return -1.0;
-    return gm_collection_item_result(item->value, map->has_schema_child, map->child_primitive_type);
+    return gm_collection_item_result(instance_handle, item->value, map->has_schema_child, map->child_primitive_type);
 }
 
 GM_EXPORT double colyseus_gm_map_get_value(double instance_handle, const char* field_name, const char* key) {
     colyseus_map_schema_t* map = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_MAP);
     void* item = (map && key) ? colyseus_map_schema_get(map, key) : NULL;
     if (!item) return -1.0;
-    return gm_collection_item_result(item, map->has_schema_child, map->child_primitive_type);
+    return gm_collection_item_result(instance_handle, item, map->has_schema_child, map->child_primitive_type);
 }
 
 GM_EXPORT double colyseus_gm_array_size(double instance_handle, const char* field_name) {
@@ -1166,7 +1290,7 @@ GM_EXPORT double colyseus_gm_array_value_at(double instance_handle, const char* 
     colyseus_array_schema_t* arr = gm_resolve_collection(instance_handle, field_name, COLYSEUS_FIELD_ARRAY);
     void* item = (arr && index >= 0 && index < arr->count) ? colyseus_array_schema_get(arr, (int)index) : NULL;
     if (!item) return -1.0;
-    return gm_collection_item_result(item, arr->has_schema_child, arr->child_primitive_type);
+    return gm_collection_item_result(instance_handle, item, arr->has_schema_child, arr->child_primitive_type);
 }
 
 // =============================================================================
@@ -1187,11 +1311,11 @@ GM_EXPORT double colyseus_gm_callbacks_create(double room_handle) {
     // Track for auto-free when room is freed
     gm_room_ref_add_callbacks((int)room_handle, wrapper);
 
-    return (double)(uintptr_t)wrapper;
+    return gm_handle_put(wrapper, GM_HANDLE_CALLBACKS, (int)room_handle);
 }
 
 GM_EXPORT void colyseus_gm_callbacks_free(double callbacks_handle) {
-    gm_callbacks_wrapper_t* wrapper = (gm_callbacks_wrapper_t*)(uintptr_t)callbacks_handle;
+    gm_callbacks_wrapper_t* wrapper = gm_handle_get(callbacks_handle, GM_HANDLE_CALLBACKS);
     if (!wrapper) return;
 
     // Unregister from room ref so it won't be double-freed
@@ -1201,7 +1325,7 @@ GM_EXPORT void colyseus_gm_callbacks_free(double callbacks_handle) {
 }
 
 GM_EXPORT void colyseus_gm_callbacks_remove_handle(double callbacks_handle, double callback_handle) {
-    gm_callbacks_wrapper_t* wrapper = (gm_callbacks_wrapper_t*)(uintptr_t)callbacks_handle;
+    gm_callbacks_wrapper_t* wrapper = gm_handle_get(callbacks_handle, GM_HANDLE_CALLBACKS);
     int idx = (int)callback_handle;
     if (!wrapper || !wrapper->native || idx < 0 || idx >= MAX_GM_CALLBACK_ENTRIES) return;
 
@@ -1213,7 +1337,7 @@ GM_EXPORT void colyseus_gm_callbacks_remove_handle(double callbacks_handle, doub
 }
 
 GM_EXPORT double colyseus_gm_callbacks_listen(double callbacks_handle, double instance_handle, const char* property) {
-    gm_callbacks_wrapper_t* wrapper = (gm_callbacks_wrapper_t*)(uintptr_t)callbacks_handle;
+    gm_callbacks_wrapper_t* wrapper = gm_handle_get(callbacks_handle, GM_HANDLE_CALLBACKS);
     if (!wrapper || !wrapper->native || !property) return -1.0;
 
     // Resolve instance: 0.0 = root state
@@ -1221,7 +1345,7 @@ GM_EXPORT double colyseus_gm_callbacks_listen(double callbacks_handle, double in
     if (instance_handle == 0.0) {
         instance = colyseus_room_get_state(wrapper->room);
     } else {
-        instance = (void*)(uintptr_t)instance_handle;
+        instance = gm_schema_resolve(instance_handle);
     }
     if (!instance) return -1.0;
 
@@ -1248,14 +1372,14 @@ GM_EXPORT double colyseus_gm_callbacks_listen(double callbacks_handle, double in
 }
 
 GM_EXPORT double colyseus_gm_callbacks_on_add(double callbacks_handle, double instance_handle, const char* property) {
-    gm_callbacks_wrapper_t* wrapper = (gm_callbacks_wrapper_t*)(uintptr_t)callbacks_handle;
+    gm_callbacks_wrapper_t* wrapper = gm_handle_get(callbacks_handle, GM_HANDLE_CALLBACKS);
     if (!wrapper || !wrapper->native || !property) return -1.0;
 
     void* instance = NULL;
     if (instance_handle == 0.0) {
         instance = colyseus_room_get_state(wrapper->room);
     } else {
-        instance = (void*)(uintptr_t)instance_handle;
+        instance = gm_schema_resolve(instance_handle);
     }
     if (!instance) return -1.0;
 
@@ -1282,14 +1406,14 @@ GM_EXPORT double colyseus_gm_callbacks_on_add(double callbacks_handle, double in
 }
 
 GM_EXPORT double colyseus_gm_callbacks_on_remove(double callbacks_handle, double instance_handle, const char* property) {
-    gm_callbacks_wrapper_t* wrapper = (gm_callbacks_wrapper_t*)(uintptr_t)callbacks_handle;
+    gm_callbacks_wrapper_t* wrapper = gm_handle_get(callbacks_handle, GM_HANDLE_CALLBACKS);
     if (!wrapper || !wrapper->native || !property) return -1.0;
 
     void* instance = NULL;
     if (instance_handle == 0.0) {
         instance = colyseus_room_get_state(wrapper->room);
     } else {
-        instance = (void*)(uintptr_t)instance_handle;
+        instance = gm_schema_resolve(instance_handle);
     }
     if (!instance) return -1.0;
 
@@ -1315,14 +1439,14 @@ GM_EXPORT double colyseus_gm_callbacks_on_remove(double callbacks_handle, double
 }
 
 GM_EXPORT double colyseus_gm_callbacks_on_change_instance(double callbacks_handle, double instance_handle) {
-    gm_callbacks_wrapper_t* wrapper = (gm_callbacks_wrapper_t*)(uintptr_t)callbacks_handle;
+    gm_callbacks_wrapper_t* wrapper = gm_handle_get(callbacks_handle, GM_HANDLE_CALLBACKS);
     if (!wrapper || !wrapper->native) return -1.0;
 
     void* instance = NULL;
     if (instance_handle == 0.0) {
         instance = colyseus_room_get_state(wrapper->room);
     } else {
-        instance = (void*)(uintptr_t)instance_handle;
+        instance = gm_schema_resolve(instance_handle);
     }
     if (!instance) return -1.0;
 
@@ -1345,14 +1469,14 @@ GM_EXPORT double colyseus_gm_callbacks_on_change_instance(double callbacks_handl
 }
 
 GM_EXPORT double colyseus_gm_callbacks_on_change_collection(double callbacks_handle, double instance_handle, const char* property) {
-    gm_callbacks_wrapper_t* wrapper = (gm_callbacks_wrapper_t*)(uintptr_t)callbacks_handle;
+    gm_callbacks_wrapper_t* wrapper = gm_handle_get(callbacks_handle, GM_HANDLE_CALLBACKS);
     if (!wrapper || !wrapper->native || !property) return -1.0;
 
     void* instance = NULL;
     if (instance_handle == 0.0) {
         instance = colyseus_room_get_state(wrapper->room);
     } else {
-        instance = (void*)(uintptr_t)instance_handle;
+        instance = gm_schema_resolve(instance_handle);
     }
     if (!instance) return -1.0;
 
@@ -1485,42 +1609,44 @@ GM_EXPORT double colyseus_gm_event_get_value_type(void) {
 
 GM_EXPORT double colyseus_gm_message_create_map(void) {
     colyseus_message_t* msg = colyseus_message_map_create();
-    return (double)(uintptr_t)msg;
+    return gm_handle_put(msg, GM_HANDLE_MESSAGE, 0);
 }
 
 GM_EXPORT void colyseus_gm_message_put_str(double msg_handle, const char* key, const char* value) {
-    colyseus_message_t* msg = (colyseus_message_t*)(uintptr_t)msg_handle;
+    colyseus_message_t* msg = gm_handle_get(msg_handle, GM_HANDLE_MESSAGE);
     if (msg && key && value) {
         colyseus_message_map_put_str(msg, key, value);
     }
 }
 
 GM_EXPORT void colyseus_gm_message_put_number(double msg_handle, const char* key, double value) {
-    colyseus_message_t* msg = (colyseus_message_t*)(uintptr_t)msg_handle;
+    colyseus_message_t* msg = gm_handle_get(msg_handle, GM_HANDLE_MESSAGE);
     if (msg && key) {
         colyseus_message_map_put_float(msg, key, value);
     }
 }
 
 GM_EXPORT void colyseus_gm_message_put_bool(double msg_handle, const char* key, double value) {
-    colyseus_message_t* msg = (colyseus_message_t*)(uintptr_t)msg_handle;
+    colyseus_message_t* msg = gm_handle_get(msg_handle, GM_HANDLE_MESSAGE);
     if (msg && key) {
         colyseus_message_map_put_bool(msg, key, value > 0.5);
     }
 }
 
 GM_EXPORT void colyseus_gm_message_free(double msg_handle) {
-    colyseus_message_t* msg = (colyseus_message_t*)(uintptr_t)msg_handle;
+    colyseus_message_t* msg = gm_handle_get(msg_handle, GM_HANDLE_MESSAGE);
     if (msg) {
+        gm_handle_drop_ptr(msg);
         colyseus_message_free(msg);
     }
 }
 
 GM_EXPORT void colyseus_gm_room_send_message(double room_handle, const char* type, double msg_handle) {
     colyseus_room_t* room = gm_room_ref_get((int)room_handle);
-    colyseus_message_t* msg = (colyseus_message_t*)(uintptr_t)msg_handle;
+    colyseus_message_t* msg = gm_handle_get(msg_handle, GM_HANDLE_MESSAGE);
     if (room && msg) {
         colyseus_room_send(room, type, msg);
+        gm_handle_drop_ptr(msg);
         colyseus_message_free(msg);
     }
 }
@@ -1531,22 +1657,22 @@ GM_EXPORT void colyseus_gm_room_send_message(double room_handle, const char* typ
 
 GM_EXPORT double colyseus_gm_message_create_bool(double value) {
     colyseus_message_t* msg = colyseus_message_bool_create(value > 0.5);
-    return (double)(uintptr_t)msg;
+    return gm_handle_put(msg, GM_HANDLE_MESSAGE, 0);
 }
 
 GM_EXPORT double colyseus_gm_message_create_number(double value) {
     colyseus_message_t* msg = colyseus_message_float_create(value);
-    return (double)(uintptr_t)msg;
+    return gm_handle_put(msg, GM_HANDLE_MESSAGE, 0);
 }
 
 GM_EXPORT double colyseus_gm_message_create_int(double value) {
     colyseus_message_t* msg = colyseus_message_int_create((int64_t)value);
-    return (double)(uintptr_t)msg;
+    return gm_handle_put(msg, GM_HANDLE_MESSAGE, 0);
 }
 
 GM_EXPORT double colyseus_gm_message_create_string(const char* value) {
     colyseus_message_t* msg = colyseus_message_str_create(value ? value : "");
-    return (double)(uintptr_t)msg;
+    return gm_handle_put(msg, GM_HANDLE_MESSAGE, 0);
 }
 
 // =============================================================================
@@ -1978,7 +2104,7 @@ static double gm_auth_dispatch(colyseus_auth_t* auth, int op, const char* email,
  */
 GM_EXPORT double colyseus_gm_auth_request(double client_handle, double op,
     const char* payload_json) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !client->auth) return 0.0;
 
     cJSON* root = (payload_json && payload_json[0]) ? cJSON_Parse(payload_json) : NULL;
@@ -2002,7 +2128,7 @@ GM_EXPORT double colyseus_gm_auth_request(double client_handle, double op,
 }
 
 GM_EXPORT void colyseus_gm_auth_signout(double client_handle) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (client && client->auth) colyseus_auth_signout(client->auth);
 }
 
@@ -2011,43 +2137,43 @@ GM_EXPORT void colyseus_gm_auth_signout(double client_handle) {
 // =============================================================================
 
 GM_EXPORT double colyseus_gm_http_get(double client_handle, const char* path) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !client->http) return 0.0;
     return gm_http_dispatch(client->http, 0, path, NULL);
 }
 
 GM_EXPORT double colyseus_gm_http_post(double client_handle, const char* path, const char* body) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !client->http) return 0.0;
     return gm_http_dispatch(client->http, 1, path, body);
 }
 
 GM_EXPORT double colyseus_gm_http_put(double client_handle, const char* path, const char* body) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !client->http) return 0.0;
     return gm_http_dispatch(client->http, 2, path, body);
 }
 
 GM_EXPORT double colyseus_gm_http_delete(double client_handle, const char* path) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !client->http) return 0.0;
     return gm_http_dispatch(client->http, 3, path, NULL);
 }
 
 GM_EXPORT double colyseus_gm_http_patch(double client_handle, const char* path, const char* body) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !client->http) return 0.0;
     return gm_http_dispatch(client->http, 4, path, body);
 }
 
 GM_EXPORT void colyseus_gm_auth_set_token(double client_handle, const char* token) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !client->http) return;
     colyseus_http_set_auth_token(client->http, token);
 }
 
 GM_EXPORT const char* colyseus_gm_auth_get_token(double client_handle) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !client->http) return "";
     const char* token = colyseus_http_get_auth_token(client->http);
     return token ? token : "";
@@ -2118,7 +2244,7 @@ static void gm_latency_fill_tls(colyseus_client_t* client, colyseus_latency_opti
 }
 
 GM_EXPORT double colyseus_gm_get_latency(double client_handle, const char* endpoint, double timeout_ms) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !endpoint) return 0.0;
 
     g_http_request_counter += 1.0;
@@ -2137,7 +2263,7 @@ GM_EXPORT double colyseus_gm_get_latency(double client_handle, const char* endpo
 
 // endpoints_json: a JSON array of endpoint strings (GML: json_stringify(array))
 GM_EXPORT double colyseus_gm_select_by_latency(double client_handle, const char* endpoints_json, double timeout_ms) {
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !endpoints_json) return 0.0;
 
     cJSON* arr = cJSON_Parse(endpoints_json);
@@ -2239,7 +2365,7 @@ GM_EXPORT const char* colyseus_gm_http_get_endpoint(double client_handle) {
     static char endpoint_buf[1024];
     endpoint_buf[0] = '\0';
 
-    colyseus_client_t* client = (colyseus_client_t*)(uintptr_t)client_handle;
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
     if (!client || !client->settings) return endpoint_buf;
 
     char* ep = colyseus_settings_get_webrequest_endpoint(client->settings);

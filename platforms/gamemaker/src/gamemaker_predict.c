@@ -117,7 +117,7 @@ typedef struct {
 } gm_spawn_local_t;
 
 // =============================================================================
-// Resolvers — room refs (1..16) vs raw component pointers
+// Resolvers — room refs (1..16) vs component slot handles (offline tests)
 // =============================================================================
 
 static bool gm_is_room_ref(double h) {
@@ -130,7 +130,7 @@ static colyseus_input_handle_t* gm_input_resolve(double h) {
         colyseus_room_t* room = gm_room_ref_get((int)h);
         return room ? colyseus_room_input(room, NULL, NULL) : NULL;
     }
-    return (colyseus_input_handle_t*)(uintptr_t)h;
+    return gm_handle_get(h, GM_HANDLE_INPUT);
 }
 
 static colyseus_room_clock_t* gm_clock_resolve(double h) {
@@ -139,7 +139,7 @@ static colyseus_room_clock_t* gm_clock_resolve(double h) {
         colyseus_room_t* room = gm_room_ref_get((int)h);
         return room ? colyseus_room_get_clock(room) : NULL;
     }
-    return (colyseus_room_clock_t*)(uintptr_t)h;
+    return gm_handle_get(h, GM_HANDLE_CLOCK);
 }
 
 static gm_predict_entry_t* gm_predict_entry(double id) {
@@ -167,7 +167,7 @@ static gm_spawns_entry_t* gm_spawns_entry(double id) {
 }
 
 static colyseus_schema_t* gm_instance(double h) {
-    return (colyseus_schema_t*)(uintptr_t)h;
+    return gm_schema_resolve(h);
 }
 
 static int gm_split_csv(const char* csv, char storage[][GM_NAME_MAX],
@@ -497,7 +497,7 @@ GM_EXPORT double colyseus_gm_predict_create(double room_ref) {
 /* component-built variant for offline tests (no room needed) */
 GM_EXPORT double colyseus_gm_predict_create_with(double callbacks_ptr, double clock_ptr) {
     colyseus_predict_t* p = colyseus_predict_create(
-        (colyseus_callbacks_t*)(uintptr_t)callbacks_ptr,
+        gm_handle_get(callbacks_ptr, GM_HANDLE_NATIVE_CALLBACKS),
         gm_clock_resolve(clock_ptr));
     return gm_predict_register(p, 0);
 }
@@ -894,13 +894,13 @@ GM_EXPORT double colyseus_gm_sim_part_mirror(double recon_id, const char* name) 
     if (!e) return 0;
     colyseus_sim_world_t* world = colyseus_sim_reconciler_world(e->recon);
     if (!world) return 0;
-    void* part = colyseus_sim_world_part(world, name);
-    return part ? (double)(uintptr_t)part : 0;
+    return gm_handle_put(colyseus_sim_world_part(world, name), GM_HANDLE_SCHEMA, e->room_ref);
 }
 
 GM_EXPORT void colyseus_gm_recon_free(double recon_id) {
     gm_recon_entry_t* e = gm_recon_entry(recon_id);
     if (!e) return;
+    gm_handle_drop_ptr(colyseus_reconciler_state(e->recon));
     colyseus_reconciler_free(e->recon);
     memset(e, 0, sizeof(*e));
 }
@@ -972,8 +972,7 @@ GM_EXPORT double colyseus_gm_recon_value(double recon_id, const char* field_or_p
 GM_EXPORT double colyseus_gm_recon_state(double recon_id) {
     gm_recon_entry_t* e = gm_recon_entry(recon_id);
     if (!e) return 0;
-    colyseus_schema_t* mirror = colyseus_reconciler_state(e->recon);
-    return mirror ? (double)(uintptr_t)mirror : 0;
+    return gm_handle_put(colyseus_reconciler_state(e->recon), GM_HANDLE_SCHEMA, e->room_ref);
 }
 
 GM_EXPORT double colyseus_gm_recon_stat(double recon_id, double which) {
@@ -1378,7 +1377,7 @@ GM_EXPORT double colyseus_gm_spawns_entry_stat(double spawns_id, double which) {
         case 0: return (double)e->cur->id;
         case 1: return e->cur->confirmed ? 1 : 0;
         case 2: return e->cur->lead_ms;
-        case 3: return e->cur->server ? (double)(uintptr_t)e->cur->server : 0;
+        case 3: return gm_schema_handle(e->room_ref, (void*)e->cur->server);
         case 4: return e->cur->local ? 1 : 0;
         default: return 0;
     }

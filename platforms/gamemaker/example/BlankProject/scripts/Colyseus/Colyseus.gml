@@ -380,6 +380,17 @@ function __colyseus_schema_to_struct(_handle) {
     return _struct;
 }
 
+/// @ignore Internal: the item an ITEM_ADD/ITEM_REMOVE event carries: a struct
+/// for schema children, the value itself for collections of primitives.
+function __colyseus_event_item() {
+    var _ref = colyseus_event_get_instance();
+    if (_ref != 0) return __colyseus_schema_to_struct(_ref);
+    var _type = colyseus_event_get_value_type();
+    if (_type == COLYSEUS_TYPE_STRING) return colyseus_event_get_value_string();
+    if (_type < COLYSEUS_TYPE_REF) return colyseus_event_get_value_number();
+    return undefined;
+}
+
 /// @ignore Internal: Refresh a GML struct's fields from the current C schema data.
 function __colyseus_schema_refresh_struct(_handle, _struct) {
     var _count = __colyseus_schema_field_count(_handle);
@@ -976,11 +987,7 @@ function colyseus_process() {
                 var _cb = colyseus_event_get_callback_handle();
                 var _handler = global.__colyseus_schema_handlers[_cb];
                 if (_handler != undefined) {
-                    var _ref = colyseus_event_get_instance();
-                    _handler(
-                        (_ref != 0) ? __colyseus_schema_to_struct(_ref) : _ref,
-                        colyseus_event_get_key_string()
-                    );
+                    _handler(__colyseus_event_item(), colyseus_event_get_key_string());
                 }
                 break;
 
@@ -989,10 +996,7 @@ function colyseus_process() {
                 var _handler = global.__colyseus_schema_handlers[_cb];
                 if (_handler != undefined) {
                     var _ref = colyseus_event_get_instance();
-                    _handler(
-                        (_ref != 0) ? __colyseus_schema_to_struct(_ref) : _ref,
-                        colyseus_event_get_key_string()
-                    );
+                    _handler(__colyseus_event_item(), colyseus_event_get_key_string());
                     // Clean up cached struct for the removed instance
                     if (_ref != 0 && ds_map_exists(global.__colyseus_schema_structs, _ref)) {
                         ds_map_delete(global.__colyseus_schema_structs, _ref);

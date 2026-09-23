@@ -28,6 +28,7 @@ const c = @cImport({
     @cInclude("schema/reckon_ball.h");
     @cInclude("schema/sim_paddle.h");
     @cInclude("schema/sim_puck.h");
+    @cInclude("gamemaker_internal.h");
 });
 
 // ── bridge exports (no public header — the .yy is the contract) ─────────
@@ -115,8 +116,18 @@ fn stubGetClock(userdata: ?*anyopaque) callconv(.c) ?*c.colyseus_room_clock_t {
     return null;
 }
 
+/// Handles the way the bridge mints them: GML never sees a pointer.
 fn h(ptr: anytype) f64 {
-    return @floatFromInt(@intFromPtr(ptr));
+    return c.gm_handle_put(@ptrCast(ptr), c.GM_HANDLE_SCHEMA, 0);
+}
+fn hInput(ptr: anytype) f64 {
+    return c.gm_handle_put(@ptrCast(ptr), c.GM_HANDLE_INPUT, 0);
+}
+fn hClock(ptr: anytype) f64 {
+    return c.gm_handle_put(@ptrCast(ptr), c.GM_HANDLE_CLOCK, 0);
+}
+fn hCallbacks(ptr: anytype) f64 {
+    return c.gm_handle_put(@ptrCast(ptr), c.GM_HANDLE_NATIVE_CALLBACKS, 0);
 }
 
 /// Drain the bridge's shared event queue — every test's prologue.
@@ -181,7 +192,7 @@ test "gm_reconciler_core" {
     try testing.expect(pid > 0);
     defer colyseus_gm_predict_free(pid);
 
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), hInput(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(rid > 0);
 
     NOW = 0;
@@ -198,8 +209,8 @@ test "gm_reconciler_core" {
         gmPumpAccel(rid);
         const ax: f64 = if (i <= 3) 10 else -5;
         sent_ax[i] = ax;
-        _ = colyseus_gm_input_set(h(rig.handle), "ax", ax);
-        _ = colyseus_gm_input_send(h(rig.handle));
+        _ = colyseus_gm_input_set(hInput(rig.handle), "ax", ax);
+        _ = colyseus_gm_input_send(hInput(rig.handle));
         gmPumpAccel(rid);
         if (i >= 3) {
             serverStep(truth, sent_ax[i - 2]);
@@ -228,8 +239,8 @@ test "gm_reconciler_core" {
     try testing.expectEqual(@as(f64, 100), colyseus_gm_recon_stat(rid, 2));
     try testing.expectEqual(@as(f64, 100.3), colyseus_gm_recon_value(rid, "x"));
     // input stats readable through the bridge
-    try testing.expectEqual(@as(f64, 6), colyseus_gm_input_stat(h(rig.handle), 0));
-    try testing.expectEqual(@as(f64, 5), colyseus_gm_input_stat(h(rig.handle), 1));
+    try testing.expectEqual(@as(f64, 6), colyseus_gm_input_stat(hInput(rig.handle), 0));
+    try testing.expectEqual(@as(f64, 5), colyseus_gm_input_stat(hInput(rig.handle), 1));
 }
 
 // ── 2. dynamic-vtable twin (the reflection path GM production uses) ─────
@@ -249,7 +260,7 @@ test "gm_reconciler_dynamic_truth" {
 
     const pid = colyseus_gm_predict_create_with(0, 0);
     defer colyseus_gm_predict_free(pid);
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), hInput(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(rid > 0);
 
     NOW = 0;
@@ -266,8 +277,8 @@ test "gm_reconciler_dynamic_truth" {
         gmPumpAccel(rid);
         const ax: f64 = if (i <= 3) 10 else -5;
         sent_ax[i] = ax;
-        _ = colyseus_gm_input_set(h(rig.handle), "ax", ax);
-        _ = colyseus_gm_input_send(h(rig.handle));
+        _ = colyseus_gm_input_set(hInput(rig.handle), "ax", ax);
+        _ = colyseus_gm_input_send(hInput(rig.handle));
         gmPumpAccel(rid);
         if (i >= 3) {
             // dynamic server step through the same bridge writes GML would use
@@ -287,7 +298,7 @@ test "gm_reconciler_dynamic_truth" {
 
     // a bare mirror must have NO userdata shadow
     const mirror_dyn: *c.colyseus_dynamic_schema_t =
-        @ptrFromInt(@as(usize, @intFromFloat(colyseus_gm_recon_state(rid))));
+        @ptrCast(@alignCast(c.gm_schema_resolve(colyseus_gm_recon_state(rid)).?));
     try testing.expect(mirror_dyn.*.userdata == null);
 }
 
@@ -327,7 +338,7 @@ test "gm_sim_reconciler_bound" {
     try testing.expectEqual(@as(f64, 1), colyseus_gm_sim_begin(pid));
     try testing.expectEqual(@as(f64, 1), colyseus_gm_sim_part("paddle", h(paddle_truth)));
     try testing.expectEqual(@as(f64, 2), colyseus_gm_sim_part("puck", h(puck_truth)));
-    const rid = colyseus_gm_sim_create(h(rig.handle), 0, 0, 50, 0);
+    const rid = colyseus_gm_sim_create(hInput(rig.handle), 0, 0, 50, 0);
     try testing.expect(rid > 0);
 
     const paddle = colyseus_gm_sim_part_mirror(rid, "paddle");
@@ -339,9 +350,9 @@ test "gm_sim_reconciler_bound" {
     _ = colyseus_gm_predict_tick(pid, NOW);
     gmPumpSim(rid, paddle, puck);
 
-    _ = colyseus_gm_input_set(h(rig.handle), "ax", 2);
-    _ = colyseus_gm_input_send(h(rig.handle));
-    _ = colyseus_gm_input_send(h(rig.handle));
+    _ = colyseus_gm_input_set(hInput(rig.handle), "ax", 2);
+    _ = colyseus_gm_input_send(hInput(rig.handle));
+    _ = colyseus_gm_input_send(hInput(rig.handle));
     gmPumpSim(rid, paddle, puck);
 
     // three read paths onto one pose: mirror, pose key, bound overlay
@@ -380,7 +391,7 @@ test "gm_predict_tick_paces" {
 
     const pid = colyseus_gm_predict_create_with(0, 0);
     defer colyseus_gm_predict_free(pid);
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), hInput(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(rid > 0);
 
     try testing.expectEqual(@as(f64, 0), colyseus_gm_predict_tick(pid, 0));
@@ -416,7 +427,7 @@ test "gm_passive_smoothing" {
     defer c.colyseus_room_clock_free(clock);
     c.colyseus_room_clock_set_patch_interval(clock, 50);
 
-    const pid = colyseus_gm_predict_create_with(h(callbacks), h(clock));
+    const pid = colyseus_gm_predict_create_with(hCallbacks(callbacks), hClock(clock));
     try testing.expect(pid > 0);
     defer colyseus_gm_predict_free(pid);
     const ent: *c.colyseus_schema_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
@@ -464,7 +475,7 @@ test "gm_reckon_value_at" {
     const clock = c.colyseus_room_clock_create().?;
     defer c.colyseus_room_clock_free(clock);
 
-    const pid = colyseus_gm_predict_create_with(h(callbacks), h(clock));
+    const pid = colyseus_gm_predict_create_with(hCallbacks(callbacks), hClock(clock));
     defer colyseus_gm_predict_free(pid);
     const ball: *c.colyseus_schema_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
 
@@ -523,20 +534,20 @@ test "gm_memo_epoch" {
 
     const pid = colyseus_gm_predict_create_with(0, 0);
     defer colyseus_gm_predict_free(pid);
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"fields\":\"x\",\"smooth_ms\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), hInput(rig.handle), "{\"fields\":\"x\",\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(rid > 0);
     const mirror = colyseus_gm_recon_state(rid);
 
     NOW = 0;
     _ = colyseus_gm_predict_tick(pid, NOW);
-    _ = colyseus_gm_input_set(h(rig.handle), "ax", 1);
-    _ = colyseus_gm_input_send(h(rig.handle));
+    _ = colyseus_gm_input_set(hInput(rig.handle), "ax", 1);
+    _ = colyseus_gm_input_send(hInput(rig.handle));
     gmPumpMemo(rid);
-    _ = colyseus_gm_input_set(h(rig.handle), "ax", 2); // memoizes 5
-    _ = colyseus_gm_input_send(h(rig.handle));
+    _ = colyseus_gm_input_set(hInput(rig.handle), "ax", 2); // memoizes 5
+    _ = colyseus_gm_input_send(hInput(rig.handle));
     gmPumpMemo(rid);
-    _ = colyseus_gm_input_set(h(rig.handle), "ax", 1);
-    _ = colyseus_gm_input_send(h(rig.handle));
+    _ = colyseus_gm_input_set(hInput(rig.handle), "ax", 1);
+    _ = colyseus_gm_input_send(hInput(rig.handle));
     gmPumpMemo(rid);
     try testing.expectEqual(@as(f64, 9), colyseus_gm_mirror_get(mirror, "x")); // 1 + 7 + 1
     try testing.expectEqual(@as(i32, 3), memo_evals);
@@ -552,7 +563,7 @@ test "gm_memo_epoch" {
 
     // epoch follow: handle reset → controller self-resets from truth
     truth.*.x = 42;
-    colyseus_gm_input_reset(h(rig.handle));
+    colyseus_gm_input_reset(hInput(rig.handle));
     NOW = 100;
     _ = colyseus_gm_predict_tick(pid, NOW);
     gmPumpMemo(rid);
@@ -593,9 +604,9 @@ test "gm_events_via_queue" {
     NOW = 1000;
     c.colyseus_room_clock_sample(clock, 1000, -1);
 
-    const pid = colyseus_gm_predict_create_with(0, h(clock));
+    const pid = colyseus_gm_predict_create_with(0, hClock(clock));
     defer colyseus_gm_predict_free(pid);
-    const cid = colyseus_gm_events_create(h(clock), 3, 0, 0);
+    const cid = colyseus_gm_events_create(hClock(clock), 3, 0, 0);
     try testing.expect(cid > 0);
     colyseus_gm_predict_drive_events(pid, cid);
 
@@ -639,7 +650,7 @@ test "gm_spawns_correlation" {
     c.colyseus_room_clock_sample(clock, 1000, -1);
 
     // recon_state doubles as the "rocket": x carries bornMs, vx == 1 marks mine
-    const sid = colyseus_gm_spawns_create(h(clock), "{\"ttl_ms\":600,\"fields\":\"x,vx\",\"owned_field\":\"vx\",\"owned_value\":\"1\",\"spawn_time_field\":\"x\",\"step_id\":1}");
+    const sid = colyseus_gm_spawns_create(hClock(clock), "{\"ttl_ms\":600,\"fields\":\"x,vx\",\"owned_field\":\"vx\",\"owned_value\":\"1\",\"spawn_time_field\":\"x\",\"step_id\":1}");
     try testing.expect(sid > 0);
     defer colyseus_gm_spawns_free(sid);
 
@@ -731,7 +742,7 @@ test "gm_value_nan_and_stale_handles" {
     truth.*.__base.__vtable = &c.recon_state_vtable;
     defer c.recon_state_vtable.destroy.?(@ptrCast(truth));
     const pid = colyseus_gm_predict_create_with(0, 0);
-    const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
+    const rid = colyseus_gm_predict_reconciler(pid, h(truth), hInput(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
     try testing.expect(!std.math.isNan(colyseus_gm_recon_value(rid, "x")));
     colyseus_gm_recon_free(rid);
     try testing.expect(std.math.isNan(colyseus_gm_recon_value(rid, "x")));
@@ -754,7 +765,7 @@ test "gm_lifecycle_and_queue_isolation" {
     while (round < 20) : (round += 1) {
         const pid = colyseus_gm_predict_create_with(0, 0);
         try testing.expect(pid > 0);
-        const rid = colyseus_gm_predict_reconciler(pid, h(truth), h(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
+        const rid = colyseus_gm_predict_reconciler(pid, h(truth), hInput(rig.handle), "{\"smooth_ms\":0,\"step_ms\":50}");
         try testing.expect(rid > 0);
         const cid = colyseus_gm_events_create(0, 0, 0, 0);
         try testing.expect(cid > 0);
@@ -766,4 +777,25 @@ test "gm_lifecycle_and_queue_isolation" {
     }
     try testing.expectEqual(@as(f64, 0), colyseus_gm_poll_event());
     try testing.expect(colyseus_gm_predict_abi_version() >= 1);
+}
+
+// https://github.com/colyseus/native-sdk/issues/32 — Android arm64 tags heap
+// pointers in the top byte. arm64 macOS/Linux ignore that byte on loads too
+// (TBI), so a tagged pointer planted here reads like one Android produced.
+test "gm_bridge_reads_through_a_tagged_heap_pointer" {
+    if (@import("builtin").cpu.arch != .aarch64) return error.SkipZigTest;
+
+    const dvt = c.colyseus_dynamic_vtable_create("tagged_truth").?;
+    defer c.colyseus_dynamic_vtable_free(dvt);
+    c.colyseus_dynamic_vtable_add_field(dvt, c.colyseus_dynamic_field_create(0, "x", c.COLYSEUS_FIELD_NUMBER, "number"));
+    const truth = c.colyseus_dynamic_schema_create(dvt).?;
+    defer c.colyseus_dynamic_schema_free(truth);
+
+    const tagged: *c.colyseus_dynamic_schema_t =
+        @ptrFromInt(@intFromPtr(truth) | (@as(usize, 0xb4) << 56));
+    const handle = h(tagged);
+    defer c.gm_handle_drop_ptr(tagged);
+
+    try testing.expectEqual(@as(f64, 1), colyseus_gm_mirror_set(handle, "x", 42.5));
+    try testing.expectEqual(@as(f64, 42.5), colyseus_gm_mirror_get(handle, "x"));
 }

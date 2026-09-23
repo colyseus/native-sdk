@@ -62,7 +62,7 @@ typedef enum {
 // Event structure for the queue
 typedef struct {
     gm_event_type_t type;
-    double room_handle;  // Room pointer as double (for GameMaker)
+    double room_handle;  // room ref
     double callback_handle;  // Shared across schema & HTTP & latency (request id) events
     int code;
     double latency_ms;   // latency events: measured / best round-trip ms
@@ -100,12 +100,51 @@ typedef struct {
 void gm_event_queue_push(const gm_event_t* event);
 struct colyseus_room* gm_room_ref_get(int ref);
 
-// Flatten one decoded field into the GML-facing event slots. Every out-param is
-// optional — the previous-value snapshot has no instance slot to write into.
+/*
+ * Handles. Every native object GML holds is an integer-valued double, never a
+ * pointer: Android arm64 tags heap pointers in the top byte, which puts them
+ * above 2^53, and a double drops their low bits (issue #32).
+ *
+ *   1..GM_MAX_ROOM_REFS          room refs
+ *   slot handles (< 2^31)        objects the bridge hands out: clients,
+ *                                messages, callbacks, predict mirrors, and
+ *                                instances that live outside a room
+ *   room_ref * 2^32 + refId      decoded schema instances and collections,
+ *                                resolved through the room's ref tracker, so
+ *                                a collected instance reads back as NULL
+ *
+ * A slot handle carries a generation, so one that outlives its object stays
+ * dead after the slot is reused. Slots with an owner room are dropped when
+ * that room is released.
+ */
+typedef enum {
+    GM_HANDLE_CLIENT = 1,
+    GM_HANDLE_MESSAGE,
+    GM_HANDLE_CALLBACKS,        // gm_callbacks_wrapper_t
+    GM_HANDLE_NATIVE_CALLBACKS, // colyseus_callbacks_t (offline predict)
+    GM_HANDLE_SCHEMA,           // an instance outside any room's decoder
+    GM_HANDLE_INPUT,            // colyseus_input_handle_t (offline predict)
+    GM_HANDLE_CLOCK,            // colyseus_room_clock_t (offline predict)
+} gm_handle_kind_t;
+
+double gm_handle_put(void* ptr, gm_handle_kind_t kind, int owner_room_ref);
+void* gm_handle_get(double handle, gm_handle_kind_t kind);
+void gm_handle_drop_ptr(const void* ptr);
+
+// Handle for an instance decoded by room_ref's decoder; room_ref 0 means the
+// instance has no room, and it gets a slot handle instead.
+double gm_schema_handle(int room_ref, void* instance);
+// Handle for a child read out of the instance behind parent_handle: stays in
+// the parent's room, or gets a slot handle with the parent's owner.
+double gm_schema_child_handle(double parent_handle, void* child);
+// The schema instance or collection behind a handle, or NULL when it is gone.
+void* gm_schema_resolve(double handle);
+
+// Flatten one decoded primitive into the GML-facing event slots. Ref values
+// are the caller's to encode — only it knows which room they came from.
 // Reachable from GML only through a live room, so it carries its own test.
 void gm_snapshot_value(int value_type, void* value,
-    double* out_number, char* out_string, size_t out_string_size,
-    double* out_instance);
+    double* out_number, char* out_string, size_t out_string_size);
 
 // implemented in gamemaker_predict.c: free every predict-layer object bound
 // to this room ref (reconcilers, spawns, event channels, predicts). Runs

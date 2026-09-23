@@ -801,4 +801,71 @@ suite(function() {
             global.__rt.room = -1;
         });
     });
+
+    // =========================================================================
+    // Primitive collections: item events carry the value, not a handle
+    // =========================================================================
+    describe("Primitive collections", function() {
+
+        beforeEach(function() {
+            test_drain_events();
+            global.__rt = { done: false, room: -1, client: -1, callbacks: -1, items: [] };
+            global.__rt.client = colyseus_client_create("http://127.0.0.1:2567");
+            global.__rt.room = colyseus_client_create_room(global.__rt.client, "binding_fixture_room", "{\"private\":true}");
+            colyseus_on_join(global.__rt.room, function(_room) {
+                global.__rt.done = true;
+            });
+            test_poll_until(global.__rt, 5000);
+            global.__rt.callbacks = colyseus_callbacks_create(global.__rt.room);
+        });
+
+        afterEach(function() {
+            colyseus_callbacks_free(global.__rt.callbacks);
+            colyseus_room_leave(global.__rt.room);
+            var _start = current_time;
+            while (current_time - _start < 300) { colyseus_process(); }
+            colyseus_room_free(global.__rt.room);
+            colyseus_client_free(global.__rt.client);
+            test_drain_events();
+        });
+
+        test("on_add and on_remove on a number map deliver the numbers", function() {
+            global.__rt.values = [];
+            colyseus_on_add(global.__rt.callbacks, "scores", function(_value, _key) {
+                array_push(global.__rt.items, "+" + _key);
+                array_push(global.__rt.values, _value);
+            });
+            colyseus_on_remove(global.__rt.callbacks, "scores", function(_value, _key) {
+                array_push(global.__rt.items, "-" + _key);
+                array_push(global.__rt.values, _value);
+            });
+
+            // one patch at a time: within a patch removals are delivered first
+            colyseus_send(global.__rt.room, "set_score", { key: "b", value: 2 });
+            var _start = current_time;
+            while (array_length(global.__rt.items) < 2 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+            colyseus_send(global.__rt.room, "delete_score", "a");
+            _start = current_time;
+            while (array_length(global.__rt.items) < 3 && current_time - _start < 3000) {
+                colyseus_process();
+            }
+
+            expect(global.__rt.items).toBeEqual(["+a", "+b", "-a"]);
+            expect(global.__rt.values).toBeEqual([1.5, 2, 1.5]);
+        });
+
+        test("on_add on a uint8 array replays the bytes", function() {
+            colyseus_on_add(global.__rt.callbacks, "bytes", function(_value, _index) {
+                array_push(global.__rt.items, _value);
+            });
+            var _start = current_time;
+            while (array_length(global.__rt.items) < 3 && current_time - _start < 2000) {
+                colyseus_process();
+            }
+
+            expect(global.__rt.items).toBeEqual([7, 8, 9]);
+        });
+    });
 });
