@@ -547,8 +547,17 @@ FLUTTER_EXPORT const char* colyseus_flutter_schema_get_string(intptr_t instance_
 
 /**
  * Get a numeric field from a schema instance
+ *
+ * Read ref/array/map fields with colyseus_flutter_schema_get_ref instead: a
+ * pointer does not survive a double on Android's tagged heap (issue #32).
  */
 FLUTTER_EXPORT double colyseus_flutter_schema_get_number(intptr_t instance_handle, const char* field_name);
+
+/**
+ * Get a ref/array/map field's child pointer from a schema instance
+ * @return The child handle, or 0 when unset or not pointer-shaped
+ */
+FLUTTER_EXPORT intptr_t colyseus_flutter_schema_get_ref(intptr_t instance_handle, const char* field_name);
 
 /**
  * Get the field type of a schema field

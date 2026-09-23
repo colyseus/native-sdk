@@ -41,15 +41,15 @@ dynamic _readField(int handle, String fieldName) {
         return _n.schemaGetString(handle, namePtr).toDartString();
 
       case SchemaFieldType.ref:
-        final ref = _n.schemaGetNumber(handle, namePtr).toInt();
+        final ref = _n.schemaGetRef(handle, namePtr);
         return ref != 0 ? SchemaInstance(ref) : null;
 
       case SchemaFieldType.array:
-        final arr = _n.schemaGetNumber(handle, namePtr).toInt();
+        final arr = _n.schemaGetRef(handle, namePtr);
         return arr != 0 ? SchemaArray(arr) : null;
 
       case SchemaFieldType.map:
-        final map = _n.schemaGetNumber(handle, namePtr).toInt();
+        final map = _n.schemaGetRef(handle, namePtr);
         return map != 0 ? SchemaMap(map) : null;
 
       case SchemaFieldType.boolean:

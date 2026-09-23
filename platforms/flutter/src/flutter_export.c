@@ -1570,6 +1570,35 @@ FLUTTER_EXPORT double colyseus_flutter_schema_get_number(intptr_t instance_handl
     return 0.0;
 }
 
+FLUTTER_EXPORT intptr_t colyseus_flutter_schema_get_ref(intptr_t instance_handle, const char* field_name) {
+    colyseus_schema_t* schema = (colyseus_schema_t*)instance_handle;
+    if (!schema || !field_name) return 0;
+
+    if (colyseus_vtable_is_dynamic(schema->__vtable)) {
+        colyseus_dynamic_value_t* val =
+            colyseus_dynamic_schema_get_by_name((colyseus_dynamic_schema_t*)schema, field_name);
+        if (!val) return 0;
+        switch (val->type) {
+            case COLYSEUS_FIELD_REF:
+            case COLYSEUS_FIELD_ARRAY:
+            case COLYSEUS_FIELD_MAP: return (intptr_t)val->data.ptr;
+            default: return 0;
+        }
+    }
+
+    for (int i = 0; i < schema->__vtable->field_count; i++) {
+        const colyseus_field_t* f = &schema->__vtable->fields[i];
+        if (!f->name || strcmp(f->name, field_name) != 0) continue;
+        switch (f->type) {
+            case COLYSEUS_FIELD_REF:
+            case COLYSEUS_FIELD_ARRAY:
+            case COLYSEUS_FIELD_MAP: return (intptr_t)*(void**)((char*)schema + f->offset);
+            default: return 0;
+        }
+    }
+    return 0;
+}
+
 FLUTTER_EXPORT int colyseus_flutter_schema_get_field_type(intptr_t instance_handle, const char* field_name) {
     colyseus_schema_t* schema = (colyseus_schema_t*)instance_handle;
     if (!schema || !field_name) return -1;

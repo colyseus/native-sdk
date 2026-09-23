@@ -342,6 +342,10 @@ class NativeFunctions {
       Double Function(IntPtr, Pointer<Utf8>),
       double Function(int, Pointer<Utf8>)>('colyseus_flutter_schema_get_number');
 
+  late final schemaGetRef = _lib.lookupFunction<
+      IntPtr Function(IntPtr, Pointer<Utf8>),
+      int Function(int, Pointer<Utf8>)>('colyseus_flutter_schema_get_ref');
+
   late final schemaGetFieldType = _lib.lookupFunction<
       Int32 Function(IntPtr, Pointer<Utf8>),
       int Function(int, Pointer<Utf8>)>('colyseus_flutter_schema_get_field_type');
