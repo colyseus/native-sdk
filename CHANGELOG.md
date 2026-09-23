@@ -3,6 +3,14 @@
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
 Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
 
+## 0.18.7
+
+### Fixed
+
+- `on_add` no longer fires a second time for items of a primitive `MapSchema`
+  (`t.map("number")`, `t.map("string")`, ...) when the server re-sends an
+  unchanged value, as it does in the first patch after a join.
+
 ## 0.18.6
 
 ### Fixed

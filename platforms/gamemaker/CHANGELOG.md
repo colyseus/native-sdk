@@ -2,6 +2,18 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.3
+
+### Fixed
+
+- Handles are now small integers instead of native pointers, which Android
+  arm64 can't fit in a GML number. Reading an instance whose room is gone, or
+  one the server removed, now returns nothing instead of stale memory. No GML
+  changes needed. [#32](https://github.com/colyseus/native-sdk/issues/32)
+- `colyseus_on_add` and `colyseus_on_remove` on a collection of primitives
+  (`t.map("number")`, `t.array("string")`, ...) now pass the value itself, and
+  `colyseus_on_add` no longer fires twice for the same map entry after a join.
+
 ## 0.18.2
 
 ### Fixed

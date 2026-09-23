@@ -2,6 +2,20 @@
 
 All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
+## 0.18.3
+
+### Fixed
+
+- Android: reading a map, array or schema field no longer crashes with a SIGSEGV
+  on arm64 devices. Thanks @EldoFarias!
+  [#32](https://github.com/colyseus/native-sdk/issues/32)
+- Android: the native library now loads on devices whose linker failed with
+  `cannot locate symbol "free"`.
+  [#32](https://github.com/colyseus/native-sdk/issues/32)
+- `on_add` no longer fires a second time for items of a primitive map
+  (`t.map("number")`, `t.map("string")`, ...) when the server re-sends an
+  unchanged value, as it does in the first patch after a join.
+
 ## 0.18.2
 
 ### Fixed

@@ -2,6 +2,14 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.18.3
+
+### Fixed
+
+- `on_add` no longer fires a second time for items of a primitive map
+  (`t.map("number")`, `t.map("string")`, ...) when the server re-sends an
+  unchanged value, as it does in the first patch after a join.
+
 ## 0.18.2
 
 ### Added
