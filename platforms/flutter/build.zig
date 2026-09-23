@@ -182,16 +182,34 @@ fn addAndroidNdkPaths(compile_step: *std.Build.Step.Compile, tgt: std.Target) vo
         .{ sysroot, arch_include },
     ) catch return });
 
+    // API 24: Zig compiles against API-29 headers, which reference stdout/stderr
+    // (23) and __fread_chk/__fwrite_chk (24); older stubs leave them unresolved.
+    const api_level = "24";
     compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
         alloc,
-        "{s}/usr/lib/{s}/21",
-        .{ sysroot, arch_include },
+        "{s}/usr/lib/{s}/{s}",
+        .{ sysroot, arch_include, api_level },
     ) catch return });
     compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
         alloc,
         "{s}/usr/lib/{s}",
         .{ sysroot, arch_include },
     ) catch return });
+
+    // Zig can't provide bionic, but a libc file lets it link the NDK's. Without
+    // it the .so has no NEEDED libc.so/libm.so and dlopen fails on "free".
+    const libc_conf = std.fmt.allocPrint(
+        alloc,
+        "include_dir={s}/usr/include\n" ++
+            "sys_include_dir={s}/usr/include/{s}\n" ++
+            "crt_dir={s}/usr/lib/{s}/{s}\n" ++
+            "msvc_lib_dir=\nkernel32_lib_dir=\ngcc_dir=\n",
+        .{ sysroot, sysroot, arch_include, sysroot, arch_include, api_level },
+    ) catch return;
+    const libc_file = compile_step.step.owner.addWriteFiles().add("android-libc.conf", libc_conf);
+    compile_step.root_module.link_libc = true;
+    compile_step.setLibCFile(libc_file);
+    compile_step.root_module.linkSystemLibrary("m", .{});
 }
 
 // Helper to add Apple SDK paths

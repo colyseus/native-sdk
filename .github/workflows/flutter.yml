@@ -86,6 +86,19 @@ jobs:
             zig build -Dtarget="$t" -Doptimize=ReleaseFast -Dstrip=true
           done
 
+      # Without NEEDED libc.so/libm.so, dlopen fails on devices with "cannot locate symbol".
+      - name: Check Android libraries declare libc and libm
+        working-directory: platforms/flutter
+        run: |
+          set -eu
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          readelf="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          for so in zig-out/lib/android/*/libcolyseus_flutter.so; do
+            for lib in libc.so libm.so; do
+              "$readelf" -d "$so" | grep -q "NEEDED.*\[$lib\]" || { echo "$so: missing NEEDED $lib"; exit 1; }
+            done
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: libs-others
