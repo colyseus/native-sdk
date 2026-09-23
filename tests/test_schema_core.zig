@@ -19,6 +19,7 @@ const c = @cImport({
     @cInclude("colyseus/room_clock.h");
     @cInclude("colyseus/predict/predict.h");
     @cInclude("schema/core_state.h");
+    @cInclude("schema/resync_state.h");
 });
 const fx = @import("schema/schema_core_fixtures.zig");
 
@@ -575,4 +576,38 @@ test "on_add_registered_before_state_keeps_its_handle" {
     c.colyseus_callbacks_remove(cb, handle);
     for (fx.steps[1..]) |step| deliver(dyn.decoder(), step); // e1 re-added, e3 added
     try testing.expectEqual(@as(u32, 2), adds);
+}
+
+// ============================================================================
+// A primitive re-sent unchanged is no change, as in the TS decoder's
+// `previousValue !== value`. The first patch after a join re-sends the ADDs
+// made in onCreate; comparing the freshly decoded pointer fired on_add again.
+// ============================================================================
+
+test "primitive_map_readd_of_an_unchanged_value_is_no_change" {
+    const decoder = c.colyseus_decoder_create(&c.resync_state_vtable).?;
+    defer c.colyseus_decoder_free(decoder);
+
+    // trees: { t1: 10, t2: 20, t3: 30 } (fixture from test_schema_resync.zig)
+    decode(decoder, &[_]u8{ 128, 1, 129, 2, 255, 2, 128, 0, 162, 116, 49, 10, 128, 1, 162, 116, 50, 20, 128, 2, 162, 116, 51, 30 });
+    const state: *c.resync_state_t = @ptrCast(@alignCast(c.colyseus_decoder_get_state(decoder)));
+
+    const cb = c.colyseus_callbacks_create(decoder).?;
+    defer c.colyseus_callbacks_free(cb);
+    var adds: u32 = 0;
+    _ = c.colyseus_callbacks_on_add(cb, @ptrCast(state), "trees", countAdd, &adds, false);
+
+    // t1 and t3 unchanged, t2 re-added as 25, t4 new
+    decode(decoder, &[_]u8{ 255, 2, 128, 0, 162, 116, 49, 10, 128, 1, 162, 116, 50, 25, 128, 2, 162, 116, 51, 30, 128, 3, 162, 116, 52, 40 });
+
+    try testing.expectEqual(@as(u32, 2), adds);
+    try testing.expectEqual(@as(c_int, 4), state.trees.*.count);
+    const expected = [_]struct { key: [*c]const u8, value: f64 }{
+        .{ .key = "t1", .value = 10 }, .{ .key = "t2", .value = 25 },
+        .{ .key = "t3", .value = 30 }, .{ .key = "t4", .value = 40 },
+    };
+    for (expected) |e| {
+        const v: *f64 = @ptrCast(@alignCast(c.colyseus_map_schema_get(state.trees, e.key).?));
+        try testing.expectEqual(e.value, v.*);
+    }
 }

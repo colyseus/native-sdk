@@ -1135,6 +1135,17 @@ static bool decode_map_schema(colyseus_decoder_t* decoder, const uint8_t* bytes,
         value = decode_value(decoder, bytes, length, it,
             field_type, child_vtable, NULL, operation, previous_value);
 
+        /* the TS decoder's `value !== previousValue`, as for arrays: the
+         * first patch after a join re-sends onCreate's ADDs, and a fresh
+         * allocation of the same primitive is no change */
+        if (value != NULL && previous_value != NULL && !map->has_schema_child
+                && (operation & (uint8_t)COLYSEUS_OP_DELETE) == 0
+                && field_values_equal(colyseus_field_type_from_string(map->child_primitive_type),
+                                      previous_value, value)) {
+            free(value);
+            value = previous_value;
+        }
+
         if (value != NULL && dynamic_index) {
             colyseus_map_schema_set_by_index(map, field_index, dynamic_index, value);
         }
