@@ -104,7 +104,7 @@ fn buildSdk(b: *std.Build) void {
     };
 
     // Consolidated helper: configure libc linking and platform sysroot paths.
-    // Android: skip linkLibC (Zig can't provide bionic), use NDK sysroot instead.
+    // Android: link the NDK's bionic through a libc file (Zig can't provide it).
     // Other platforms: linkLibC normally, add Apple/Emscripten paths as needed.
     const configurePlatformLibc = struct {
         fn configure(
@@ -1185,16 +1185,35 @@ fn addAndroidNdkPaths(compile_step: *std.Build.Step.Compile, ndk_path: ?[]const 
             .{ sysroot, arch_include },
         ) catch return });
 
+        // API 24: Zig compiles against API-29 headers, which reference stdout/stderr
+        // (23) and __fread_chk/__fwrite_chk (24); older stubs leave them unresolved.
+        const api_level = "24";
         compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
             alloc,
-            "{s}/usr/lib/{s}/21",
-            .{ sysroot, arch_include },
+            "{s}/usr/lib/{s}/{s}",
+            .{ sysroot, arch_include, api_level },
         ) catch return });
         compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
             alloc,
             "{s}/usr/lib/{s}",
             .{ sysroot, arch_include },
         ) catch return });
+
+        // std.net picks its resolver from builtin.link_libc: without libc it reads
+        // /etc/resolv.conf, absent on Android, and every matchmaker hostname fails
+        // with TemporaryNameServerFailure. Consumers' final libraries inherit
+        // link_libc, so they need a libc file too.
+        const libc_conf = std.fmt.allocPrint(
+            alloc,
+            "include_dir={s}/usr/include\n" ++
+                "sys_include_dir={s}/usr/include/{s}\n" ++
+                "crt_dir={s}/usr/lib/{s}/{s}\n" ++
+                "msvc_lib_dir=\nkernel32_lib_dir=\ngcc_dir=\n",
+            .{ sysroot, sysroot, arch_include, sysroot, arch_include, api_level },
+        ) catch return;
+        const libc_file = compile_step.step.owner.addWriteFiles().add("android-libc.conf", libc_conf);
+        compile_step.root_module.link_libc = true;
+        compile_step.setLibCFile(libc_file);
     }
 }
 

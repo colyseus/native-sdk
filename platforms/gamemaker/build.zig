@@ -139,17 +139,34 @@ fn addAndroidNdkPaths(compile_step: *std.Build.Step.Compile, tgt: std.Target) vo
         .{ sysroot, arch_include },
     ) catch return });
 
-    // Library paths (API level 21)
+    // API 24: Zig compiles against API-29 headers, which reference stdout/stderr
+    // (23) and __fread_chk/__fwrite_chk (24); older stubs leave them unresolved.
+    const api_level = "24";
     compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
         alloc,
-        "{s}/usr/lib/{s}/21",
-        .{ sysroot, arch_include },
+        "{s}/usr/lib/{s}/{s}",
+        .{ sysroot, arch_include, api_level },
     ) catch return });
     compile_step.addLibraryPath(.{ .cwd_relative = std.fmt.allocPrint(
         alloc,
         "{s}/usr/lib/{s}",
         .{ sysroot, arch_include },
     ) catch return });
+
+    // The core links bionic, so this library must too: a libc file lets Zig
+    // link the NDK's, and it gives the .so its NEEDED libc.so/libm.so.
+    const libc_conf = std.fmt.allocPrint(
+        alloc,
+        "include_dir={s}/usr/include\n" ++
+            "sys_include_dir={s}/usr/include/{s}\n" ++
+            "crt_dir={s}/usr/lib/{s}/{s}\n" ++
+            "msvc_lib_dir=\nkernel32_lib_dir=\ngcc_dir=\n",
+        .{ sysroot, sysroot, arch_include, sysroot, arch_include, api_level },
+    ) catch return;
+    const libc_file = compile_step.step.owner.addWriteFiles().add("android-libc.conf", libc_conf);
+    compile_step.root_module.link_libc = true;
+    compile_step.setLibCFile(libc_file);
+    compile_step.root_module.linkSystemLibrary("m", .{});
 }
 
 // Helper to add Apple SDK paths to a compile step (macOS, iOS, tvOS)
@@ -195,8 +212,7 @@ fn buildGameMakerExtension(
     const gamemaker_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
-        // Android: Zig can't provide bionic libc, use NDK sysroot instead.
-        // Other platforms: link libc normally.
+        // Android links bionic through the NDK libc file in addAndroidNdkPaths.
         .link_libc = !is_android,
     });
 

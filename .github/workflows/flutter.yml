@@ -87,7 +87,9 @@ jobs:
           done
 
       # Without NEEDED libc.so/libm.so, dlopen fails on devices with "cannot locate symbol".
-      - name: Check Android libraries declare libc and libm
+      # /etc/resolv.conf means std.net was built without libc, and Android has no such
+      # file: every hostname fails with TemporaryNameServerFailure.
+      - name: Check Android libraries link bionic
         working-directory: platforms/flutter
         run: |
           set -eu
@@ -97,6 +99,7 @@ jobs:
             for lib in libc.so libm.so; do
               "$readelf" -d "$so" | grep -q "NEEDED.*\[$lib\]" || { echo "$so: missing NEEDED $lib"; exit 1; }
             done
+            if grep -qa /etc/resolv.conf "$so"; then echo "$so: resolves DNS without libc"; exit 1; fi
           done
 
       - uses: actions/upload-artifact@v4
