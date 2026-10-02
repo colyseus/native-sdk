@@ -2,6 +2,14 @@
 
 All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
+## 0.18.4
+
+### Fixed
+
+- Android: server URLs with a hostname now connect instead of failing with
+  `TemporaryNameServerFailure`. IP addresses were unaffected. Thanks @DorAlter!
+  [#33](https://github.com/colyseus/native-sdk/issues/33) [#22](https://github.com/colyseus/native-sdk/issues/22)
+
 ## 0.18.3
 
 ### Fixed
