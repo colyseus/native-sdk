@@ -3,6 +3,19 @@
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
 Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
 
+## 0.18.9
+
+### Added
+
+- `colyseus_client_consume_seat_reservation()` (and `_json()`, which takes the
+  server's object as-is) joins a room with a seat your own server reserved,
+  through `matchMaker.joinOrCreate()`, `reserveSeatFor()` and the like.
+
+### Fixed
+
+- Rooms on a server configured with a `publicAddress` are now reached at that
+  address instead of the client's endpoint.
+
 ## 0.18.8
 
 ### Fixed

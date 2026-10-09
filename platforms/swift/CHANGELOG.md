@@ -2,6 +2,19 @@
 
 All notable changes to the Colyseus Swift SDK will be documented in this file.
 
+## 0.18.9
+
+### Added
+
+- `client.consumeSeatReservation(_:state:)` joins a room with a seat your
+  server reserved and handed over, as a `Colyseus.SeatReservation` or a
+  message payload.
+
+### Fixed
+
+- Rooms on a server configured with a `publicAddress` are now reached at that
+  address instead of the client's endpoint.
+
 ## 0.18.7
 
 ### Fixed

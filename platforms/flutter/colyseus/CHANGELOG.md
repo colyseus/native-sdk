@@ -2,6 +2,19 @@
 
 All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
+## 0.18.5
+
+### Added
+
+- `client.consumeSeatReservation(seat)` joins a room with a seat your server
+  reserved and handed over; `SeatReservation.fromJson()` reads it from an HTTP
+  reply or a lobby room's message.
+
+### Fixed
+
+- Rooms on a server configured with a `publicAddress` are now reached at that
+  address instead of the client's endpoint.
+
 ## 0.18.4
 
 ### Fixed

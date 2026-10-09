@@ -2,6 +2,19 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.18.4
+
+### Added
+
+- `client.consume_seat_reservation(reservation)` joins a room with a seat your
+  server reserved and handed over, as a `Dictionary` (an HTTP reply, a lobby
+  room's message) or a JSON `String`.
+
+### Fixed
+
+- Rooms on a server configured with a `publicAddress` are now reached at that
+  address instead of the client's endpoint.
+
 ## 0.18.3
 
 ### Fixed

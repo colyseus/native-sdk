@@ -2,6 +2,19 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.5
+
+### Added
+
+- `colyseus_client_consume_seat_reservation(client, reservation)` joins a room
+  with a seat your server reserved and handed over, as a struct (an HTTP reply,
+  a lobby room's message) or a JSON string.
+
+### Fixed
+
+- Rooms on a server configured with a `publicAddress` are now reached at that
+  address instead of the client's endpoint.
+
 ## 0.18.4
 
 ### Fixed
