@@ -4,6 +4,7 @@ import {
     createRouter,
     createEndpoint,
     auth,
+    matchMaker,
 } from "colyseus";
 
 // Installs onFindUserByEmail / onRegisterWithEmailAndPassword. Without it the
@@ -48,6 +49,11 @@ export const server = defineServer({
         }),
         test_patch: createEndpoint("/test", { method: "PATCH" }, async (ctx) => {
             return { method: "PATCH", body: ctx.body };
+        }),
+        // What a backend hands the client for consumeSeatReservation().
+        reserve_seat: createEndpoint("/reserve_seat", { method: "POST" }, async (ctx) => {
+            const { roomName, options } = (ctx.body ?? {}) as { roomName: string, options?: any };
+            return await matchMaker.joinOrCreate(roomName, options ?? {});
         }),
     }),
 

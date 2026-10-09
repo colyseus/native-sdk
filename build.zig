@@ -906,6 +906,7 @@ fn buildSdk(b: *std.Build) void {
         .{ .name = "test_request", .file = "tests/test_request.zig", .description = "Run room.request() outcome tests (requires server)", .server = .example },
         .{ .name = "test_view_callbacks", .file = "tests/test_view_callbacks.zig", .description = "Run StateView callback tests (requires server)", .server = .example },
         .{ .name = "test_reconnect", .file = "tests/test_reconnect.zig", .description = "Run automatic reconnection tests (requires server)", .server = .example },
+        .{ .name = "test_seat_reservation", .file = "tests/test_seat_reservation.zig", .description = "Run consume-seat-reservation tests (requires server)", .server = .example },
         .{ .name = "test_poll_integration", .file = "tests/test_poll_integration.zig", .description = "Run colyseus_poll() session + reconnection thread-affinity tests (requires server)", .server = .example },
         .{ .name = "test_gamemaker_net", .file = "tests/test_gamemaker_net.zig", .description = "Run GameMaker bridge session tests: polled delivery on the GML thread (requires server)", .server = .example },
         .{ .name = "test_tls", .file = "tests/test_tls.zig", .description = "Run WSS/TLS verification tests (requires wss echo server)", .server = .wss_echo },

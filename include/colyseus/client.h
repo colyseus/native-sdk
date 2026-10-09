@@ -90,6 +90,44 @@ void colyseus_client_reconnect(
 );
 
 /**
+ * Join a room with a seat the server already reserved — what the server's
+ * matchMaker.joinOrCreate() / create() / join() / joinById() /
+ * reserveSeatFor() return. Use it when your own backend does the
+ * matchmaking (an HTTP route, a lobby or queue room) and hands the client
+ * the reservation.
+ *
+ * No matchmaking request is made. The room is built from the reservation and
+ * connects to `public_address` when it is set, the client's endpoint
+ * otherwise. name, room_id, process_id and session_id are required; on_error
+ * reports a reservation missing one.
+ *
+ * Callbacks behave as for colyseus_client_join(): in polled mode they run in
+ * the next colyseus_poll(), never before this returns; in threaded mode they
+ * run before it returns. The reservation is copied, so the caller keeps it.
+ */
+void colyseus_client_consume_seat_reservation(
+    colyseus_client_t* client,
+    const colyseus_seat_reservation_t* reservation,
+    colyseus_client_room_callback_t on_success,
+    colyseus_client_error_callback_t on_error,
+    void* userdata
+);
+
+/**
+ * colyseus_client_consume_seat_reservation(), taking the reservation as the
+ * JSON the server serializes it to:
+ * `{"name", "roomId", "processId", "sessionId", "publicAddress"?, "reconnectionToken"?}`.
+ * The binding-friendly form: send the server's object through as-is.
+ */
+void colyseus_client_consume_seat_reservation_json(
+    colyseus_client_t* client,
+    const char* reservation_json,
+    colyseus_client_room_callback_t on_success,
+    colyseus_client_error_callback_t on_error,
+    void* userdata
+);
+
+/**
  * Measure the latency to this client's configured server endpoint. TLS settings
  * are derived from the client; `options` (NULL for defaults) supplies
  * ping_count/timeout_ms. The callback fires exactly once.

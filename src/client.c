@@ -10,6 +10,7 @@
 
 void colyseus_http_poll(void);    /* below on native, http_web.c on the web */
 void colyseus_latency_poll(void); /* latency.c */
+static void seat_poll(void);
 
 /* ── Polled runtime ─────────────────────────────────────────────── */
 
@@ -29,6 +30,7 @@ void colyseus_poll(void) {
     if (g_poll_depth) return; /* re-entered from a callback it dispatched */
     g_poll_depth++;
     colyseus_http_poll();
+    seat_poll();
     colyseus_ws_poll();        /* netdelay-queued inbound lands here… */
     colyseus_netdelay_pump();  /* …and decodes here, same call */
     colyseus_latency_poll();
@@ -467,6 +469,115 @@ static char* client_build_room_endpoint(
     const char* reconnection_token
 );
 
+/* ── Seat reservations handed in by the app ───────────────────── */
+
+/* Polled mode delivers them through colyseus_poll() like a matchmaking
+ * answer, so a binding can wire up the room before its first callback. */
+typedef struct pending_seat {
+    struct pending_seat* next;
+    char* json;
+    colyseus_matchmake_context_t* ctx;
+} pending_seat_t;
+
+static pending_seat_t* g_seat_head = NULL;
+static pending_seat_t* g_seat_tail = NULL;
+#if defined(__EMSCRIPTEN__)
+    #define seat_lock()   ((void)0)
+    #define seat_unlock() ((void)0)
+#elif defined(_WIN32)
+static SRWLOCK g_seat_lock = SRWLOCK_INIT;
+    #define seat_lock()   AcquireSRWLockExclusive(&g_seat_lock)
+    #define seat_unlock() ReleaseSRWLockExclusive(&g_seat_lock)
+#else
+static pthread_mutex_t g_seat_lock = PTHREAD_MUTEX_INITIALIZER;
+    #define seat_lock()   pthread_mutex_lock(&g_seat_lock)
+    #define seat_unlock() pthread_mutex_unlock(&g_seat_lock)
+#endif
+
+static void seat_deliver(char* json, colyseus_matchmake_context_t* ctx) {
+    colyseus_http_response_t response = { 200, json, true };
+    client_on_matchmake_success(&response, ctx);  /* frees ctx */
+    free(json);
+}
+
+/* Takes ownership of json. */
+static void seat_submit(colyseus_client_t* client, char* json,
+                        colyseus_client_room_callback_t on_success,
+                        colyseus_client_error_callback_t on_error,
+                        void* userdata) {
+    bool polled = colyseus_is_polled();
+    colyseus_matchmake_context_t* ctx = calloc(1, sizeof(*ctx));
+    pending_seat_t* seat = polled ? malloc(sizeof(*seat)) : NULL;
+    if (!json || !ctx || (polled && !seat)) {
+        free(json);
+        free(ctx);
+        free(seat);
+        if (on_error) on_error(-1, "Out of memory", userdata);
+        return;
+    }
+    ctx->client = client;
+    ctx->on_success = on_success;
+    ctx->on_error = on_error;
+    ctx->userdata = userdata;
+
+    if (!seat) {
+        seat_deliver(json, ctx);
+        return;
+    }
+    seat->next = NULL;
+    seat->json = json;
+    seat->ctx = ctx;
+    seat_lock();
+    if (g_seat_tail) g_seat_tail->next = seat;
+    else g_seat_head = seat;
+    g_seat_tail = seat;
+    seat_unlock();
+}
+
+/* One at a time, so a callback that frees its client purges the rest. */
+static void seat_poll(void) {
+    for (;;) {
+        seat_lock();
+        pending_seat_t* seat = g_seat_head;
+        if (seat) {
+            g_seat_head = seat->next;
+            if (!g_seat_head) g_seat_tail = NULL;
+        }
+        seat_unlock();
+        if (!seat) break;
+        seat_deliver(seat->json, seat->ctx);
+        free(seat);
+    }
+}
+
+/* Drops a freed client's undelivered reservations. */
+static void seat_purge(const colyseus_client_t* client) {
+    pending_seat_t* dropped = NULL;
+    seat_lock();
+    pending_seat_t** link = &g_seat_head;
+    g_seat_tail = NULL;
+    while (*link) {
+        pending_seat_t* seat = *link;
+        if (seat->ctx->client == client) {
+            *link = seat->next;
+            seat->next = dropped;
+            dropped = seat;
+        } else {
+            g_seat_tail = seat;
+            link = &seat->next;
+        }
+    }
+    seat_unlock();
+
+    while (dropped) {
+        pending_seat_t* next = dropped->next;
+        matchmake_context_free(dropped->ctx);
+        free(dropped->json);
+        free(dropped);
+        dropped = next;
+    }
+}
+
 /* Create client */
 colyseus_client_t* colyseus_client_create(colyseus_settings_t* settings) {
     return colyseus_client_create_with_transport(settings, colyseus_websocket_transport_create);
@@ -491,6 +602,7 @@ colyseus_client_t* colyseus_client_create_with_transport(
 void colyseus_client_free(colyseus_client_t* client) {
     if (!client) return;
 
+    seat_purge(client);
     http_worker_free((http_worker_t*)client->http_worker);
     colyseus_http_free(client->http);
     colyseus_auth_free(client->auth);
@@ -585,6 +697,56 @@ void colyseus_client_reconnect(
     free(token_copy);
 }
 
+static void json_add_string(cJSON* json, const char* key, const char* value) {
+    if (value) cJSON_AddStringToObject(json, key, value);
+}
+
+void colyseus_client_consume_seat_reservation(
+    colyseus_client_t* client,
+    const colyseus_seat_reservation_t* reservation,
+    colyseus_client_room_callback_t on_success,
+    colyseus_client_error_callback_t on_error,
+    void* userdata
+) {
+    if (!client || !reservation) {
+        if (on_error) on_error(-1, "Invalid seat reservation", userdata);
+        return;
+    }
+
+    /* one parser for both forms: the one the matchmaking answer goes through */
+    cJSON* json = cJSON_CreateObject();
+    if (!json) {
+        if (on_error) on_error(-1, "Out of memory", userdata);
+        return;
+    }
+    json_add_string(json, "name", reservation->room.name);
+    json_add_string(json, "roomId", reservation->room.room_id);
+    json_add_string(json, "processId", reservation->room.process_id);
+    json_add_string(json, "publicAddress", reservation->room.public_address);
+    json_add_string(json, "sessionId", reservation->session_id);
+    json_add_string(json, "reconnectionToken", reservation->reconnection_token);
+    json_add_string(json, "protocol", reservation->protocol);
+    if (reservation->dev_mode) cJSON_AddBoolToObject(json, "devMode", true);
+    char* text = cJSON_PrintUnformatted(json);
+    cJSON_Delete(json);
+
+    seat_submit(client, text, on_success, on_error, userdata);
+}
+
+void colyseus_client_consume_seat_reservation_json(
+    colyseus_client_t* client,
+    const char* reservation_json,
+    colyseus_client_room_callback_t on_success,
+    colyseus_client_error_callback_t on_error,
+    void* userdata
+) {
+    if (!client || !reservation_json) {
+        if (on_error) on_error(-1, "Invalid seat reservation", userdata);
+        return;
+    }
+    seat_submit(client, strdup(reservation_json), on_success, on_error, userdata);
+}
+
 /* Internal matchmaking implementation */
 static void client_create_matchmake_request(
     colyseus_client_t* client,
@@ -630,9 +792,10 @@ static void client_on_matchmake_success(const colyseus_http_response_t* response
 
     /* Parse JSON response */
     cJSON* json = cJSON_Parse(response->body);
-    if (!json) {
+    if (!cJSON_IsObject(json)) {
+        cJSON_Delete(json);
         if (ctx->on_error) {
-            ctx->on_error(-1, "Failed to parse matchmaking response", ctx->userdata);
+            ctx->on_error(-1, "Invalid seat reservation: not a JSON object", ctx->userdata);
         }
         matchmake_context_free(ctx);
         return;
@@ -686,6 +849,22 @@ static void client_on_matchmake_success(const colyseus_http_response_t* response
     }
 
     cJSON_Delete(json);
+
+    const char* missing =
+        !reservation.room.name       ? "name" :
+        !reservation.room.room_id    ? "roomId" :
+        !reservation.room.process_id ? "processId" :
+        !reservation.session_id      ? "sessionId" : NULL;
+    if (missing) {
+        if (ctx->on_error) {
+            char message[64];
+            snprintf(message, sizeof(message), "Invalid seat reservation: missing %s", missing);
+            ctx->on_error(-1, message, ctx->userdata);
+        }
+        colyseus_seat_reservation_free(&reservation);
+        matchmake_context_free(ctx);
+        return;
+    }
 
     /* Consume seat reservation */
     client_consume_seat_reservation(ctx->client, &reservation, ctx->on_success, ctx->on_error, ctx->userdata);
