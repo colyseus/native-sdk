@@ -169,9 +169,13 @@ test "seat reservation: struct form joins the reserved room" {
     const seat = try parseReservation(json);
     defer seat.deinit();
 
+    // malloc'd, since colyseus_seat_reservation_free() frees them (no strndup on Windows)
     const z = struct {
         fn dup(s: []const u8) [*c]u8 {
-            return c.strndup(s.ptr, s.len);
+            const p: [*c]u8 = @ptrCast(c.malloc(s.len + 1) orelse @panic("OOM"));
+            @memcpy(p[0..s.len], s);
+            p[s.len] = 0;
+            return p;
         }
     };
     var reservation = std.mem.zeroes(c.colyseus_seat_reservation_t);
