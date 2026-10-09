@@ -106,6 +106,14 @@ FLUTTER_EXPORT int colyseus_flutter_client_join_by_id(intptr_t client_handle, co
 FLUTTER_EXPORT int colyseus_flutter_client_reconnect(intptr_t client_handle, const char* reconnection_token);
 
 /**
+ * Join a room with a seat the server already reserved
+ * @param client_handle Client handle
+ * @param reservation_json The reservation as the server serializes it
+ * @return Room reference handle (0 on failure)
+ */
+FLUTTER_EXPORT int colyseus_flutter_client_consume_seat_reservation(intptr_t client_handle, const char* reservation_json);
+
+/**
  * Events queued for the next colyseus_flutter_poll_event() drain.
  */
 FLUTTER_EXPORT int colyseus_flutter_pending_events(void);

@@ -41,6 +41,10 @@ class NativeFunctions {
       Int32 Function(IntPtr, Pointer<Utf8>),
       int Function(int, Pointer<Utf8>)>('colyseus_flutter_client_reconnect');
 
+  late final clientConsumeSeatReservation = _lib.lookupFunction<
+      Int32 Function(IntPtr, Pointer<Utf8>),
+      int Function(int, Pointer<Utf8>)>('colyseus_flutter_client_consume_seat_reservation');
+
   // ===== Room =====
 
   late final roomLeave = _lib.lookupFunction<

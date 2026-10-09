@@ -872,6 +872,22 @@ FLUTTER_EXPORT int colyseus_flutter_client_reconnect(intptr_t client_handle, con
     return ref;
 }
 
+FLUTTER_EXPORT int colyseus_flutter_client_consume_seat_reservation(intptr_t client_handle, const char* reservation_json) {
+    colyseus_client_t* client = (colyseus_client_t*)client_handle;
+    if (!client) return 0;
+
+    int ref = flutter_room_ref_alloc();
+    if (ref == 0) return 0;
+
+    colyseus_client_consume_seat_reservation_json(
+        client, reservation_json,
+        on_client_room_success, on_client_error,
+        (void*)(intptr_t)ref
+    );
+
+    return ref;
+}
+
 // =============================================================================
 // Exported Functions - Room
 // =============================================================================

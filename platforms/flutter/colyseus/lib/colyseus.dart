@@ -17,6 +17,7 @@ export 'src/room_clock.dart';
 export 'src/schema.dart';
 export 'src/schema_ref.dart';
 export 'src/schema_view.dart';
+export 'src/seat_reservation.dart';
 export 'src/sim_reconciler.dart';
 export 'src/spawns.dart';
 export 'src/types.dart';

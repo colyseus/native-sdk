@@ -9,6 +9,7 @@ import 'event_poller.dart';
 import 'http.dart';
 import 'room.dart';
 import 'schema.dart';
+import 'seat_reservation.dart';
 
 final _n = NativeFunctions.instance;
 
@@ -130,6 +131,32 @@ class ColyseusClient {
     if (roomRef == 0) {
       return Future.error(
           StateError('Failed to start reconnection (no room slot available)'));
+    }
+
+    final room = ColyseusRoom.create<T>(roomRef, stateType);
+    return ColyseusEventPoller.instance.registerPendingJoin(roomRef, room);
+  }
+
+  /// Joins a room with a seat your server already reserved — when your own
+  /// HTTP route or a lobby room does the matchmaking.
+  ///
+  /// ```dart
+  /// final response = await client.http.post('/find_match');
+  /// final room = await client.consumeSeatReservation(
+  ///     SeatReservation.fromJson(response.json),
+  ///     stateType: MyRoomState.new);
+  /// ```
+  Future<ColyseusRoom<T>> consumeSeatReservation<T extends SchemaInstance>(
+    SeatReservation reservation, {
+    T Function(int handle)? stateType,
+  }) {
+    final jsonPtr = jsonEncode(reservation.toJson()).toNativeUtf8();
+    final roomRef = _n.clientConsumeSeatReservation(_handle, jsonPtr);
+    malloc.free(jsonPtr);
+
+    if (roomRef == 0) {
+      return Future.error(
+          StateError('Failed to consume seat reservation (no room slot available)'));
     }
 
     final room = ColyseusRoom.create<T>(roomRef, stateType);
