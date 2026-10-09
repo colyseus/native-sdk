@@ -87,6 +87,44 @@ public extension Colyseus {
             }
         }
 
+        /// Join a room with a seat your server already reserved — when your
+        /// own HTTP route or a lobby room does the matchmaking.
+        ///
+        /// ```swift
+        /// let seat = try await client.http.post("/find_match").decode(Colyseus.SeatReservation.self)
+        /// let room = try await client.consumeSeatReservation(seat, state: MyRoomState.self)
+        /// ```
+        public func consumeSeatReservation<State: SchemaRef>(
+            _ reservation: SeatReservation,
+            state: State.Type = State.self
+        ) async throws -> Room<State> {
+            let data = try JSONEncoder().encode(reservation)
+            return try await consumeSeatReservation(json: String(decoding: data, as: UTF8.self))
+        }
+
+        /// Join with a reservation as it arrived in a message, or as
+        /// ``Colyseus/HTTP/Response/json``:
+        ///
+        /// ```swift
+        /// lobby.onMessage("seat") { seat in
+        ///     Task { game = try await client.consumeSeatReservation(seat, state: MyRoomState.self) }
+        /// }
+        /// ```
+        public func consumeSeatReservation<State: SchemaRef>(
+            _ reservation: MessagePackValue,
+            state: State.Type = State.self
+        ) async throws -> Room<State> {
+            try await consumeSeatReservation(json: reservation.jsonString ?? "")
+        }
+
+        private func consumeSeatReservation<State: SchemaRef>(json: String) async throws -> Room<State> {
+            try await openRoom { userdata in
+                json.withCString { jsonPointer in
+                    colyseus_client_consume_seat_reservation_json(raw, jsonPointer, Self.onRoom, Self.onError, userdata)
+                }
+            }
+        }
+
         // MARK: - Latency
 
         /// Round-trip time to one endpoint, or nil when it could not be reached.
