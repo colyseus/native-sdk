@@ -595,6 +595,21 @@ class Client extends RefCounted:
 		var native_room = _native.reconnect(reconnection_token)
 		return Room.new(native_room) if native_room else null
 
+	## Join a room with a seat your server already reserved: what
+	## [code]matchMaker.joinOrCreate()[/code] / [code]reserveSeatFor()[/code]
+	## return on the server, handed over by your own HTTP route or a lobby
+	## room's message. Takes it as a [Dictionary] or as its JSON [String].
+	## [codeblock]
+	## client.http.post("/find_match", {}, func(err, seat):
+	##     var room = client.consume_seat_reservation(seat)
+	##     room.joined.connect(_on_joined))
+	## [/codeblock]
+	## An invalid reservation fails through the room's [signal Room.error].
+	func consume_seat_reservation(reservation):
+		var json: String = reservation if reservation is String else JSON.stringify(reservation)
+		var native_room = _native.consume_seat_reservation(json)
+		return Room.new(native_room) if native_room else null
+
 # =============================================================================
 # Room Wrapper — exposes signals and methods from native ColyseusRoom
 # =============================================================================

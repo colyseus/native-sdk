@@ -148,6 +148,7 @@ See [example.gd](example.gd)
 - `join(room_name: String, options: Dictionary = {}) -> ColyseusRoom`
 - `join_by_id(room_id: String, options: Dictionary = {}) -> ColyseusRoom`
 - `reconnect(reconnection_token: String) -> ColyseusRoom` - Re-take a seat the server is holding via `allowReconnection()`
+- `consume_seat_reservation(reservation) -> ColyseusRoom` - Join with a seat your server reserved (`matchMaker.joinOrCreate()`, `reserveSeatFor()`), as a `Dictionary` or JSON `String`
 - `get_endpoint() -> String`
 
 ### ColyseusRoom

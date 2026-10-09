@@ -964,7 +964,7 @@ static void register_colyseus_client(void) {
         destruct_property(&return_info); \
     }
 
-    // Helper macro: register a matchmaking method with 1 arg (reconnect)
+    // Helper macro: register a matchmaking method with 1 arg (reconnect, consume_seat_reservation)
     #define REGISTER_MATCHMAKING_METHOD_1(method_name_str, arg_name_str, call_fn, ptrcall_fn) \
     { \
         StringName method_name_string; \
@@ -1006,6 +1006,7 @@ static void register_colyseus_client(void) {
     REGISTER_MATCHMAKING_METHOD_WITH_OPTIONS("join", "room_name", gdext_colyseus_client_join, gdext_colyseus_client_join_ptrcall)
     REGISTER_MATCHMAKING_METHOD_WITH_OPTIONS("join_by_id", "room_id", gdext_colyseus_client_join_by_id, gdext_colyseus_client_join_by_id_ptrcall)
     REGISTER_MATCHMAKING_METHOD_1("reconnect", "reconnection_token", gdext_colyseus_client_reconnect, gdext_colyseus_client_reconnect_ptrcall)
+    REGISTER_MATCHMAKING_METHOD_1("consume_seat_reservation", "reservation_json", gdext_colyseus_client_consume_seat_reservation, gdext_colyseus_client_consume_seat_reservation_ptrcall)
 
     #undef REGISTER_MATCHMAKING_METHOD_WITH_OPTIONS
     #undef REGISTER_MATCHMAKING_METHOD_1

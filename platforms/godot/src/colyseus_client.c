@@ -506,7 +506,7 @@ static void on_matchmaking_error(int code, const char* message, void* userdata) 
 typedef void (*matchmaking_with_options_fn)(colyseus_client_t*, const char*, const char*,
     colyseus_client_room_callback_t, colyseus_client_error_callback_t, void*);
 
-// Function pointer type for reconnect (client, token, callbacks — no options)
+// Function pointer type for reconnect / consume_seat_reservation (client, one string, callbacks — no options)
 typedef void (*matchmaking_reconnect_fn)(colyseus_client_t*, const char*,
     colyseus_client_room_callback_t, colyseus_client_error_callback_t, void*);
 
@@ -588,7 +588,7 @@ static void matchmaking_ptrcall_with_options(GDExtensionClassInstancePtr p_insta
     free(options_cstr);
 }
 
-// Common ptrcall implementation for reconnect (no options parameter)
+// Common ptrcall implementation for reconnect / consume_seat_reservation (no options parameter)
 static void matchmaking_ptrcall_reconnect(GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret, matchmaking_reconnect_fn native_fn) {
     ColyseusClientWrapper* client_wrapper = (ColyseusClientWrapper*)p_instance;
     if (!client_wrapper || !client_wrapper->native_client) {
@@ -751,6 +751,16 @@ void gdext_colyseus_client_reconnect_ptrcall(void* p_method_userdata, GDExtensio
 void gdext_colyseus_client_reconnect(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
     (void)p_argument_count; (void)r_error;
     matchmaking_call_wrapper_1(p_method_userdata, p_instance, p_args, r_return, gdext_colyseus_client_reconnect_ptrcall);
+}
+
+// consume_seat_reservation(reservation_json: String)
+void gdext_colyseus_client_consume_seat_reservation_ptrcall(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstTypePtr* p_args, GDExtensionTypePtr r_ret) {
+    (void)p_method_userdata;
+    matchmaking_ptrcall_reconnect(p_instance, p_args, r_ret, colyseus_client_consume_seat_reservation_json);
+}
+void gdext_colyseus_client_consume_seat_reservation(void* p_method_userdata, GDExtensionClassInstancePtr p_instance, const GDExtensionConstVariantPtr* p_args, GDExtensionInt p_argument_count, GDExtensionVariantPtr r_return, GDExtensionCallError* r_error) {
+    (void)p_argument_count; (void)r_error;
+    matchmaking_call_wrapper_1(p_method_userdata, p_instance, p_args, r_return, gdext_colyseus_client_consume_seat_reservation_ptrcall);
 }
 
 // =============================================================================
