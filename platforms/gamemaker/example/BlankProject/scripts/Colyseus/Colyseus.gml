@@ -162,6 +162,22 @@ function colyseus_client_join_by_id(_client, _room_id, _options) {
     return __colyseus_gm_client_join_by_id(_client, _room_id, __colyseus_options_to_json(_options));
 }
 
+/// Join a room with a seat your server already reserved: what
+/// matchMaker.joinOrCreate() / reserveSeatFor() return on the server, handed
+/// to the client by your own HTTP route or a lobby room's message.
+///
+///   colyseus_http_post(client, "/find_match", {}, function(_err, _seat) {
+///       room = colyseus_client_consume_seat_reservation(client, _seat);
+///       colyseus_on_join(room, on_join);
+///   });
+///
+/// @param {Real} _client  Client handle
+/// @param {Struct|String} _reservation  The reservation (struct or JSON string)
+/// @returns {Real} Room reference; an invalid reservation fails through colyseus_on_error()
+function colyseus_client_consume_seat_reservation(_client, _reservation) {
+    return __colyseus_gm_client_consume_seat_reservation(_client, __colyseus_options_to_json(_reservation));
+}
+
 /// Token for colyseus_client_reconnect(). Persist it to re-take this seat
 /// after the process is killed; the server must allowReconnection().
 /// @param {Real} _room_ref  Room reference

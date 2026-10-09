@@ -892,6 +892,26 @@ GM_EXPORT double colyseus_gm_client_reconnect(double client_handle, const char* 
     return (double)ref;
 }
 
+GM_EXPORT double colyseus_gm_client_consume_seat_reservation(double client_handle, const char* reservation_json) {
+    colyseus_client_t* client = gm_handle_get(client_handle, GM_HANDLE_CLIENT);
+    if (!client) {
+        return 0.0;
+    }
+
+    int ref = gm_room_ref_alloc();
+    if (ref == 0) return 0.0;
+
+    colyseus_client_consume_seat_reservation_json(
+        client,
+        reservation_json,
+        on_client_room_success,
+        on_client_error,
+        (void*)(intptr_t)ref
+    );
+
+    return (double)ref;
+}
+
 // =============================================================================
 // GameMaker Exported Functions — Room
 // =============================================================================

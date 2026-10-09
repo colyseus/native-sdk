@@ -178,6 +178,10 @@
         return _callN('colyseus_gm_client_reconnect', ['number', 'string'], [client_handle, reconnection_token]);
     };
 
+    window.colyseus_gm_client_consume_seat_reservation = function(client_handle, reservation_json) {
+        return _callN('colyseus_gm_client_consume_seat_reservation', ['number', 'string'], [client_handle, reservation_json]);
+    };
+
     window.colyseus_gm_room_leave = function(room_handle) {
         _callV('colyseus_gm_room_leave', ['number'], [room_handle]);
     };

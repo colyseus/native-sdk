@@ -49,6 +49,9 @@ suite(function() {
                 colyseus_client_free(global.__rt.client);
                 global.__rt.client = -1;
             }
+            if (variable_struct_exists(global.__rt, "dead_client")) {
+                colyseus_client_free(global.__rt.dead_client);
+            }
             test_drain_events();
         });
 
@@ -99,6 +102,68 @@ suite(function() {
             expect(global.__rt.done).toBeTruthy();
             expect(global.__rt.error_code).toBeGreaterThan(0);
             // Room ref is released on error, mark as freed
+            global.__rt.room = -1;
+        });
+
+        test("consume_seat_reservation joins the seat a server route reserved", function() {
+            global.__rt.seat = undefined;
+            colyseus_http_post(global.__rt.client, "/reserve_seat",
+                { roomName: "my_room", options: { private: true } },
+                function(_err, _seat) {
+                    global.__rt.seat = _seat;
+                    global.__rt.done = true;
+                });
+            test_poll_until(global.__rt, 5000);
+            expect(is_struct(global.__rt.seat)).toBeTruthy();
+
+            global.__rt.done = false;
+            global.__rt.room = colyseus_client_consume_seat_reservation(global.__rt.client, global.__rt.seat);
+            expect(global.__rt.room).toBeGreaterThan(0);
+            colyseus_on_join(global.__rt.room, function(_room) {
+                global.__rt.done = true;
+            });
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.done).toBeTruthy();
+            expect(colyseus_room_get_session_id(global.__rt.room)).toBe(global.__rt.seat.sessionId);
+            expect(colyseus_room_get_id(global.__rt.room)).toBe(global.__rt.seat.roomId);
+        });
+
+        test("consume_seat_reservation connects to the reservation's publicAddress", function() {
+            global.__rt.seat = undefined;
+            colyseus_http_post(global.__rt.client, "/reserve_seat",
+                { roomName: "my_room", options: { private: true } },
+                function(_err, _seat) {
+                    global.__rt.seat = _seat;
+                    global.__rt.done = true;
+                });
+            test_poll_until(global.__rt, 5000);
+            expect(is_struct(global.__rt.seat)).toBeTruthy();
+
+            // nothing listens on this client's own endpoint
+            global.__rt.dead_client = colyseus_client_create("http://127.0.0.1:1");
+            global.__rt.seat.publicAddress = "127.0.0.1:2567";
+
+            global.__rt.done = false;
+            global.__rt.room = colyseus_client_consume_seat_reservation(global.__rt.dead_client, global.__rt.seat);
+            colyseus_on_join(global.__rt.room, function(_room) {
+                global.__rt.done = true;
+            });
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.done).toBeTruthy();
+            expect(colyseus_room_get_session_id(global.__rt.room)).toBe(global.__rt.seat.sessionId);
+        });
+
+        test("consume_seat_reservation reports an invalid reservation through on_error", function() {
+            global.__rt.room = colyseus_client_consume_seat_reservation(global.__rt.client, { roomId: "nope" });
+            global.__rt.done = false;
+            global.__rt.error_message = "";
+            colyseus_on_error(global.__rt.room, function(_code, _msg) {
+                global.__rt.error_message = _msg;
+                global.__rt.done = true;
+            });
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.done).toBeTruthy();
+            expect(global.__rt.error_message).toBe("Invalid seat reservation: missing name");
             global.__rt.room = -1;
         });
     });

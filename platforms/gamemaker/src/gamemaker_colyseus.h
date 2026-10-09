@@ -94,6 +94,14 @@ GM_EXPORT double colyseus_gm_client_join_by_id(double client_handle, const char*
  */
 GM_EXPORT double colyseus_gm_client_reconnect(double client_handle, const char* reconnection_token);
 
+/**
+ * Join a room with a seat the server already reserved
+ * @param client_handle Client handle
+ * @param reservation_json The reservation as the server serializes it
+ * @return Room handle as double (0.0 on failure; the join completes via events)
+ */
+GM_EXPORT double colyseus_gm_client_consume_seat_reservation(double client_handle, const char* reservation_json);
+
 // =============================================================================
 // Room Functions
 // =============================================================================
