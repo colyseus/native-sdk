@@ -756,10 +756,19 @@ static char* client_build_room_endpoint(
     const char* session_id,
     const char* reconnection_token
 ) {
-    char* base = colyseus_settings_get_websocket_endpoint(client->settings);
-
     sds endpoint = sdsempty();
-    endpoint = sdscatprintf(endpoint, "%s/%s/%s", base, room_data->process_id, room_data->room_id);
+
+    /* a room on another process/node is reached at its own address */
+    if (room_data->public_address && room_data->public_address[0]) {
+        const char* scheme = client->settings->use_secure_protocol ? "wss" : "ws";
+        endpoint = sdscatprintf(endpoint, "%s://%s", scheme, room_data->public_address);
+    } else {
+        char* base = colyseus_settings_get_websocket_endpoint(client->settings);
+        endpoint = sdscat(endpoint, base);
+        free(base);
+    }
+
+    endpoint = sdscatprintf(endpoint, "/%s/%s", room_data->process_id, room_data->room_id);
 
     /* Add query parameters */
     endpoint = sdscatprintf(endpoint, "?sessionId=%s", session_id);
@@ -770,7 +779,6 @@ static char* client_build_room_endpoint(
 
     char* result = strdup(endpoint);
     sdsfree(endpoint);
-    free(base);
 
     return result;
 }
