@@ -878,7 +878,17 @@ static void client_on_matchmake_error(const colyseus_http_error_t* error, void* 
     colyseus_matchmake_context_t* ctx = (colyseus_matchmake_context_t*)userdata;
 
     if (ctx->on_error) {
-        ctx->on_error(error->code, error->message, ctx->userdata);
+        /* the server's body is {"code", "error"}: hand over its text, as the
+         * JS SDK does */
+        const char* message = error->message;
+        cJSON* json = cJSON_Parse(error->message);
+        if (cJSON_IsObject(json)) {
+            cJSON* text = cJSON_GetObjectItem(json, "message");
+            if (!cJSON_IsString(text)) text = cJSON_GetObjectItem(json, "error");
+            if (cJSON_IsString(text)) message = text->valuestring;
+        }
+        ctx->on_error(error->code, message, ctx->userdata);
+        cJSON_Delete(json);
     }
 
     matchmake_context_free(ctx);

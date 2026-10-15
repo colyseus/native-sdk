@@ -8,6 +8,9 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 
 - A room joined after another was freed, or after a join failed, no longer runs
   the old room's `colyseus_on_*` handlers.
+- `colyseus_on_error` for a failed join now gets the server's error text, such
+  as `provided room name "battle" not defined`, instead of its JSON body
+  (`unknown` on HTML5).
 
 ## 0.18.5
 

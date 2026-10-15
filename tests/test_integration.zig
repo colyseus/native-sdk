@@ -154,3 +154,43 @@ test "integration: full connection flow" {
 
     try testing.expect(test_passed == 1);
 }
+
+var join_error_code: c_int = 0;
+var join_error_buf: [128]u8 = undefined;
+var join_error_len: usize = 0;
+
+fn onJoinError(code: c_int, message: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+    const text = std.mem.span(message);
+    join_error_len = @min(text.len, join_error_buf.len);
+    @memcpy(join_error_buf[0..join_error_len], text[0..join_error_len]);
+    join_error_code = code;
+}
+
+test "integration: a failed join reports the server's error text, not its JSON body" {
+    c.colyseus_set_polled(true);
+    defer c.colyseus_set_polled(false);
+    join_error_code = 0;
+    join_error_len = 0;
+
+    const settings = c.colyseus_settings_create();
+    defer c.colyseus_settings_free(settings);
+    c.colyseus_settings_set_address(settings, TEST_SERVER);
+    c.colyseus_settings_set_port(settings, TEST_PORT);
+
+    const client = c.colyseus_client_create(settings);
+    defer c.colyseus_client_free(client);
+    if (client == null) return error.ClientCreationFailed;
+
+    var room: ?[*c]c.colyseus_room_t = null;
+    c.colyseus_client_join_or_create(client, "no_such_room", "{}", onRoomSuccess, onJoinError, &room);
+
+    var waited: u64 = 0;
+    while (join_error_code == 0 and waited < 5000) : (waited += 10) {
+        c.colyseus_poll();
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
+
+    try testing.expectEqual(@as(c_int, 520), join_error_code);
+    try testing.expectEqualStrings("provided room name \"no_such_room\" not defined", join_error_buf[0..join_error_len]);
+    try testing.expect(room == null);
+}

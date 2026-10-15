@@ -92,15 +92,18 @@ suite(function() {
             global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "nonexistent_room", "{}");
             global.__rt.done = false;
             global.__rt.error_code = 0;
+            global.__rt.error_message = "";
 
             colyseus_on_error(global.__rt.room, function(_code, _msg) {
                 global.__rt.error_code = _code;
+                global.__rt.error_message = _msg;
                 global.__rt.done = true;
             });
 
             test_poll_until(global.__rt, 5000);
             expect(global.__rt.done).toBeTruthy();
-            expect(global.__rt.error_code).toBeGreaterThan(0);
+            expect(global.__rt.error_code).toBe(520);
+            expect(global.__rt.error_message).toBe("provided room name \"nonexistent_room\" not defined");
             // Room ref is released on error, mark as freed
             global.__rt.room = -1;
         });

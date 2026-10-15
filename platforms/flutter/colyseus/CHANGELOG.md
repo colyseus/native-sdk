@@ -2,6 +2,13 @@
 
 All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
+## 0.18.6
+
+### Fixed
+
+- A failed join's `ColyseusError` now carries the server's error text, such as
+  `provided room name "battle" not defined`, instead of its JSON body.
+
 ## 0.18.5
 
 ### Added

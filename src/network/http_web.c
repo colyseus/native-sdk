@@ -284,7 +284,11 @@ static void on_fetch_error(emscripten_fetch_t* fetch) {
     if (ctx && ctx->on_error) {
         colyseus_http_error_t error;
         error.code = fetch->status;
-        error.message = strdup(fetch->statusText[0] ? fetch->statusText : "Network error");
+        /* the body carries the reason, as on native: Colyseus' 52x codes
+         * have no status text ("unknown") */
+        error.message = fetch->numBytes > 0
+            ? strndup(fetch->data, fetch->numBytes)
+            : strdup(fetch->statusText[0] ? fetch->statusText : "Network error");
         ctx->on_error(&error, ctx->userdata);
         free(error.message);
     }

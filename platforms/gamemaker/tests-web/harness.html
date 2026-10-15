@@ -74,6 +74,7 @@
   var roomRef = 0, pid = 0, rid = 0;
   var moveX = 0, moveY = 0;
   var joined = false, reconnected = false, dropped = false, left = false;
+  var joinError = null;
   var sawInFlight = 0;
 
   function pumpRecon() {
@@ -108,6 +109,10 @@
     while ((t = window.colyseus_gm_poll_event()) !== 0) {
       if (t === 1) joined = true;           // ROOM_JOIN
       if (t === 5) { left = true; log("EVT leave: " + window.colyseus_gm_event_get_message()); }
+      if (t === 6) joinError = {            // CLIENT_ERROR
+        code: window.colyseus_gm_event_get_code(),
+        message: window.colyseus_gm_event_get_message(),
+      };
       if (t === 14) dropped = true;         // ROOM_DROP
       if (t === 15) reconnected = true;     // ROOM_RECONNECT
     }
@@ -153,6 +158,15 @@
     if (!ready) return finish();
     report("abi", window.colyseus_gm_predict_abi_version() >= 1,
       "abi_version returned 0 — stale bundle?");
+
+    // T1b: a failed join reports the server's error text, not its JSON body
+    var badClient = window.colyseus_gm_client_create(SERVER);
+    window.colyseus_gm_client_join_or_create(badClient, "no_such_room", "{}");
+    var failed = await waitFor(function () { return joinError !== null; }, 8000);
+    report("join_error", failed && joinError.code === 520 &&
+      joinError.message === 'provided room name "no_such_room" not defined',
+      "error=" + JSON.stringify(joinError));
+    window.colyseus_gm_client_free(badClient);
 
     // T2: join lab-move on the playground server
     var client = window.colyseus_gm_client_create(SERVER);

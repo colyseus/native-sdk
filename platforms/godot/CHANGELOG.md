@@ -2,6 +2,13 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.18.5
+
+### Fixed
+
+- A failed join's `error` signal now carries the server's error text, such as
+  `provided room name "battle" not defined`, instead of its JSON body.
+
 ## 0.18.4
 
 ### Added

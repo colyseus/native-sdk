@@ -2,6 +2,14 @@
 
 All notable changes to the Colyseus Swift SDK will be documented in this file.
 
+## 0.18.10
+
+### Fixed
+
+- A failed join's `Colyseus.Error.matchmaking` now carries the server's error
+  text, such as `provided room name "battle" not defined`, instead of its
+  JSON body.
+
 ## 0.18.9
 
 ### Added
