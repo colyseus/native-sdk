@@ -47,6 +47,7 @@ suite(function() {
             expect(_input.pending_count()).toBeLessThan(_input.sent_count());
             expect(_predict.clock.rtt()).toBeGreaterThan(0);
             expect(_predict.clock.patch_interval()).toBeGreaterThan(0);
+            expect(colyseus_room_get_clock(_t.room) == _predict.clock).toBeTruthy();
             // the input actually moved the decoded player (re-resolved)
             _me = predict_test_me(_t);
             expect(__colyseus_schema_get_number(_me, "x")).toBeGreaterThan(_x0 + 1);

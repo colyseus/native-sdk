@@ -124,6 +124,23 @@ function ColyseusClock(_room_ref) constructor {
     static patch_interval   = function() { return __colyseus_gm_clock_stat(room_ref, 6); };
 }
 
+global.__colyseus_room_clocks = ds_map_create();  // room ref → ColyseusClock
+
+/// The room's clock, like room.clock in the JS SDK: one per room, never
+/// undefined. Its readouts return 0 until the room has joined.
+///   var _rtt = colyseus_room_get_clock(room).rtt();
+/// @param {Real} _room_ref  Room reference
+/// @returns {Struct.ColyseusClock}
+function colyseus_room_get_clock(_room_ref) {
+    var _clock = ds_map_find_value(global.__colyseus_room_clocks, _room_ref);
+    if (_clock == undefined) {
+        // a clock holds only its ref, so the one cached for a freed room serves the next
+        _clock = new ColyseusClock(_room_ref);
+        ds_map_set(global.__colyseus_room_clocks, _room_ref, _clock);
+    }
+    return _clock;
+}
+
 // =============================================================================
 // Netdelay injector (debug latency + the drop button)
 // =============================================================================
@@ -406,7 +423,7 @@ function ColyseusPredict(_room_ref) constructor {
     room_ref = _room_ref;
     id = __colyseus_gm_predict_create(_room_ref);
     if (id <= 0) show_debug_message("ColyseusPredict: create failed");
-    clock = new ColyseusClock(_room_ref);
+    clock = colyseus_room_get_clock(_room_ref);
 
     /// Advance the whole prediction stack; returns the fixed input steps due
     /// this frame (send exactly that many inputs).
