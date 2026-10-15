@@ -442,6 +442,7 @@ function colyseus_room_free(_room_ref) {
         }
         _key = _next;
     }
+    ds_map_delete(global.__colyseus_room_handlers, _room_ref); // the next join reuses this ref
     __colyseus_room_free(_room_ref);
 }
 
@@ -932,6 +933,8 @@ function colyseus_process() {
 
             case COLYSEUS_EVENT_CLIENT_ERROR:
                 show_debug_message("Colyseus client error [" + string(colyseus_event_get_code()) + "]: " + colyseus_event_get_message());
+                // the failed join's ref is already free: drop it before on_error can rejoin into it
+                ds_map_delete(global.__colyseus_room_handlers, _room_ref);
                 if (_entry != undefined && variable_struct_exists(_entry, "on_error")) {
                     _entry.on_error(
                         colyseus_event_get_code(),

@@ -2,6 +2,13 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.6
+
+### Fixed
+
+- A room joined after another was freed, or after a join failed, no longer runs
+  the old room's `colyseus_on_*` handlers.
+
 ## 0.18.5
 
 ### Added

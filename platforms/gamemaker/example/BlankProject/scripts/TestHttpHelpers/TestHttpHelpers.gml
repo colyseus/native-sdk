@@ -24,6 +24,19 @@ function test_poll_until(_ctx, _timeout_ms) {
     return _ctx.done;
 }
 
+/// Poll until the room is connected, then a little longer so the join's own
+/// events (ROOM_JOIN, the first state) are dispatched too.
+/// @param {Real} _room_ref
+/// @param {Real} _timeout_ms
+function test_poll_until_joined(_room_ref, _timeout_ms) {
+    var _start = current_time;
+    while (!colyseus_room_is_connected(_room_ref) && (current_time - _start < _timeout_ms)) {
+        colyseus_process();
+    }
+    var _settle = current_time;
+    while (current_time - _settle < 300) { colyseus_process(); }
+}
+
 /// Register a callback directly in the HTTP handlers map at a known request ID.
 /// Used by unit tests to bypass the native HTTP request and test dispatch only.
 /// @param {Real} _request_id  Known request ID (use 9000+ to avoid collisions)

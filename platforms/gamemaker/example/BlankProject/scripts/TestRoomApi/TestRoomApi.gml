@@ -105,6 +105,63 @@ suite(function() {
             global.__rt.room = -1;
         });
 
+        test("room_free drops its handlers before the next join reuses the ref", function() {
+            global.__rt.first_joins = 0;
+            global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
+            colyseus_on_join(global.__rt.room, function(_room) {
+                global.__rt.first_joins += 1;
+                global.__rt.done = true;
+            });
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.first_joins).toBe(1);
+
+            var _freed = global.__rt.room;
+            colyseus_room_leave(_freed);
+            var _start = current_time;
+            while (current_time - _start < 500) { colyseus_process(); }
+            colyseus_room_free(_freed);
+
+            // no handlers of its own: an on_join now can only be the freed room's
+            global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
+            expect(global.__rt.room).toBe(_freed);
+            test_poll_until_joined(global.__rt.room, 5000);
+            expect(colyseus_room_is_connected(global.__rt.room)).toBeTruthy();
+            expect(global.__rt.first_joins).toBe(1);
+        });
+
+        test("a failed join drops its handlers before the next join reuses the ref", function() {
+            global.__rt.failed_joins = 0;
+            var _failed = colyseus_client_join_or_create(global.__rt.client, "nonexistent_room", "{}");
+            colyseus_on_join(_failed, function(_room) {
+                global.__rt.failed_joins += 1;
+            });
+            colyseus_on_error(_failed, function(_code, _msg) {
+                global.__rt.done = true;
+            });
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.done).toBeTruthy();
+
+            global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
+            expect(global.__rt.room).toBe(_failed);
+            test_poll_until_joined(global.__rt.room, 5000);
+            expect(colyseus_room_is_connected(global.__rt.room)).toBeTruthy();
+            expect(global.__rt.failed_joins).toBe(0);
+        });
+
+        test("a join retried from on_error keeps its handlers", function() {
+            // the retry reuses the failed ref while its on_error is still running
+            var _failed = colyseus_client_join_or_create(global.__rt.client, "nonexistent_room", "{}");
+            colyseus_on_error(_failed, function(_code, _msg) {
+                global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
+                colyseus_on_join(global.__rt.room, function(_room) {
+                    global.__rt.done = true;
+                });
+            });
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.room).toBe(_failed);
+            expect(global.__rt.done).toBeTruthy();
+        });
+
         test("consume_seat_reservation joins the seat a server route reserved", function() {
             global.__rt.seat = undefined;
             colyseus_http_post(global.__rt.client, "/reserve_seat",
