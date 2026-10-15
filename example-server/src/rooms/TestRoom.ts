@@ -84,6 +84,10 @@ export class TestRoom extends Room {
     echo: (client: Client, message: any) => {
       client.send("tagged_echo", message);
     },
+    // a numeric message type: SDKs check room.send(7, ...) reaches the server
+    7: (client: Client, message: any) => {
+      client.send("int_echo", message);
+    },
 
     // ── room.request() fixtures ────────────────────────────────────────────
     // One handler per ROOM_RESPONSE outcome, so every SDK's request binding

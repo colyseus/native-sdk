@@ -11,6 +11,8 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 - `colyseus_on_error` for a failed join now gets the server's error text, such
   as `provided room name "battle" not defined`, instead of its JSON body
   (`unknown` on HTML5).
+- `colyseus_send()` now sends numeric message types, as in
+  `colyseus_send(room, 7, data)`. They were dropped without a warning.
 
 ## 0.18.5
 

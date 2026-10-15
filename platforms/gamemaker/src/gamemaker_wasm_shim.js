@@ -410,6 +410,10 @@
         _callV('colyseus_gm_room_send_message', ['number', 'string', 'number'], [room_handle, type, msg_handle]);
     };
 
+    window.colyseus_gm_room_send_int_message = function(room_handle, type, msg_handle) {
+        _callV('colyseus_gm_room_send_int_message', ['number', 'number', 'number'], [room_handle, type, msg_handle]);
+    };
+
     window.colyseus_gm_message_create_bool = function(value) {
         return _callN('colyseus_gm_message_create_bool', ['number'], [value]);
     };

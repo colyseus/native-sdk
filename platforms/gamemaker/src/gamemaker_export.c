@@ -1671,6 +1671,16 @@ GM_EXPORT void colyseus_gm_room_send_message(double room_handle, const char* typ
     }
 }
 
+GM_EXPORT void colyseus_gm_room_send_int_message(double room_handle, double type, double msg_handle) {
+    colyseus_room_t* room = gm_room_ref_get((int)room_handle);
+    colyseus_message_t* msg = gm_handle_get(msg_handle, GM_HANDLE_MESSAGE);
+    if (room && msg) {
+        colyseus_room_send_int(room, (int)type, msg);
+        gm_handle_drop_ptr(msg);
+        colyseus_message_free(msg);
+    }
+}
+
 // =============================================================================
 // Raw value message creators (for sending non-map/non-struct values)
 // =============================================================================

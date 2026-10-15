@@ -552,14 +552,19 @@ function colyseus_array_get(_instance, _field, _index) {
 // Message sending helper
 // =============================================================================
 
-/// Send a value as a message to the room.
+/// Send a value as a message to the room. The type is a string or a number.
 /// Supports: structs (sent as map), booleans, numbers, and strings.
 /// Examples:
 ///   colyseus_send(room, "move", { x: 10, y: 20 });
 ///   colyseus_send(room, "shoot", true);
 ///   colyseus_send(room, "target", 90);
 ///   colyseus_send(room, "name", "player1");
+///   colyseus_send(room, 7, { x: 10, y: 20 });
 function colyseus_send(_room_ref, _type, _data) {
+    if (!is_string(_type) && !is_numeric(_type)) {
+        show_debug_message("colyseus_send: the message type must be a string or a number");
+        return;
+    }
     var _msg;
     if (is_struct(_data)) {
         _msg = colyseus_message_create_map();
@@ -586,10 +591,14 @@ function colyseus_send(_room_ref, _type, _data) {
             _msg = colyseus_message_create_number(_data);
         }
     } else {
-        show_debug_message("colyseus_send: unsupported data type for message '" + _type + "'");
+        show_debug_message("colyseus_send: unsupported data type for message '" + string(_type) + "'");
         return;
     }
-    colyseus_room_send_message(_room_ref, _type, _msg);
+    if (is_string(_type)) {
+        colyseus_room_send_message(_room_ref, _type, _msg);
+    } else {
+        __colyseus_gm_room_send_int_message(_room_ref, _type, _msg);
+    }
 }
 
 // =============================================================================

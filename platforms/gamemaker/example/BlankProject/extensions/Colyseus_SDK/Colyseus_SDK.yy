@@ -1172,6 +1172,25 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_room_send_int_message",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_send_int_message",
+          "help": "(internal) room send int message",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_room_send_int_message",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "colyseus_message_create_bool",
           "argCount": 1,
           "args": [
@@ -4292,6 +4311,25 @@
           "hidden": false,
           "kind": 1,
           "name": "colyseus_room_send_message",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_room_send_int_message",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_send_int_message",
+          "help": "(internal) room send int message",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_room_send_int_message",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2

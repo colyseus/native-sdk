@@ -165,6 +165,22 @@ suite(function() {
             expect(global.__rt.done).toBeTruthy();
         });
 
+        test("colyseus_send delivers a numeric message type", function() {
+            global.__rt.echo = undefined;
+            global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
+            colyseus_on_message(global.__rt.room, function(_room, _type, _data) {
+                if (_type != "int_echo") return;
+                global.__rt.echo = _data;
+                global.__rt.done = true;
+            });
+            test_poll_until_joined(global.__rt.room, 5000);
+
+            colyseus_send(global.__rt.room, 7, { value: 42 });
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.done).toBeTruthy();
+            expect(global.__rt.echo.value).toBe(42);
+        });
+
         test("consume_seat_reservation joins the seat a server route reserved", function() {
             global.__rt.seat = undefined;
             colyseus_http_post(global.__rt.client, "/reserve_seat",
