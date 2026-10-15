@@ -2,6 +2,13 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.7
+
+### Added
+
+- `colyseus_room_get_clock(room)` returns the room's clock, like `room.clock`
+  in the JS SDK, so reading the RTT no longer takes a `new ColyseusClock(room)`.
+
 ## 0.18.6
 
 ### Fixed
