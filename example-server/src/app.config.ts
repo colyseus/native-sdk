@@ -19,6 +19,7 @@ import { MyRoom } from "./rooms/MyRoom";
 import { TestRoom } from "./rooms/TestRoom";
 import { ViewTestRoom } from "./rooms/ViewTestRoom";
 import { BindingFixtureRoom } from "./rooms/BindingFixtureRoom";
+import { AuthStaticRoom, AuthInstanceRoom } from "./rooms/AuthRooms";
 
 export const server = defineServer({
     rooms: {
@@ -29,6 +30,9 @@ export const server = defineServer({
         view_test_room: defineRoom(ViewTestRoom),
         binding_fixture_room: defineRoom(BindingFixtureRoom),
         stub_room: defineRoom(MyRoom),
+        // An SDK-issued token must reach both onAuth stages.
+        auth_static_room: defineRoom(AuthStaticRoom),
+        auth_instance_room: defineRoom(AuthInstanceRoom),
     },
 
     /**

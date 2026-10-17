@@ -939,6 +939,20 @@ static void client_consume_seat_reservation(
     free(endpoint);
 }
 
+/* RFC 3986 unreserved characters pass through; a JWT has nothing else */
+static sds sds_cat_url_encoded(sds s, const char* value) {
+    for (const char* p = value; *p; p++) {
+        char c = *p;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~') {
+            s = sdscatlen(s, p, 1);
+        } else {
+            s = sdscatprintf(s, "%%%02X", (unsigned char)c);
+        }
+    }
+    return s;
+}
+
 static char* client_build_room_endpoint(
     colyseus_client_t* client,
     const colyseus_room_available_t* room_data,
@@ -964,6 +978,14 @@ static char* client_build_room_endpoint(
 
     if (reconnection_token && strlen(reconnection_token) > 0) {
         endpoint = sdscatprintf(endpoint, "&reconnectionToken=%s", reconnection_token);
+    }
+
+    /* a room's instance onAuth reads the token here; the matchmake request's
+     * Authorization header never reaches it */
+    const char* auth_token = colyseus_http_get_auth_token(client->http);
+    if (auth_token && auth_token[0]) {
+        endpoint = sdscat(endpoint, "&_authToken=");
+        endpoint = sds_cat_url_encoded(endpoint, auth_token);
     }
 
     char* result = strdup(endpoint);

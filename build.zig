@@ -881,7 +881,7 @@ fn buildSdk(b: *std.Build) void {
         server: ?TestServer = null,
     }{
         .{ .name = "test_http", .file = "tests/test_http.zig", .description = "Run HTTP tests" },
-        .{ .name = "test_auth", .file = "tests/test_auth.zig", .description = "Run authentication tests" },
+        .{ .name = "test_auth", .file = "tests/test_auth.zig", .description = "Run authentication tests (requires server)", .server = .example },
         .{ .name = "test_room", .file = "tests/test_room.zig", .description = "Run room tests" },
         .{ .name = "test_storage", .file = "tests/test_storage.zig", .description = "Run storage tests" },
         .{ .name = "test_schema", .file = "tests/test_schema.zig", .description = "Run schema tests" },

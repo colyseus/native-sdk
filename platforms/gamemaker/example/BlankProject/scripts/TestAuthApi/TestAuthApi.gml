@@ -234,5 +234,79 @@ suite(function() {
             expect(global.__test.err).toBe(undefined);
             expect(global.__test.data.user).toHaveProperty("anonymous", true);
         });
+
+        // example-server's auth_static_room checks the token at matchmaking
+        // (Authorization header), auth_instance_room at connect (?_authToken=).
+        test("the signed-in token authenticates matchmaking (static onAuth)", function() {
+            test_auth_sign_in_with_email(global.__test_client);
+            expect(global.__test.err).toBe(undefined);
+            expect(colyseus_auth_get_token(global.__test_client) != "").toBeTruthy();
+
+            expect(test_auth_join(global.__test_client, "auth_static_room")).toBeTruthy();
+        });
+
+        test("the signed-in token reaches the room's onAuth", function() {
+            test_auth_sign_in_with_email(global.__test_client);
+            expect(global.__test.err).toBe(undefined);
+
+            expect(test_auth_join(global.__test_client, "auth_instance_room")).toBeTruthy();
+        });
+
+        test("both auth rooms refuse a signed-out client", function() {
+            colyseus_auth_sign_out(global.__test_client);
+            expect(test_auth_join(global.__test_client, "auth_static_room")).toBeFalsy();
+            expect(global.__test_join.done).toBeTruthy(); // refused, not timed out
+            expect(test_auth_join(global.__test_client, "auth_instance_room")).toBeFalsy();
+            expect(global.__test_join.done).toBeTruthy();
+        });
     });
 });
+
+/// Registers a fresh account, signs out, then signs back in with it. The
+/// sign-in's (err, data) land in global.__test.
+function test_auth_sign_in_with_email(_client) {
+    var _email = "gm-join-" + string(get_timer()) + "@example.com";
+    global.__test = { done: false, err: undefined, data: undefined };
+    colyseus_auth_register_with_email_and_password(_client, _email, "secret123", function(_err, _data) {
+        global.__test.done = true;
+    });
+    test_poll_until(global.__test, 8000);
+    colyseus_auth_sign_out(_client);
+
+    global.__test = { done: false, err: undefined, data: undefined };
+    colyseus_auth_sign_in_with_email_and_password(_client, _email, "secret123", function(_err, _data) {
+        global.__test.err = _err;
+        global.__test.data = _data;
+        global.__test.done = true;
+    });
+    test_poll_until(global.__test, 8000);
+}
+
+/// Joins `_room_name`, then leaves. True when the server admitted the client.
+function test_auth_join(_client, _room_name) {
+    global.__test_join = { done: false, joined: false, err: "" };
+    var _room = colyseus_client_join_or_create(_client, _room_name, "{}");
+    colyseus_on_join(_room, function(_r) {
+        global.__test_join.joined = true;
+        global.__test_join.done = true;
+    });
+    colyseus_on_error(_room, function(_code, _msg) {
+        global.__test_join.err = _msg;
+        global.__test_join.done = true;
+    });
+    // a refusal at connect time can arrive as a bare close
+    colyseus_on_leave(_room, function(_code, _reason) {
+        global.__test_join.done = true;
+    });
+    test_poll_until(global.__test_join, 8000);
+
+    if (global.__test_join.joined) {
+        colyseus_room_leave(_room);
+        var _start = current_time;
+        while (current_time - _start < 500) { colyseus_process(); }
+    } else {
+        show_debug_message("join " + _room_name + " refused: " + global.__test_join.err);
+    }
+    colyseus_room_free(_room);
+    return global.__test_join.joined;
+}
