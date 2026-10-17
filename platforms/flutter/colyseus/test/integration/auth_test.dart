@@ -203,6 +203,33 @@ void main() {
     client.dispose();
   });
 
+  // example-server's auth_instance_room checks the token in its own onAuth,
+  // which runs at connect and reads it from the URL, not the HTTP header.
+  test('the signed-in token reaches the room\'s onAuth', () async {
+    final client = ColyseusClient(exampleServer);
+    await client.auth.signInAnonymously();
+
+    final room = await client.joinOrCreate('auth_instance_room');
+    await room.leave();
+    room.dispose();
+    client.dispose();
+  });
+
+  test('a room that refuses at connect fails the join with its reason',
+      () async {
+    final client = ColyseusClient(exampleServer);
+    client.auth.signOut();
+
+    await expectLater(
+      client
+          .joinOrCreate('auth_instance_room')
+          .timeout(const Duration(seconds: 8)),
+      throwsA(isA<ColyseusError>()
+          .having((e) => e.message, 'message', 'jwt must be provided')),
+    );
+    client.dispose();
+  });
+
   test('calling through a disposed client fails instead of crashing',
       () async {
     final client = ColyseusClient(exampleServer);

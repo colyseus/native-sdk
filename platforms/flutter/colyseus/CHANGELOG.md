@@ -2,6 +2,14 @@
 
 All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
+## 0.18.8
+
+### Fixed
+
+- `joinOrCreate()` and the other joins now fail with the server's reason when
+  the room refuses at connect time (its `onAuth()` or `onJoin()` throws). They
+  never completed.
+
 ## 0.18.7
 
 ### Fixed

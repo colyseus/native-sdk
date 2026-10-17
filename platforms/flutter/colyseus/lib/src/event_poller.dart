@@ -139,7 +139,15 @@ class ColyseusEventPoller {
           if (room != null) {
             final code = _n.eventGetCode();
             final message = _n.eventGetMessage().toDartString();
-            room.handleError(code, message);
+            final completer = _pendingJoins.remove(roomRef);
+            if (completer != null && !completer.isCompleted) {
+              // refused before the join (e.g. the room's onAuth): the caller
+              // never got this room, so nobody else can dispose it
+              completer.completeError(ColyseusError(code, message));
+              room.dispose();
+            } else {
+              room.handleError(code, message);
+            }
           }
           break;
 
