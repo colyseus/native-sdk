@@ -2,6 +2,14 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.9
+
+### Fixed
+
+- A join the room refuses at connect time (its `onAuth()` or `onJoin()` throws)
+  now calls `colyseus_on_error` once, with the server's reason. A second call
+  with `Remote disconnect` used to follow it.
+
 ## 0.18.8
 
 ### Fixed

@@ -165,3 +165,23 @@ func test_an_http_call_and_an_auth_call_do_not_cross():
 	assert_true(_seen.has("auth"), "the auth call never answered")
 	assert_true(_seen.get("http", {}).has("things"), "http reply hit the wrong callback")
 	assert_true(_seen.get("auth", {}).has("token"), "auth reply hit the wrong callback")
+
+# auth_instance_room checks the token in its own onAuth, at connect. The close
+# that follows the server's error frame must not report a second error.
+func test_a_refused_room_join_reports_the_servers_reason_once():
+	client.auth.sign_out()
+	var errors := []
+	var room = client.join_or_create("auth_instance_room")
+	assert_not_null(room, "join_or_create returned no room")
+	room.error.connect(func(_code, message): errors.append(message))
+
+	var start := Time.get_ticks_msec()
+	while errors.is_empty() and (Time.get_ticks_msec() - start) < 8000:
+		Colyseus.poll()
+		await get_tree().process_frame
+	start = Time.get_ticks_msec()
+	while (Time.get_ticks_msec() - start) < 500:
+		Colyseus.poll()
+		await get_tree().process_frame
+
+	assert_eq(errors, ["jwt must be provided"])

@@ -3307,6 +3307,9 @@ final class colyseus_room extends ffi.Struct {
   @ffi.Bool()
   external bool has_joined;
 
+  @ffi.Bool()
+  external bool join_error_reported;
+
   external ffi.Pointer<colyseus_transport_t> transport;
 
   external colyseus_transport_factory_fn transport_factory;

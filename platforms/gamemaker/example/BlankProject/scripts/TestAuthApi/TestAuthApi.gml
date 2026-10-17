@@ -259,6 +259,19 @@ suite(function() {
             expect(test_auth_join(global.__test_client, "auth_instance_room")).toBeFalsy();
             expect(global.__test_join.done).toBeTruthy();
         });
+
+        // The close that follows the server's error frame must not report again.
+        test("a refused join reports the server's reason, once", function() {
+            colyseus_auth_sign_out(global.__test_client);
+
+            test_auth_join(global.__test_client, "auth_static_room");
+            expect(global.__test_join.errors).toBe(1);
+            expect(global.__test_join.err).toBe("jwt must be provided");
+
+            test_auth_join(global.__test_client, "auth_instance_room");
+            expect(global.__test_join.errors).toBe(1);
+            expect(global.__test_join.err).toBe("jwt must be provided");
+        });
     });
 });
 
@@ -283,15 +296,17 @@ function test_auth_sign_in_with_email(_client) {
 }
 
 /// Joins `_room_name`, then leaves. True when the server admitted the client.
+/// global.__test_join keeps the first error and how many arrived.
 function test_auth_join(_client, _room_name) {
-    global.__test_join = { done: false, joined: false, err: "" };
+    global.__test_join = { done: false, joined: false, err: "", errors: 0 };
     var _room = colyseus_client_join_or_create(_client, _room_name, "{}");
     colyseus_on_join(_room, function(_r) {
         global.__test_join.joined = true;
         global.__test_join.done = true;
     });
     colyseus_on_error(_room, function(_code, _msg) {
-        global.__test_join.err = _msg;
+        if (global.__test_join.errors == 0) global.__test_join.err = _msg;
+        global.__test_join.errors += 1;
         global.__test_join.done = true;
     });
     // a refusal at connect time can arrive as a bare close
@@ -305,6 +320,9 @@ function test_auth_join(_client, _room_name) {
         var _start = current_time;
         while (current_time - _start < 500) { colyseus_process(); }
     } else {
+        // the server closes right after its error frame; let that land too
+        var _settle = current_time;
+        while (current_time - _settle < 500) { colyseus_process(); }
         show_debug_message("join " + _room_name + " refused: " + global.__test_join.err);
     }
     colyseus_room_free(_room);

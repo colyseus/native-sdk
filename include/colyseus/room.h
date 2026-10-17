@@ -179,6 +179,7 @@ struct colyseus_room {
     char* reconnection_token;
     char* serializer_id;
     bool has_joined;
+    bool join_error_reported;  /* the server's ERROR already said why the join failed */
 
     colyseus_transport_t* transport;
     colyseus_transport_factory_fn transport_factory;

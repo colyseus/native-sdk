@@ -2,6 +2,14 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.18.7
+
+### Fixed
+
+- A join the room refuses at connect time (its `onAuth()` or `onJoin()` throws)
+  now emits `error` once, with the server's reason. A second `error` with
+  `Remote disconnect` used to follow it.
+
 ## 0.18.6
 
 ### Fixed

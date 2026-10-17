@@ -1781,6 +1781,10 @@ static void room_handle_frame(colyseus_room_t* room, const uint8_t* data, size_t
             int error_code = (int)decode_number(data, &offset);
             char* error_message = decode_string(data, &offset);
 
+            /* before the join this is the join failing, and the server closes
+             * right behind it */
+            if (!room->has_joined) room->join_error_reported = true;
+
             if (room->on_error) {
                 room->on_error(error_code, error_message ? error_message : "Unknown error", room->on_error_userdata);
             }
@@ -1941,6 +1945,7 @@ static void room_handle_close(colyseus_room_t* room, int code, const char* reaso
         if (room->serializer) {
             colyseus_schema_serializer_teardown(room->serializer);
         }
+        if (room->join_error_reported) return;
         fprintf(stderr, "Room connection closed unexpectedly: %s\n", reason);
         if (room->on_error) {
             room->on_error(code, reason, room->on_error_userdata);

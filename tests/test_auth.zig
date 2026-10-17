@@ -229,3 +229,30 @@ test "auth: both rooms refuse a signed-out client" {
     try testing.expect(!joinRoom(client, "auth_static_room"));
     try testing.expect(!joinRoom(client, "auth_instance_room"));
 }
+
+fn never() bool {
+    return false;
+}
+
+test "auth: a room's own onAuth refusal reports the server's reason, once" {
+    c.colyseus_set_polled(true);
+    defer c.colyseus_set_polled(false);
+
+    const client = try newClient();
+    defer freeClient(client);
+    c.colyseus_auth_signout(c.colyseus_client_get_auth(client));
+
+    Join.reset();
+    c.colyseus_client_join_or_create(client, "auth_instance_room", "{}", Join.onRoom, Join.onMatchmakeError, null);
+    defer if (Join.room != null) {
+        c.colyseus_room_free(Join.room);
+        Join.room = null;
+    };
+    try testing.expect(pollUntil(Join.settled, 8000));
+    // the server closes right after its error frame; let that land too
+    _ = pollUntil(never, 500);
+
+    try testing.expectEqual(@as(u32, 0), Join.joined.load(.seq_cst));
+    try testing.expectEqualStrings("jwt must be provided", Join.failMessage());
+    try testing.expectEqual(@as(u32, 1), Join.failed.load(.seq_cst));
+}

@@ -116,6 +116,24 @@ final class AuthIntegrationTests: XCTestCase {
         XCTAssertEqual(signedIn.data["email"]?.string, email)
     }
 
+    // example-server's auth_instance_room checks the token in its own onAuth,
+    // which runs at connect and reads it from the URL, not the HTTP header.
+    func testTheSignedInTokenReachesTheRoomsOnAuth() async throws {
+        _ = try await client.auth.signInAnonymously()
+        let room = try await client.joinOrCreate("auth_instance_room", state: SchemaRef.self)
+        room.leave()
+    }
+
+    func testARoomThatRefusesAtConnectThrowsTheServersReason() async throws {
+        client.auth.signOut()
+        do {
+            _ = try await client.joinOrCreate("auth_instance_room", state: SchemaRef.self)
+            XCTFail("a signed-out client was admitted")
+        } catch Colyseus.Error.matchmaking(_, let message) {
+            XCTAssertEqual(message, "jwt must be provided")
+        }
+    }
+
     func testTheWrongPasswordIsRefused() async throws {
         let email = "swift-\(UUID().uuidString.prefix(8))@example.com"
         _ = try await client.auth.register(email: email, password: "correct horse battery")
