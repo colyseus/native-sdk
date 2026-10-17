@@ -81,6 +81,8 @@ emcc \
     -sNO_EXIT_RUNTIME=1 \
     -sMODULARIZE=1 \
     -sEXPORT_NAME='ColyseusModule' \
+    -sWASM_ASYNC_COMPILATION=0 \
+    -sFETCH_SUPPORT_INDEXEDDB=0 \
     -o "$OUTPUT_DIR/colyseus_module.js"
 
 # Concatenate WASM module + shim into final single file

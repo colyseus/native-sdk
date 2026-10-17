@@ -25,8 +25,10 @@ target:
    entering the main loop. (The extension carries no `HTML5CodeInjection`
    for this reason: a `<script src>` of its own would 404 at the page root
    or instantiate the module twice.)
-4. The WASM module then instantiates **asynchronously**, and finishes after
-   the game has started running. See the gate below.
+4. The WASM module compiles **synchronously** (`-sWASM_ASYNC_COMPILATION=0`),
+   and the fetch library skips its IndexedDB setup
+   (`-sFETCH_SUPPORT_INDEXEDDB=0`, the SDK never persists responses), so the
+   module is up by the time the runner enters its main loop.
 
 ## Using it in a project
 
@@ -35,28 +37,25 @@ Nothing extra: the extension asset already carries `colyseus_wasm.js` with
 API works unchanged — including the prediction layer (input handles,
 predict, reconciler pump, spawns, events, netdelay).
 
-### Wait for `colyseus_is_ready()`
+### Creating the client
 
-A Create event runs before the module is up, so create the client from Step
-instead, on the first frame the extension answers:
+Create it in a Create event, as on native:
 
 ```gml
 // Create
-client = 0;
+client = colyseus_client_create("https://example.com");
+room = colyseus_client_join_or_create(client, "my_room", {});
+// register handlers...
 
 // Step
-if (client == 0) {
-    if (!colyseus_is_ready()) exit;   // still instantiating (HTML5 only)
-    client = colyseus_client_create("https://example.com");
-    room = colyseus_client_join_or_create(client, "my_room", {});
-    // register handlers...
-}
 colyseus_process();
 ```
 
-`colyseus_is_ready()` is true from the first frame on native, so the same
-code runs everywhere. `colyseus_client_create()` called too early returns 0
-and logs that the extension is not ready yet; it is safe to call again.
+The synchronous compile needs a browser that allows one this size on the
+main thread. Chrome before roughly version 115 (mid-2023) does not, and the
+extension fails to load there: `colyseus_is_ready()` stays false, and
+`colyseus_client_create()` returns 0 and logs that the extension is not
+ready.
 
 Platform notes:
 

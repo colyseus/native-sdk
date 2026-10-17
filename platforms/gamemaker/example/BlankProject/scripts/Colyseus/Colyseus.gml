@@ -74,18 +74,18 @@ global.__colyseus_current_room_ref = -1;  // set during event processing / state
 
 /// Whether the extension can answer calls yet.
 ///
-/// Native builds are ready from the first frame. On HTML5 the WASM module
-/// instantiates asynchronously and finishes AFTER the game has entered its
-/// main loop, so a Create event runs too early: gate there, and create the
-/// client on the first Step where this returns true.
+/// True before the first Create event on native and on HTML5, where the WASM
+/// module compiles synchronously while the runner loads it. Stays false where
+/// the module failed to load, such as Chrome before ~115, which refuses a
+/// synchronous compile this size.
 /// @returns {Bool}
 function colyseus_is_ready() {
     return __colyseus_gm_is_ready() > 0;
 }
 
 /// Create a Colyseus client. Automatically restores a previously saved auth token.
-/// Returns 0 (and logs why) while colyseus_is_ready() is false — call again
-/// on a later frame.
+/// Safe from a Create event. Returns 0 (and logs why) while
+/// colyseus_is_ready() is false.
 /// @param {String} _endpoint  Server endpoint (e.g., "http://localhost:2567")
 /// @returns {Real} Client handle, 0 on failure
 function colyseus_client_create(_endpoint) {
@@ -93,8 +93,8 @@ function colyseus_client_create(_endpoint) {
     if (!_abi_checked) {
         if (!colyseus_is_ready()) {
             show_debug_message("[Colyseus] colyseus_client_create: the extension "
-                + "is not ready yet (the HTML5 WASM module instantiates "
-                + "asynchronously) — wait for colyseus_is_ready() and try again");
+                + "is not ready (on HTML5: the WASM module did not load, and this "
+                + "browser may refuse its synchronous compile)");
             return 0;
         }
         // latched only once the extension answers, so a too-early first call

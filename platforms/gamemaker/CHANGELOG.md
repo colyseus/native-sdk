@@ -4,6 +4,12 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 
 ## 0.18.9
 
+### Changed
+
+- HTML5: `colyseus_client_create()` now works from a Create event, so the
+  `colyseus_is_ready()` gate in Step is no longer needed. Chrome before roughly
+  version 115 (mid-2023) can no longer load the extension.
+
 ### Fixed
 
 - A join the room refuses at connect time (its `onAuth()` or `onJoin()` throws)

@@ -101,34 +101,26 @@ this way.
 
 ```gml
 // Create
-client = 0;
-room = 0;
+client = colyseus_client_create("http://localhost:2567");
+room = colyseus_client_join_or_create(client, "my_room", { name: "guest" });
+
+colyseus_on_join(room, function(_room) {
+    show_debug_message("joined " + colyseus_room_get_id(_room));
+});
+colyseus_on_state_change(room, function(_room) {
+    var _state = colyseus_room_get_state(_room);   // refreshed on every call
+    show_debug_message("turn: " + string(_state.currentTurn));
+    var _me = colyseus_map_get(_state, "players", colyseus_room_get_session_id(_room));
+    if (_me != undefined) show_debug_message("me at " + string(_me.x) + "," + string(_me.y));
+});
+colyseus_on_message(room, function(_room, _type, _data) {
+    show_debug_message(_type + ": " + json_stringify(_data));
+});
+colyseus_on_leave(room, function(_code, _reason) {
+    show_debug_message("left: " + _reason);
+});
 
 // Step
-if (client == 0) {
-    // HTML5 instantiates the WASM module after the game starts; native is
-    // ready at once, so the same gate works everywhere
-    if (!colyseus_is_ready()) exit;
-
-    client = colyseus_client_create("http://localhost:2567");
-    room = colyseus_client_join_or_create(client, "my_room", { name: "guest" });
-
-    colyseus_on_join(room, function(_room) {
-        show_debug_message("joined " + colyseus_room_get_id(_room));
-    });
-    colyseus_on_state_change(room, function(_room) {
-        var _state = colyseus_room_get_state(_room);   // refreshed on every call
-        show_debug_message("turn: " + string(_state.currentTurn));
-        var _me = colyseus_map_get(_state, "players", colyseus_room_get_session_id(_room));
-        if (_me != undefined) show_debug_message("me at " + string(_me.x) + "," + string(_me.y));
-    });
-    colyseus_on_message(room, function(_room, _type, _data) {
-        show_debug_message(_type + ": " + json_stringify(_data));
-    });
-    colyseus_on_leave(room, function(_code, _reason) {
-        show_debug_message("left: " + _reason);
-    });
-}
 colyseus_process();   // delivers every event and callback; call once per Step
 
 // anywhere: send a message (structs, strings, numbers, booleans)
@@ -306,7 +298,7 @@ To modify the build configuration, edit `build.zig`.
 
 ## Documentation
 
-- **[HTML5_SETUP.md](HTML5_SETUP.md)**: HTML5/GX.Games, how the WASM build loads and the `colyseus_is_ready()` gate
+- **[HTML5_SETUP.md](HTML5_SETUP.md)**: HTML5/GX.Games, how the WASM build loads, and the browsers it needs
 - **[PORTING_NOTES.md](PORTING_NOTES.md)**: GML and GameMaker behaviours that bite a multiplayer port (closures, built-in names, HTML5 numeric and struct traps, Igor)
 - **[SUMMARY.md](SUMMARY.md)**: the build system (zig build, cross-compilation, output layout)
 - **[CHANGELOG.md](CHANGELOG.md)**
