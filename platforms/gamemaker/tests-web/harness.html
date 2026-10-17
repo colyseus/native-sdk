@@ -10,7 +10,8 @@
 <script>
 // Drives window.colyseus_gm_* exactly as GML-on-HTML5 does (the shim IS the
 // GML calling convention on web). Needs the prediction-tools playground dev
-// server on :5173 (`pnpm dev --host 0.0.0.0`).
+// server on :5173 (`pnpm dev --host 0.0.0.0`), and example-server on :2567
+// for the auth scenarios.
 //
 // Emits "TEST PASS <name>" / "TEST FAIL <name>: <why>" console lines and a
 // final "WEB TESTS FINISHED <pass>/<total>" — web-tests.mjs keys on them.
@@ -18,6 +19,7 @@
   "use strict";
   // ?server=ws://host:port relocates the playground (web-tests.mjs sets it)
   var SERVER = new URLSearchParams(location.search).get("server") || "ws://127.0.0.1:5173";
+  var AUTH_SERVER = new URLSearchParams(location.search).get("auth") || "ws://127.0.0.1:2567";
   var pass = 0, total = 0;
 
   // Sampled synchronously, right after the shim's <script> ran: the module
@@ -74,7 +76,8 @@
   var roomRef = 0, pid = 0, rid = 0;
   var moveX = 0, moveY = 0;
   var joined = false, reconnected = false, dropped = false, left = false;
-  var joinError = null;
+  var joinError = null, roomError = null;
+  var authReply = null;
   var sawInFlight = 0;
 
   function pumpRecon() {
@@ -108,9 +111,15 @@
     var t;
     while ((t = window.colyseus_gm_poll_event()) !== 0) {
       if (t === 1) joined = true;           // ROOM_JOIN
+      if (t === 4) roomError = window.colyseus_gm_event_get_message(); // ROOM_ERROR
       if (t === 5) { left = true; log("EVT leave: " + window.colyseus_gm_event_get_message()); }
       if (t === 6) joinError = {            // CLIENT_ERROR
         code: window.colyseus_gm_event_get_code(),
+        message: window.colyseus_gm_event_get_message(),
+      };
+      if (t === 10 || t === 11) authReply = { // HTTP_RESPONSE / HTTP_ERROR
+        handle: window.colyseus_gm_event_get_callback_handle(),
+        ok: t === 10,
         message: window.colyseus_gm_event_get_message(),
       };
       if (t === 14) dropped = true;         // ROOM_DROP
@@ -144,6 +153,31 @@
     });
   }
 
+  // COLYSEUS_AUTH_* ordinals in Colyseus.gml
+  var AUTH_REGISTER = 1, AUTH_SIGN_IN = 2;
+
+  async function authCall(client, op, payload) {
+    authReply = null;
+    var handle = window.colyseus_gm_auth_request(client, op, payload);
+    var ok = await waitFor(function () { return authReply && authReply.handle === handle; }, 8000);
+    return ok && authReply.ok;
+  }
+
+  // Joins, then leaves; resolves to "" when admitted, else why not.
+  async function joinAndLeave(client, roomName) {
+    joined = false; left = false; joinError = null; roomError = null;
+    var ref = window.colyseus_gm_client_join_or_create(client, roomName, "{}");
+    await waitFor(function () { return joined || left || joinError || roomError; }, 8000);
+    var why = joined ? "" : "error=" + JSON.stringify(joinError || roomError) + " left=" + left;
+    if (joined) {
+      window.colyseus_gm_room_leave(ref);
+      await waitFor(function () { return left; }, 3000);
+    }
+    window.colyseus_gm_room_free(ref);
+    joined = false; left = false; joinError = null; roomError = null;
+    return why;
+  }
+
   async function main() {
     // T0: the not-ready window is observable and harmless
     report("not_ready_gate", readyAtLoad === 0 && clientBeforeReady === 0,
@@ -167,6 +201,22 @@
       joinError.message === 'provided room name "no_such_room" not defined',
       "error=" + JSON.stringify(joinError));
     window.colyseus_gm_client_free(badClient);
+
+    // T1c: the signed-in token reaches example-server's auth rooms — checked
+    // at matchmaking (Authorization header) and at connect (?_authToken=)
+    var authClient = window.colyseus_gm_client_create(AUTH_SERVER);
+    var creds = JSON.stringify({ email: "web-" + Date.now() + "@example.com", password: "secret123" });
+    var signedIn = await authCall(authClient, AUTH_REGISTER, creds);
+    window.colyseus_gm_auth_signout(authClient);
+    signedIn = signedIn && (await authCall(authClient, AUTH_SIGN_IN, creds));
+    report("auth_sign_in", signedIn && window.colyseus_gm_auth_get_token(authClient) !== "",
+      "reply=" + JSON.stringify(authReply));
+    var why = await joinAndLeave(authClient, "auth_static_room");
+    report("auth_static_room", why === "", why);
+    why = await joinAndLeave(authClient, "auth_instance_room");
+    report("auth_instance_room", why === "", why);
+    window.colyseus_gm_auth_signout(authClient);
+    window.colyseus_gm_client_free(authClient);
 
     // T2: join lab-move on the playground server
     var client = window.colyseus_gm_client_create(SERVER);

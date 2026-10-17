@@ -1,7 +1,8 @@
 #!/bin/bash
 # Build the wasm bundle and run the browser smoke suite against the
-# prediction-tools playground server (started here when it isn't up; the
-# same COLYSEUS_PLAYGROUND_PORT / _ENDPOINT knobs as run-tests.sh).
+# prediction-tools playground server and example-server (each started here
+# when it isn't up; the same COLYSEUS_PLAYGROUND_PORT / _ENDPOINT knobs as
+# run-tests.sh).
 #
 # Prerequisites: emsdk (emcc), node.
 set -e
@@ -10,6 +11,8 @@ cd "$SCRIPT_DIR/.."
 
 source ../../tests/dev-servers.sh
 trap servers_stop EXIT
+servers_ensure --room auth_static_room example-server 2567 ../../example-server \
+    npx tsx src/index.ts || exit 2
 PLAYGROUND_PORT="${COLYSEUS_PLAYGROUND_PORT:-5173}"
 servers_ensure playground "$PLAYGROUND_PORT" ../../../demos/prediction-tools \
     npx vite --port "$PLAYGROUND_PORT" --strictPort --host 0.0.0.0 || exit 2
