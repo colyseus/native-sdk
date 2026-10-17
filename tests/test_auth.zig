@@ -186,6 +186,10 @@ fn newClient() ![*c]c.colyseus_client_t {
     c.colyseus_settings_set_port(settings, "2567");
     const client = c.colyseus_client_create(settings);
     if (client == null) return error.OutOfMemory;
+    // Every suite's client reads the default key at create. On macOS a
+    // keychain item another test binary wrote can need an access prompt, and
+    // a CI runner has no UI to answer it: those suites hung.
+    c.colyseus_auth_set_storage_key(c.colyseus_client_get_auth(client), "colyseus-auth-token-test_auth");
     return client;
 }
 
