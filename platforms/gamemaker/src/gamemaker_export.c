@@ -2037,7 +2037,18 @@ typedef struct {
     char* password;
     char* options_json;
     double request_id;
+    int holds;           // dispatch + reply; see gm_auth_release
 } gm_auth_thread_args_t;
+
+/* Native settles inside the core call, web only after it returns
+ * (emscripten_fetch), so whichever of the two finishes last frees. */
+static void gm_auth_release(gm_auth_thread_args_t* args) {
+    if (--args->holds > 0) return;
+    free(args->email);
+    free(args->password);
+    free(args->options_json);
+    free(args);
+}
 
 static void gm_auth_push(gm_auth_thread_args_t* args, int type, int code,
                          char* body, const char* message) {
@@ -2065,6 +2076,7 @@ static void on_auth_success(const colyseus_auth_data_t* data, void* userdata) {
     cJSON_Delete(root);
 
     gm_auth_push(args, GM_EVENT_HTTP_RESPONSE, 200, body ? body : strdup("{}"), NULL);
+    gm_auth_release(args);
 }
 
 /* The core's auth error callback carries a message but no status, so the code
@@ -2073,6 +2085,7 @@ static void on_auth_error(const char* message, void* userdata) {
     gm_auth_thread_args_t* args = (gm_auth_thread_args_t*)userdata;
     gm_auth_push(args, GM_EVENT_HTTP_ERROR, 0, NULL,
                  message ? message : "auth request failed");
+    gm_auth_release(args);
 }
 
 static void gm_auth_thread_func(void* userdata) {
@@ -2098,10 +2111,7 @@ static void gm_auth_thread_func(void* userdata) {
                 on_auth_success, on_auth_error, args);
             break;
     }
-    free(args->email);
-    free(args->password);
-    free(args->options_json);
-    free(args);
+    gm_auth_release(args);
 }
 
 /* Empty reaches the core as NULL: GML has no null string, and an absent email
@@ -2122,6 +2132,7 @@ static double gm_auth_dispatch(colyseus_auth_t* auth, int op, const char* email,
     args->password = gm_auth_arg(password);
     args->options_json = gm_auth_arg(options_json);
     args->request_id = g_http_request_counter;
+    args->holds = 2;
 
     gm_spawn_request(gm_auth_thread_func, args);
     return g_http_request_counter;
