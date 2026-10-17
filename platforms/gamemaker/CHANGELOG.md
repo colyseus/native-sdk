@@ -2,6 +2,16 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.8
+
+### Fixed
+
+- After a `colyseus_auth_*` sign-in, joining a room now hands the token to the
+  room's `onAuth(client, options, context)` too. A room that checked it there
+  refused the join. Thanks @RoyallGuards!
+- HTML5: the `colyseus_auth_*` functions now work. Their requests failed with a
+  404 and their callbacks never ran, and matchmaking did not send the token.
+
 ## 0.18.7
 
 ### Added

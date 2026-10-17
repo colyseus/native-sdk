@@ -2,6 +2,16 @@
 
 All notable changes to the Colyseus Godot SDK will be documented in this file.
 
+## 0.18.6
+
+### Fixed
+
+- After signing in through `client.auth`, joining a room now hands the token to
+  the room's `onAuth(client, options, context)` too. A room that checked it
+  there refused the join. Thanks @RoyallGuards!
+- Web: `client.auth` requests no longer fail with a 404, and matchmaking now
+  sends the token.
+
 ## 0.18.5
 
 ### Fixed
