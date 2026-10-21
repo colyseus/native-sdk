@@ -3,6 +3,13 @@ const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 const is_emscripten = builtin.os.tag == .emscripten;
 
+// The default handler waits on __ulock_wait2 when two threads panic at once,
+// a private libSystem symbol that App Store review flags in the import table.
+pub const panic = if (builtin.os.tag.isDarwin() and builtin.os.tag != .macos)
+    std.debug.simple_panic
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
+
 // std.http is not available on emscripten - HTTP should use JavaScript fetch API
 const http = if (!is_emscripten) std.http else struct {
     pub const Method = enum { GET, POST, PUT, DELETE, PATCH };
