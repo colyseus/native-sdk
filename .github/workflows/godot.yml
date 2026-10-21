@@ -85,6 +85,9 @@ jobs:
         working-directory: platforms/godot
         run: zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
 
+      - name: Check for private symbols
+        run: bash tests/check-apple-private-symbols.sh platforms/godot/addons/colyseus/bin/*.dylib
+
       - name: Ad-hoc code sign macOS dylibs
         run: |
           for dylib in platforms/godot/addons/colyseus/bin/*.dylib; do
@@ -664,6 +667,9 @@ jobs:
             -framework CoreFoundation \
             -framework Security \
             -lc
+
+      - name: Check for private symbols
+        run: bash tests/check-apple-private-symbols.sh platforms/godot/addons/colyseus/bin/*ios*.dylib
 
       - name: Upload iOS binaries
         uses: actions/upload-artifact@v4

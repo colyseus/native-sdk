@@ -49,6 +49,16 @@ jobs:
           ..\vcpkg\bootstrap-vcpkg.bat
           git submodule update --init --recursive
 
+      # Debug keeps every safety-check panic, the path that pulls in Zig's
+      # private-symbol futex, so it is the strictest build to check.
+      - name: Check Apple binaries for private symbols
+        if: runner.os == 'macOS'
+        run: |
+          zig build -Dexamples=false --prefix zig-out-apple/macos
+          zig build -Dtarget=aarch64-ios -Dapple-sdk="$(xcrun --sdk iphoneos --show-sdk-path)" \
+            -Dexamples=false --prefix zig-out-apple/ios
+          bash tests/check-apple-private-symbols.sh zig-out-apple
+
       - name: Install example-server dependencies
         working-directory: example-server
         run: npm install

@@ -52,6 +52,12 @@ jobs:
           lipo -info zig-out/lib/macos/universal/libcolyseus_flutter.dylib
           ./make-xcframework.sh zig-out/lib
 
+      - name: Check for private symbols
+        run: |
+          bash tests/check-apple-private-symbols.sh \
+            platforms/flutter/zig-out/lib/macos/universal \
+            platforms/flutter/zig-out/lib/ios/colyseus_flutter.xcframework
+
       - uses: actions/upload-artifact@v4
         with:
           name: libs-apple
