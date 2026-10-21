@@ -9,8 +9,8 @@
 # empty build folder, as CI, `flutter clean` and every archive do. A build that
 # only passes on retry counts as a failure (issue #35).
 #
-# SIMULATOR=<udid> picks the simulator for the runtime lane; otherwise the
-# first available iPhone is used.
+# SIMULATOR=<udid> picks the simulator for the runtime lane; otherwise an
+# iPhone on the newest installed runtime is used.
 set -euo pipefail
 
 PKG="$(cd "${1:?usage: check-ios-link.sh <package-dir> [work-dir]}" && pwd)"
@@ -100,12 +100,16 @@ mkdir -p integration_test
   echo "}"
 } > integration_test/link_test.dart
 
-sim="${SIMULATOR:-$(xcrun simctl list devices available | grep -m1 -oE 'iPhone[^(]*\([0-9A-F-]{36}\)' | grep -oE '[0-9A-F-]{36}' || true)}"
+# The newest runtime lists last; an older one may still need first-boot setup.
+sim="${SIMULATOR:-$(xcrun simctl list devices available | grep -oE 'iPhone[^(]*\([0-9A-F-]{36}\)' | tail -1 | grep -oE '[0-9A-F-]{36}' || true)}"
 if [ -z "$sim" ]; then
   echo "FAIL  runtime: no iPhone simulator available"
   failed=1
+# bootstatus waits forever on a simulator that never comes up.
+elif ! perl -e 'alarm shift; exec @ARGV' 300 xcrun simctl bootstatus "$sim" -b >/dev/null 2>&1; then
+  echo "FAIL  runtime: simulator $sim did not boot within 5 minutes"
+  failed=1
 else
-  xcrun simctl bootstatus "$sim" -b >/dev/null
   flutter clean >/dev/null
   if flutter test integration_test/link_test.dart -d "$sim" > "$WORK/runtime.log" 2>&1; then
     echo "PASS  runtime"
