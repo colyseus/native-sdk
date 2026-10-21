@@ -2,6 +2,21 @@ const std = @import("std");
 const builtin = @import("builtin");
 const msgpack = @import("msgpack");
 
+// Zig's default panic handler waits on __ulock_wait(2) when two threads panic
+// at once: private libSystem symbols that App Store review flags. Every Zig
+// root needs this; tests/check-apple-private-symbols.sh enforces it.
+pub const panic = if (builtin.os.tag.isDarwin())
+    std.debug.FullPanic(panicWithoutWaiting)
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
+
+fn panicWithoutWaiting(msg: []const u8, _: ?usize) noreturn {
+    std.debug.lockStdErr();
+    std.fs.File.stderr().writeAll(msg) catch {};
+    std.fs.File.stderr().writeAll("\n") catch {};
+    std.posix.abort();
+}
+
 /// Result type for decoding operations
 pub const DecodeResult = extern struct {
     success: bool,

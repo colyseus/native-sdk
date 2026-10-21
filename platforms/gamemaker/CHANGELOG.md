@@ -2,6 +2,13 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.11
+
+### Fixed
+
+- macOS and iOS builds no longer reference Apple's private `__ulock_wait` functions.
+  App Store review rejects apps that use private APIs.
+
 ## 0.18.10
 
 ### Added

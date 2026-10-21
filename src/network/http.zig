@@ -3,12 +3,20 @@ const Allocator = std.mem.Allocator;
 const builtin = @import("builtin");
 const is_emscripten = builtin.os.tag == .emscripten;
 
-// The default handler waits on __ulock_wait2 when two threads panic at once,
-// a private libSystem symbol that App Store review flags in the import table.
-pub const panic = if (builtin.os.tag.isDarwin() and builtin.os.tag != .macos)
-    std.debug.simple_panic
+// Zig's default panic handler waits on __ulock_wait(2) when two threads panic
+// at once: private libSystem symbols that App Store review flags. Every Zig
+// root needs this; tests/check-apple-private-symbols.sh enforces it.
+pub const panic = if (builtin.os.tag.isDarwin())
+    std.debug.FullPanic(panicWithoutWaiting)
 else
     std.debug.FullPanic(std.debug.defaultPanic);
+
+fn panicWithoutWaiting(msg: []const u8, _: ?usize) noreturn {
+    std.debug.lockStdErr();
+    std.fs.File.stderr().writeAll(msg) catch {};
+    std.fs.File.stderr().writeAll("\n") catch {};
+    std.posix.abort();
+}
 
 // std.http is not available on emscripten - HTTP should use JavaScript fetch API
 const http = if (!is_emscripten) std.http else struct {

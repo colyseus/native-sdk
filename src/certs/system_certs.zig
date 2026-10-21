@@ -9,6 +9,21 @@ const is_ios = builtin.os.tag == .ios;
 const is_emscripten = builtin.os.tag == .emscripten;
 const allocator = if (is_android or is_ios or is_emscripten) std.heap.page_allocator else std.heap.c_allocator;
 
+// Zig's default panic handler waits on __ulock_wait(2) when two threads panic
+// at once: private libSystem symbols that App Store review flags. Every Zig
+// root needs this; tests/check-apple-private-symbols.sh enforces it.
+pub const panic = if (builtin.os.tag.isDarwin())
+    std.debug.FullPanic(panicWithoutWaiting)
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
+
+fn panicWithoutWaiting(msg: []const u8, _: ?usize) noreturn {
+    std.debug.lockStdErr();
+    std.fs.File.stderr().writeAll(msg) catch {};
+    std.fs.File.stderr().writeAll("\n") catch {};
+    std.posix.abort();
+}
+
 // Global certificate bundle
 var g_bundle: ?Certificate.Bundle = null;
 var g_init_attempted: bool = false;

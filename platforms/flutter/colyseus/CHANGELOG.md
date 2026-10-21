@@ -2,6 +2,13 @@
 
 All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
+## 0.18.10
+
+### Fixed
+
+- macOS builds no longer reference Apple's private `__ulock_wait` function.
+  App Store review rejects apps that use private APIs.
+
 ## 0.18.9
 
 ### Fixed

@@ -3,6 +3,13 @@
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
 Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
 
+## 0.18.13
+
+### Fixed
+
+- macOS and iOS builds no longer reference Apple's private `__ulock_wait` functions.
+  App Store review rejects apps that use private APIs.
+
 ## 0.18.12
 
 ### Fixed
