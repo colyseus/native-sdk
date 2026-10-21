@@ -2,6 +2,16 @@
 
 All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
+## 0.18.9
+
+### Fixed
+
+- iOS release and archived builds now carry the native library, so connections
+  no longer fail there while debug works, and the first build after a clean no
+  longer stops at `Build input file cannot be found: …/libcolyseus_flutter.a`.
+  If you turned off dead code stripping to work around it, you can turn it back
+  on. Thanks @DorAlter! [#35](https://github.com/colyseus/native-sdk/issues/35)
+
 ## 0.18.8
 
 ### Fixed

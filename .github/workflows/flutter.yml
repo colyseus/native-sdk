@@ -60,6 +60,31 @@ jobs:
             platforms/flutter/zig-out/lib/ios/colyseus_flutter.xcframework/
           if-no-files-found: error
 
+  # A broken iOS link still builds: Dart looks the library up by name, so it
+  # fails the first connection of a release build instead (issue #35).
+  ios-link:
+    name: Check the iOS link
+    needs: apple
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libs-apple
+          path: libs
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Build an app against the package
+        run: |
+          set -eu
+          mkdir -p platforms/flutter/colyseus/ios/Frameworks
+          cp -R libs/ios/colyseus_flutter.xcframework platforms/flutter/colyseus/ios/Frameworks/
+          platforms/flutter/check-ios-link.sh platforms/flutter/colyseus "$RUNNER_TEMP/ios-link"
+
   # Zig cross-compiles the rest from one host; Android additionally needs the NDK.
   others:
     name: Build Android + Linux + Windows
@@ -113,7 +138,7 @@ jobs:
 
   publish:
     name: Publish to pub.dev
-    needs: [apple, others]
+    needs: [apple, others, ios-link]
     runs-on: ubuntu-latest
     permissions:
       id-token: write # pub.dev authenticates the publish via this OIDC token

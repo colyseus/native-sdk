@@ -29,8 +29,8 @@ DynamicLibrary _open() {
   if (Platform.isAndroid || Platform.isLinux) {
     return DynamicLibrary.open('libcolyseus_flutter.so');
   } else if (Platform.isIOS) {
-    // iOS uses static linking; symbols are in the main executable.
-    return DynamicLibrary.process();
+    // Embedded in the app's Frameworks/, which dyld searches via @rpath.
+    return DynamicLibrary.open('colyseus_flutter.framework/colyseus_flutter');
   } else if (Platform.isMacOS) {
     return DynamicLibrary.open('libcolyseus_flutter.dylib');
   } else if (Platform.isWindows) {

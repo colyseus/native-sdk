@@ -67,4 +67,7 @@ if [ "$missing" -ne 0 ]; then
   exit 1
 fi
 
+# upload-artifact drops file modes; pub keeps the executable bit if it is set.
+chmod +x "$STAGE"/ios/Frameworks/colyseus_flutter.xcframework/*/colyseus_flutter.framework/colyseus_flutter
+
 echo "Staged $PKG_PATH -> $STAGE"

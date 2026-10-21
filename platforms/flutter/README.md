@@ -12,7 +12,8 @@ the SDK's Emscripten build and a different transport.
 | `src/` | C glue: the room/event/message surface and the FFI helpers the generated bindings can't express. |
 | `colyseus/` | The Dart package, published to pub.dev as [`colyseus`](https://pub.dev/packages/colyseus). |
 | `build.zig`, `build.sh` | Build the native library and stage it into the plugin's platform folders. |
-| `make-xcframework.sh` | Fuse the iOS slices into the xcframework the podspec vendors. |
+| `make-xcframework.sh` | Link the iOS slices into the dynamic xcframework the podspec vendors. |
+| `check-ios-link.sh` | Build a fresh iOS app against the package and check every binding resolves. |
 | `stage-package.sh` | Assemble the publishable package for CI. |
 
 ## Build
@@ -29,12 +30,17 @@ because the `native_sdk` dependency resolves once against the host and its
 cross-target outputs do not link.
 
 iOS is the awkward one. Device and simulator are both arm64 and no single
-archive can hold two slices of one architecture, so the three iOS targets are
-fused into `colyseus_flutter.xcframework`. The static library also has to carry
-the core: `linkLibrary` only records a link-time dependency, which means
-nothing for an archive, so `build.zig` merges the core and glue archives with
-`libtool` for iOS. Without that the shipped `.a` holds three glue objects and
-Dart's runtime symbol lookups fail for everything in 0.18.
+binary can hold two slices of one architecture, so the three iOS targets are
+fused into `colyseus_flutter.xcframework`. Zig builds them as static archives
+that have to carry the core: `linkLibrary` only records a link-time
+dependency, which means nothing for an archive, so `build.zig` merges the core
+and glue archives with `libtool` for iOS. `make-xcframework.sh` then links each
+archive into a dynamic `colyseus_flutter.framework`, which the app embeds and
+Dart opens by name. Linked statically into the app instead, nothing references
+the library at link time, and release builds strip every symbol Dart looks up.
+
+None of this fails a build, only the first connection, so check a package with
+`./check-ios-link.sh colyseus` (needs Flutter, Xcode and an iPhone simulator).
 
 Apps normally take the published package, which bundles the prebuilt
 libraries: `flutter pub add colyseus`. To run against a local build instead:

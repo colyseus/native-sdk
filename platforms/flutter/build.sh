@@ -41,6 +41,8 @@ echo "Staging into $PLUGIN_DIR"
 stage() { # stage <src> <dest-dir> <dest-name>
   [ -e "$1" ] || return 0
   mkdir -p "$2"
+  # cp -R into an existing bundle nests the copy inside it and keeps the old one.
+  rm -rf "${2:?}/${3:?}"
   cp -R "$1" "$2/$3"
   echo "  ${2#$PLUGIN_DIR/}/$3"
 }
