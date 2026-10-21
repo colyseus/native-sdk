@@ -570,6 +570,10 @@
         return _callN('colyseus_gm_input_get', ['number', 'string'], [input_h, field]);
     };
 
+    window.colyseus_gm_input_data = function(input_h) {
+        return _callN('colyseus_gm_input_data', ['number'], [input_h]);
+    };
+
     window.colyseus_gm_input_send = function(input_h) {
         return _callN('colyseus_gm_input_send', ['number'], [input_h]);
     };

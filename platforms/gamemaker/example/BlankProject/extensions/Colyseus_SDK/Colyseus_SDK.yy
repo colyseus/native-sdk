@@ -1939,6 +1939,23 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_data",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_data",
+          "help": "(internal) input data",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_data",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_input_send",
           "argCount": 1,
           "args": [
@@ -5078,6 +5095,23 @@
           "hidden": true,
           "kind": 1,
           "name": "__colyseus_gm_input_get",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_input_data",
+          "argCount": 1,
+          "args": [
+            2
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_input_data",
+          "help": "(internal) input data",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_input_data",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2

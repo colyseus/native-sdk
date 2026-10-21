@@ -100,23 +100,23 @@ this way.
 ### Quick start
 
 ```gml
-// Create
+// Create (`room` is a GameMaker built-in, so the room ref is `net_room`)
 client = colyseus_client_create("http://localhost:2567");
-room = colyseus_client_join_or_create(client, "my_room", { name: "guest" });
+net_room = colyseus_client_join_or_create(client, "my_room", { name: "guest" });
 
-colyseus_on_join(room, function(_room) {
+colyseus_on_join(net_room, function(_room) {
     show_debug_message("joined " + colyseus_room_get_id(_room));
 });
-colyseus_on_state_change(room, function(_room) {
+colyseus_on_state_change(net_room, function(_room) {
     var _state = colyseus_room_get_state(_room);   // refreshed on every call
     show_debug_message("turn: " + string(_state.currentTurn));
     var _me = colyseus_map_get(_state, "players", colyseus_room_get_session_id(_room));
     if (_me != undefined) show_debug_message("me at " + string(_me.x) + "," + string(_me.y));
 });
-colyseus_on_message(room, function(_room, _type, _data) {
+colyseus_on_message(net_room, function(_room, _type, _data) {
     show_debug_message(_type + ": " + json_stringify(_data));
 });
-colyseus_on_leave(room, function(_code, _reason) {
+colyseus_on_leave(net_room, function(_code, _reason) {
     show_debug_message("left: " + _reason);
 });
 
@@ -124,20 +124,42 @@ colyseus_on_leave(room, function(_code, _reason) {
 colyseus_process();   // delivers every event and callback; call once per Step
 
 // anywhere: send a message (structs, strings, numbers, booleans)
-colyseus_send(room, "move", { x: mouse_x, y: mouse_y });
+colyseus_send(net_room, "move", { x: mouse_x, y: mouse_y });
 
 // Clean Up
-if (room != 0)   { colyseus_room_leave(room); colyseus_room_free(room); }
-if (client != 0) colyseus_client_free(client);
+if (net_room != 0) { colyseus_room_leave(net_room); colyseus_room_free(net_room); }
+if (client != 0)   colyseus_client_free(client);
 ```
 
 Field-level callbacks (`colyseus_listen`, `colyseus_on_add`,
 `colyseus_on_remove`, `colyseus_on_change`) hang off a
-`colyseus_callbacks_create(room)` handle; collection reads go through
-`colyseus_map_get` / `colyseus_map_keys` / `colyseus_array_get`. The
-prediction layer (`ColyseusInput`, `ColyseusPredict`, reconcilers, optimistic
-events, predicted spawns, the netdelay injector) is documented in the header
-of `ColyseusPredict.gml`.
+`colyseus_callbacks_create(net_room)` handle; collection reads go through
+`colyseus_map_get` / `colyseus_map_keys` / `colyseus_array_get`.
+
+Prediction follows the same style, with names taken from the C SDK, and the
+same per-Step order as the JS SDK:
+
+```gml
+// Create, after the join
+input = colyseus_room_input(net_room);
+predict = colyseus_predict_for_room(net_room);
+me = colyseus_predict_reconciler(predict, my_player, {
+    fields: ["x", "y"],
+    step: function(_ctx, _s, _cmd) { _s.x += _cmd.moveX * 200 * _ctx.dt; },
+});
+
+// Step
+colyseus_process();
+var _steps = colyseus_predict_tick(predict, colyseus_predict_now());   // replays after a correction
+repeat (_steps) {
+    colyseus_input_set(input, "moveX", keyboard_check(vk_right) - keyboard_check(vk_left));
+    colyseus_input_send(input);   // runs the step for this input
+}
+draw_sprite(spr_player, 0, colyseus_reconciler_value(me, "x"), colyseus_reconciler_value(me, "y"));
+```
+
+The `ColyseusInput` and `ColyseusPredict` constructors from earlier releases
+still work; they call these functions.
 
 ### Directory Structure
 
@@ -166,7 +188,7 @@ reference (there is no hand-maintained copy to drift):
 | script | what it covers |
 |---|---|
 | [`Colyseus.gml`](example/BlankProject/scripts/Colyseus/Colyseus.gml) | client + matchmaking, room events, schema callbacks, state structs and collection reads, messages, HTTP, auth, latency, `colyseus_process()` |
-| [`ColyseusPredict.gml`](example/BlankProject/scripts/ColyseusPredict/ColyseusPredict.gml) | input handle, clock, netdelay injector, manual-pump reconciler (flat + composite sim), optimistic events, predicted spawns |
+| [`ColyseusPredict.gml`](example/BlankProject/scripts/ColyseusPredict/ColyseusPredict.gml) | input handle, clock, netdelay injector, reconciler (flat + composite sim), optimistic events, predicted spawns |
 
 Everything prefixed `__colyseus_gm_` is an extension binding the scripts
 wrap; the list is generated from the C sources by `gen-bindings.mjs` and the

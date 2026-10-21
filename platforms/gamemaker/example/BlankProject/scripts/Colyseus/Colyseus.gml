@@ -70,7 +70,7 @@ global.__colyseus_current_room_ref = -1;  // set during event processing / state
 
 // Must match GM_PREDICT_ABI_VERSION in gamemaker_predict.c. A stale dylib or
 // wasm bundle otherwise fails as silent 0s from every unbound function.
-#macro __COLYSEUS_GM_ABI 1
+#macro __COLYSEUS_GM_ABI 2
 
 /// Whether the extension can answer calls yet.
 ///

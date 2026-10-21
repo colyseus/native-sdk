@@ -28,6 +28,7 @@
     {"id":{"name":"TestPredictCore","path":"scripts/TestPredictCore/TestPredictCore.yy",},},
     {"id":{"name":"TestPredictAdvanced","path":"scripts/TestPredictAdvanced/TestPredictAdvanced.yy",},},
     {"id":{"name":"TestPredictNet","path":"scripts/TestPredictNet/TestPredictNet.yy",},},
+    {"id":{"name":"TestPredictFlat","path":"scripts/TestPredictFlat/TestPredictFlat.yy",},},
     {"id":{"name":"TestHttpHelpers","path":"scripts/TestHttpHelpers/TestHttpHelpers.yy",},},
     {"id":{"name":"TestAuthApi","path":"scripts/TestAuthApi/TestAuthApi.yy",},},
     {"id":{"name":"TestHttpApi","path":"scripts/TestHttpApi/TestHttpApi.yy",},},

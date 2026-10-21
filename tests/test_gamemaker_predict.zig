@@ -41,6 +41,10 @@ extern fn colyseus_gm_event_get_callback_handle() f64;
 extern fn colyseus_gm_input_set(input_h: f64, field: [*c]const u8, value: f64) f64;
 extern fn colyseus_gm_input_get(input_h: f64, field: [*c]const u8) f64;
 extern fn colyseus_gm_input_send(input_h: f64) f64;
+extern fn colyseus_gm_input_data(input_h: f64) f64;
+extern fn colyseus_gm_schema_field_count(instance_handle: f64) f64;
+extern fn colyseus_gm_schema_field_name(instance_handle: f64, index: f64) [*c]const u8;
+extern fn colyseus_gm_schema_field_type_at(instance_handle: f64, index: f64) f64;
 extern fn colyseus_gm_input_stat(input_h: f64, which: f64) f64;
 extern fn colyseus_gm_input_reset(input_h: f64) void;
 extern fn colyseus_gm_predict_create_with(callbacks_ptr: f64, clock_ptr: f64) f64;
@@ -748,6 +752,25 @@ test "gm_value_nan_and_stale_handles" {
     try testing.expect(std.math.isNan(colyseus_gm_recon_value(rid, "x")));
     colyseus_gm_recon_free(rid);
     colyseus_gm_predict_free(pid);
+}
+
+// The input instance as a schema handle: GML builds the step's cmd struct
+// from its fields, and a set field reads back through it.
+test "gm_input_data_enumerates_fields" {
+    gmDrain();
+    try testing.expectEqual(@as(f64, 0), colyseus_gm_input_data(0));
+    const rig = makeInput();
+    defer c.colyseus_input_handle_free(rig.handle);
+
+    const data = colyseus_gm_input_data(hInput(rig.handle));
+    try testing.expect(data > 0);
+    try testing.expectEqual(data, colyseus_gm_input_data(hInput(rig.handle)));
+    try testing.expectEqual(@as(f64, 1), colyseus_gm_schema_field_count(data));
+    try testing.expectEqualStrings("ax", std.mem.span(colyseus_gm_schema_field_name(data, 0)));
+    try testing.expectEqual(@as(f64, @floatFromInt(c.COLYSEUS_FIELD_NUMBER)), colyseus_gm_schema_field_type_at(data, 0));
+
+    _ = colyseus_gm_input_set(hInput(rig.handle), "ax", 7);
+    try testing.expectEqual(@as(f64, 7), colyseus_gm_mirror_get(data, "ax"));
 }
 
 // ── 11. lifecycle: no cap exhaustion, children swept with their predict ─

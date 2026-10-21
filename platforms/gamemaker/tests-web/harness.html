@@ -282,6 +282,16 @@
       " sent=" + window.colyseus_gm_input_stat(roomRef, 0) +
       " acked=" + window.colyseus_gm_input_stat(roomRef, 1) + " rtt=" + rtt);
 
+    // T4b: the input instance enumerates like a schema (the GML step's cmd struct)
+    var inputData = window.colyseus_gm_input_data(roomRef);
+    var inputFields = [];
+    for (var fi = 0; fi < window.colyseus_gm_schema_field_count(inputData); fi++) {
+      inputFields.push(window.colyseus_gm_schema_field_name(inputData, fi));
+    }
+    report("input_data", inputData > 0 && inputFields.indexOf("moveX") >= 0 &&
+      inputFields.indexOf("moveY") >= 0,
+      "handle=" + inputData + " fields=" + JSON.stringify(inputFields));
+
     // T5: manual-pump reconciler — drift at wire precision
     moveX = 0;
     // re-resolve the player: the decoder may have replaced the instance

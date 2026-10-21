@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"TestPredictFlat",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"TestPredictFlat",
+  "parent":{
+    "name":"BlankProject",
+    "path":"BlankProject.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

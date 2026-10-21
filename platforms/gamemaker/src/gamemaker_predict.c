@@ -40,7 +40,7 @@
 
 // Bumped whenever the export surface changes; Colyseus.gml asserts it at
 // init so a stale shim/bundle fails loudly instead of returning silent 0s.
-#define GM_PREDICT_ABI_VERSION 1
+#define GM_PREDICT_ABI_VERSION 2
 
 // =============================================================================
 // Registries
@@ -397,6 +397,15 @@ GM_EXPORT double colyseus_gm_input_get(double input_h, const char* field) {
     colyseus_input_handle_t* h = gm_input_resolve(input_h);
     if (!h) return NAN;
     return gm_field_read(colyseus_input_handle_data(h), field);
+}
+
+/* The input instance as a schema handle — GML enumerates its fields to build
+ * the step's cmd struct. */
+GM_EXPORT double colyseus_gm_input_data(double input_h) {
+    colyseus_input_handle_t* h = gm_input_resolve(input_h);
+    if (!h) return 0;
+    int owner = gm_is_room_ref(input_h) ? (int)input_h : 0;
+    return gm_handle_put(colyseus_input_handle_data(h), GM_HANDLE_SCHEMA, owner);
 }
 
 GM_EXPORT double colyseus_gm_input_send(double input_h) {

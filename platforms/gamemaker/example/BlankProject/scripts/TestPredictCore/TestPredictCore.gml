@@ -173,7 +173,7 @@ suite(function() {
         });
     });
 
-    describe("Predict: pump order", function() {
+    describe("Predict: tick replays", function() {
 
         beforeEach(function() {
             test_drain_events();
@@ -184,15 +184,14 @@ suite(function() {
             global.__pt = undefined;
         });
 
-        // The header's contract: a reconcile detected by tick() is replayed by
-        // the pump that FOLLOWS tick, before the live loop — on frames where
-        // tick() returned no due steps too. Each frame first ticks at the
+        // A reconcile detected by tick() is replayed inside that tick, before
+        // the live loop — on frames where tick() returned no due steps too. Each frame first ticks at the
         // previous instant: no time passes, so no step is due, but a fresh ack
         // is still picked up (waiting for one to land on a zero-step frame by
         // chance failed whenever acks lined up with step frames). A bit-exact
         // sim never replays (the ack short-circuits), so the live step is
         // nudged off the server's answer to force a rollback per ack.
-        test("the leading pump replays on zero-step frames", function() {
+        test("tick replays on zero-step frames", function() {
             var _t = global.__pt;
             expect(_t.ok).toBeTruthy();
             predict_test_settle(_t);
@@ -222,9 +221,11 @@ suite(function() {
             _predict.tick(_now);
             while (current_time - _start < 2000) {
                 colyseus_process();
-                global.__pt_pump.frame_steps = _predict.tick(_now);   // same instant: 0 steps
-                _recon.pump();
+                global.__pt_pump.frame_steps = 0;
+                _predict.tick(_now);   // same instant: 0 steps, but a fresh ack replays here
+                _recon.pump();         // finds nothing due
                 _now = colyseus_predict_now();
+                global.__pt_pump.frame_steps = -1;
                 var _steps = _predict.tick(_now);
                 global.__pt_pump.frame_steps = _steps;
                 _recon.pump();
