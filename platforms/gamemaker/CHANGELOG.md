@@ -2,6 +2,26 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.10
+
+### Added
+
+- Prediction now has `colyseus_*` functions, like the rest of the SDK, named
+  after the C SDK: `colyseus_room_input()`, `colyseus_predict_for_room()`,
+  `colyseus_predict_reconciler()`, `colyseus_reconciler_value()` and so on.
+  Their step functions get plain structs, so a step reads `_s.x` and
+  `_cmd.moveX`. The `ColyseusInput` and `ColyseusPredict` constructors still
+  work.
+- `colyseus_room_clock_rtt(clock)` and the other `colyseus_room_clock_*`
+  readers.
+
+### Changed
+
+- `predict.tick()` and `input.send()` now run the reconciler's steps, as in the
+  JS SDK, so `recon.pump()` is no longer needed. Calling it does nothing.
+- Update the extension and both scripts together: this release's scripts log
+  an ABI mismatch against an older extension.
+
 ## 0.18.9
 
 ### Changed
