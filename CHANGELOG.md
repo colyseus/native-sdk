@@ -21,6 +21,8 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   dropped.
 - `colyseus_room_connect()` now calls its `on_success` and `on_error`
   callbacks; neither fired before.
+- Debug builds no longer assert when a room is freed while one of its
+  callbacks runs on another thread.
 
 ## 0.18.13
 

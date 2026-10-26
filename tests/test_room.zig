@@ -80,6 +80,8 @@ const Sock = struct {
     release_destroy: std.Thread.ResetEvent = .{},
     destroyed: std.atomic.Value(bool) = .init(false),
     used_after_destroy: std.atomic.Value(u32) = .init(0),
+    /// the socket's own thread, which destroy() joins as the native transport does
+    thread: ?std.Thread = null,
 
     fn touch(s: *Sock) void {
         if (s.destroyed.load(.seq_cst)) _ = s.used_after_destroy.fetchAdd(1, .seq_cst);
@@ -192,6 +194,7 @@ const Fake = struct {
     /// Freed by reset(), so a test can still look at it after the room let go.
     fn destroy(t: [*c]c.colyseus_transport_t) callconv(.c) void {
         const s = of(t);
+        if (s.thread) |thread| thread.join();
         s.destroyed.store(true, .seq_cst);
         if (s.hold_destroy.swap(false, .seq_cst)) {
             s.in_destroy.set();
@@ -878,4 +881,31 @@ test "free: a drop landing while the room is freed ends it with the drop's code 
 
 test "free: a drop landing while the room is freed ends it with the drop's code (polled)" {
     try dropWhileFreed(.polled);
+}
+
+/// ROOM_DATA "m", no payload
+const room_data_m = [_]u8{ c.COLYSEUS_PROTOCOL_ROOM_DATA, 0xa1, 'm' };
+
+/// An on_message handler that holds its socket's thread until free begins.
+const SlowHandler = struct {
+    var inside: std.Thread.ResetEvent = .{};
+
+    fn onMessage(_: ?*c.colyseus_message_reader_t, _: ?*anyopaque) callconv(.c) void {
+        inside.set();
+        while (!retriesCancelled()) std.Thread.sleep(std.time.ns_per_ms);
+    }
+};
+
+test "free: a callback running on the socket's thread is not a free from inside a callback" {
+    const room = try joinRoom(.threaded, .{});
+    c.colyseus_room_on_message(room, "m", SlowHandler.onMessage, null);
+    SlowHandler.inside = .{};
+
+    const s = Fake.sock(0);
+    s.thread = try std.Thread.spawn(.{}, deliver, .{ s, @as([]const u8, &room_data_m) });
+    SlowHandler.inside.wait();
+
+    // the app frees the room meanwhile; destroying its socket joins that thread
+    freeRoom(room);
+    try expectLeftOnce(1000);
 }

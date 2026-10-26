@@ -142,12 +142,9 @@ test "integration: full connection flow" {
     try testing.expectEqualStrings("Hello world", std.mem.span(state.mySynchronizedProperty));
 
     c.colyseus_room_leave(room.?, true);
-    // Free only once the leave has been dispatched: the transport thread runs
-    // the room's callbacks, and a free under them trips room.c's guard.
+    // let the server's close end the room; freeing it sooner closes with 1000
     var waited: u64 = 0;
-    while ((!left.load(.seq_cst) or @atomicLoad(c_int, &room.?.*.dispatch_depth, .seq_cst) != 0) and
-        waited < 5000) : (waited += 10)
-    {
+    while (!left.load(.seq_cst) and waited < 5000) : (waited += 10) {
         std.Thread.sleep(10 * std.time.ns_per_ms);
     }
     c.colyseus_room_free(room.?);

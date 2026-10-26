@@ -46,14 +46,33 @@ static void room_on_transport_close(int code, const char* reason, void* userdata
 static void room_handle_frame(colyseus_room_t* room, const uint8_t* data, size_t length);
 static void room_handle_close(colyseus_room_t* room, int code, const char* reason);
 
-/* Frames that fire the room's callbacks bump this, so colyseus_room_free can
- * catch a free from inside one. Any thread. */
+/* Frames that fire the room's callbacks bump room->dispatch_depth, on any
+ * thread. This thread's are also listed here, so colyseus_room_free can catch
+ * a free from inside one: a callback on another thread doesn't return into
+ * the freed room, destroying the transport waits it out. Nesting deeper than
+ * the list goes untracked. */
+#define ROOM_DISPATCH_TRACKED 8
+static _Thread_local const colyseus_room_t* tl_dispatching[ROOM_DISPATCH_TRACKED];
+static _Thread_local int tl_dispatch_depth = 0;
+
 static void room_dispatch_enter(colyseus_room_t* room) {
     __atomic_fetch_add(&room->dispatch_depth, 1, __ATOMIC_RELAXED);
+    if (tl_dispatch_depth < ROOM_DISPATCH_TRACKED) tl_dispatching[tl_dispatch_depth] = room;
+    tl_dispatch_depth++;
 }
 static void room_dispatch_exit(colyseus_room_t* room) {
+    tl_dispatch_depth--;
     __atomic_fetch_sub(&room->dispatch_depth, 1, __ATOMIC_RELAXED);
 }
+#ifndef NDEBUG
+static bool room_dispatching(const colyseus_room_t* room) {
+    int n = tl_dispatch_depth < ROOM_DISPATCH_TRACKED ? tl_dispatch_depth : ROOM_DISPATCH_TRACKED;
+    for (int i = 0; i < n; i++) {
+        if (tl_dispatching[i] == room) return true;
+    }
+    return false;
+}
+#endif
 
 /* on_leave fires from the reconnection worker and from leave() as well, not
  * only from the transport's close. */
@@ -949,7 +968,7 @@ colyseus_room_t* colyseus_room_create(const char* name, colyseus_transport_facto
 void colyseus_room_free(colyseus_room_t* room) {
     if (!room) return;
     /* Under a callback the dispatching frame keeps using the room; see room.h. */
-    assert(__atomic_load_n(&room->dispatch_depth, __ATOMIC_RELAXED) == 0 &&
+    assert(!room_dispatching(room) &&
            "colyseus_room_free called from inside a room callback");
 
     /* Stop retrying before tearing down the transport — a retry would
