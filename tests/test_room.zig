@@ -238,7 +238,8 @@ const Ev = struct {
     var drops: std.atomic.Value(u32) = .init(0);
     var reconnects: std.atomic.Value(u32) = .init(0);
     var errors: std.atomic.Value(u32) = .init(0);
-    var leave_on_drop: bool = false;
+    /// on_drop calls leave() with this consent
+    var leave_on_drop: ?bool = null;
     var leave_on_leave: bool = false;
     var send_on_drop: bool = false;
 
@@ -249,7 +250,7 @@ const Ev = struct {
         drops.store(0, .seq_cst);
         reconnects.store(0, .seq_cst);
         errors.store(0, .seq_cst);
-        leave_on_drop = false;
+        leave_on_drop = null;
         leave_on_leave = false;
         send_on_drop = false;
     }
@@ -263,7 +264,7 @@ const Ev = struct {
     fn onDrop(_: c_int, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
         _ = drops.fetchAdd(1, .seq_cst);
         if (send_on_drop) c.colyseus_room_send_bytes(room.?, "x", "y", 1);
-        if (leave_on_drop) c.colyseus_room_leave(room.?, true);
+        if (leave_on_drop) |consented| c.colyseus_room_leave(room.?, consented);
     }
 
     fn onReconnect(_: ?*anyopaque) callconv(.c) void {
@@ -481,10 +482,10 @@ test "leave: a reconnect that lands afterwards does not revive the room (polled)
     try attemptLandsAfterLeave(.polled);
 }
 
-fn leaveFromOnDrop(scheduler: Scheduler, min_uptime_ms: c_int) !void {
+fn leaveFromOnDrop(scheduler: Scheduler, min_uptime_ms: c_int, consented: bool) !void {
     const room = try joinRoom(scheduler, .{ .min_uptime_ms = min_uptime_ms });
     defer freeRoom(room);
-    Ev.leave_on_drop = true;
+    Ev.leave_on_drop = consented;
 
     sockDrop(Fake.sock(0), ABNORMAL);
     try expectLeftOnce(CONSENTED);
@@ -493,19 +494,27 @@ fn leaveFromOnDrop(scheduler: Scheduler, min_uptime_ms: c_int) !void {
 }
 
 test "leave: from an on_drop listener, does not reconnect (threaded)" {
-    try leaveFromOnDrop(.threaded, 0);
+    try leaveFromOnDrop(.threaded, 0, true);
 }
 
 test "leave: from an on_drop listener, does not reconnect (polled)" {
-    try leaveFromOnDrop(.polled, 0);
+    try leaveFromOnDrop(.polled, 0, true);
+}
+
+test "leave: leave(false) from an on_drop listener does not reconnect (threaded)" {
+    try leaveFromOnDrop(.threaded, 0, false);
+}
+
+test "leave: leave(false) from an on_drop listener does not reconnect (polled)" {
+    try leaveFromOnDrop(.polled, 0, false);
 }
 
 test "leave: from the first on_drop, before min uptime, is still consented (threaded)" {
-    try leaveFromOnDrop(.threaded, 60_000);
+    try leaveFromOnDrop(.threaded, 60_000, true);
 }
 
 test "leave: from the first on_drop, before min uptime, is still consented (polled)" {
-    try leaveFromOnDrop(.polled, 60_000);
+    try leaveFromOnDrop(.polled, 60_000, true);
 }
 
 /// A consented leave() of a joined room, then the socket's close: leave()
