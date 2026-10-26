@@ -63,6 +63,15 @@ static void room_notify_leave(colyseus_room_t* room, int code, const char* reaso
     room->on_leave(code, reason, room->on_leave_userdata);
     room_dispatch_exit(room);
 }
+
+/* Any thread. */
+static bool room_has_left(const colyseus_room_t* room) {
+    return __atomic_load_n(&room->left, __ATOMIC_ACQUIRE);
+}
+static bool room_is_leaving(const colyseus_room_t* room) {
+    return __atomic_load_n(&room->leaving, __ATOMIC_ACQUIRE);
+}
+
 static void room_on_transport_error(const char* error, void* userdata);
 static void room_dispatch_message(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
 static void room_dispatch_message_bytes(colyseus_room_t* room, const char* type, const uint8_t* message, size_t length);
@@ -84,8 +93,9 @@ static bool room_send_or_enqueue(colyseus_room_t* room, const uint8_t* data, siz
 static char* room_build_reconnect_url(const colyseus_room_t* room);
 static void room_handle_reconnection(colyseus_room_t* room, int code, const char* reason);
 static void room_reconnection_signal_attempt_done(colyseus_room_t* room);
-static void room_reconnection_signal_success(colyseus_room_t* room);
+static bool room_reconnection_signal_success(colyseus_room_t* room);
 static void room_reconnection_cancel(colyseus_room_t* room);
+static void room_finish(colyseus_room_t* room, int code, const char* reason);
 static void room_reconnection_init(colyseus_room_t* room);
 static void room_reconnection_teardown(colyseus_room_t* room);
 
@@ -231,9 +241,11 @@ static void room_pin_socket_mode(colyseus_room_t* room) {
     if (w && room->transport) colyseus_ws_pin_polled(room->transport, w->sockets_polled);
 }
 
-#ifndef COLYSEUS_RECONNECT_POLLED_ONLY
-
-#ifdef _WIN32
+#ifdef COLYSEUS_RECONNECT_POLLED_ONLY
+    #define WORKER_LOCK(w)   ((void)(w))
+    #define WORKER_UNLOCK(w) ((void)(w))
+    #define WORKER_SIGNAL(w) ((void)(w))
+#elif defined(_WIN32)
     #define WORKER_LOCK(w)   EnterCriticalSection(&(w)->mutex)
     #define WORKER_UNLOCK(w) LeaveCriticalSection(&(w)->mutex)
     #define WORKER_SIGNAL(w) WakeConditionVariable(&(w)->cond)
@@ -242,6 +254,8 @@ static void room_pin_socket_mode(colyseus_room_t* room) {
     #define WORKER_UNLOCK(w) pthread_mutex_unlock(&(w)->mutex)
     #define WORKER_SIGNAL(w) pthread_cond_signal(&(w)->cond)
 #endif
+
+#ifndef COLYSEUS_RECONNECT_POLLED_ONLY
 
 /* Wait on the worker condvar for up to delay_ms milliseconds. Caller holds
  * the worker mutex. */
@@ -345,11 +359,8 @@ static bool room_reconnection_schedule_next(colyseus_room_t* room) {
             w->pending_attempt = false;
             w->next_attempt_at_ms = 0;
         }
-        if (room->serializer) {
-            colyseus_schema_serializer_teardown(room->serializer);
-        }
-        room_notify_leave(room, COLYSEUS_CLOSE_FAILED_TO_RECONNECT,
-                          "No more retries. Reconnection failed.");
+        room_finish(room, COLYSEUS_CLOSE_FAILED_TO_RECONNECT,
+                    "No more retries. Reconnection failed.");
         return false;
     }
 
@@ -387,11 +398,8 @@ static worker_return_t WORKER_THREAD_CALL room_reconnect_worker_func(void* arg) 
             room->reconnection.is_reconnecting = false;
             w->thread_done = true;
             WORKER_UNLOCK(w);
-            if (room->serializer) {
-                colyseus_schema_serializer_teardown(room->serializer);
-            }
-            room_notify_leave(room, COLYSEUS_CLOSE_FAILED_TO_RECONNECT,
-                              "No more retries. Reconnection failed.");
+            room_finish(room, COLYSEUS_CLOSE_FAILED_TO_RECONNECT,
+                        "No more retries. Reconnection failed.");
             goto done;
         }
 
@@ -417,11 +425,16 @@ static worker_return_t WORKER_THREAD_CALL room_reconnect_worker_func(void* arg) 
             room_worker_wait(w);
         }
     }
+    /* left mid-attempt: this thread swaps room->transport, so it closes its own */
+    bool abort_attempt = room_has_left(room) && w->pending_attempt;
     /* exit is decided and published under the same lock hold, so a spawn
      * for the next drop either finds us still looping (and we serve it) or
      * finds thread_done and reaps us — never a thread that is "about to" exit */
     w->thread_done = true;
     WORKER_UNLOCK(w);
+    if (abort_attempt) {
+        colyseus_transport_close(room->transport, 1000, "Leave");
+    }
 
 done:
 #ifdef _WIN32
@@ -528,61 +541,102 @@ static void room_reconnection_teardown(colyseus_room_t* room) {
     room->reconnection.worker = NULL;
 }
 
-static void room_reconnection_cancel(colyseus_room_t* room) {
-    colyseus_reconnection_worker_t* w =
-        (colyseus_reconnection_worker_t*)room->reconnection.worker;
-#ifndef COLYSEUS_RECONNECT_POLLED_ONLY
-    if (w && !room_reconnect_is_polled(w)) {
-        WORKER_LOCK(w);
-        room->reconnection.cancelled = true;
-        room->reconnection.is_reconnecting = false;
-        WORKER_SIGNAL(w);
-        WORKER_UNLOCK(w);
-        return;
-    }
+/* Whether a retry thread runs this room's cycles. While a cycle runs, that
+ * thread alone swaps room->transport. */
+static bool room_reconnect_is_threaded(const colyseus_room_t* room) {
+#ifdef COLYSEUS_RECONNECT_POLLED_ONLY
+    (void)room;
+    return false;
+#else
+    const colyseus_reconnection_worker_t* w =
+        (const colyseus_reconnection_worker_t*)room->reconnection.worker;
+    return w && !room_reconnect_is_polled(w);
 #endif
-    room->reconnection.cancelled = true;
-    room->reconnection.is_reconnecting = false;
-    if (w) {
-        w->pending_attempt = false;
-        w->next_attempt_at_ms = 0;
+}
+
+/* Guards the retry state against the retry thread. A polled room's scheduler
+ * runs on its caller's thread and needs none. */
+static void room_reconnection_lock(colyseus_room_t* room) {
+    if (room_reconnect_is_threaded(room)) {
+        WORKER_LOCK((colyseus_reconnection_worker_t*)room->reconnection.worker);
     }
 }
 
-static void room_reconnection_signal_success(colyseus_room_t* room) {
+static void room_reconnection_unlock(colyseus_room_t* room) {
+    if (room_reconnect_is_threaded(room)) {
+        WORKER_UNLOCK((colyseus_reconnection_worker_t*)room->reconnection.worker);
+    }
+}
+
+/* Caller holds room_reconnection_lock. */
+static void room_reconnection_cancel_locked(colyseus_room_t* room) {
     colyseus_reconnection_worker_t* w =
         (colyseus_reconnection_worker_t*)room->reconnection.worker;
+    room->reconnection.cancelled = true;
+    room->reconnection.is_reconnecting = false;
     if (!w) return;
-#ifndef COLYSEUS_RECONNECT_POLLED_ONLY
-    if (!room_reconnect_is_polled(w)) {
-        WORKER_LOCK(w);
-        room->reconnection.is_reconnecting = false;
-        w->pending_attempt = false;
-        room->reconnection.retry_count = 0;
+    if (room_reconnect_is_threaded(room)) {
         WORKER_SIGNAL(w);
-        WORKER_UNLOCK(w);
         return;
     }
-#endif
-    room->reconnection.is_reconnecting = false;
-    room->reconnection.retry_count = 0;
     w->pending_attempt = false;
     w->next_attempt_at_ms = 0;
+}
+
+static void room_reconnection_cancel(colyseus_room_t* room) {
+    room_reconnection_lock(room);
+    room_reconnection_cancel_locked(room);
+    room_reconnection_unlock(room);
+}
+
+/* Whoever marks the room left first owns its on_leave. */
+static bool room_claim_left(colyseus_room_t* room) {
+    return !__atomic_exchange_n(&room->left, true, __ATOMIC_ACQ_REL);
+}
+
+/* Ends the room: the first caller fires on_leave, later ones do nothing. Any
+ * thread, once no retry cycle is running. leave()'s local path doesn't come
+ * here: it claims the room and cancels the cycle in one lock hold, then fires
+ * on_leave without tearing down the serializer. */
+static void room_finish(colyseus_room_t* room, int code, const char* reason) {
+    if (!room_claim_left(room)) return;
+    if (room->serializer) {
+        colyseus_schema_serializer_teardown(room->serializer);
+    }
+    room_notify_leave(room, code, reason);
+}
+
+/* False once the room has left: the attempt outran leave() and must not
+ * revive it. */
+static bool room_reconnection_signal_success(colyseus_room_t* room) {
+    colyseus_reconnection_worker_t* w =
+        (colyseus_reconnection_worker_t*)room->reconnection.worker;
+    room_reconnection_lock(room);
+    bool revive = !room_has_left(room);
+    if (revive) {
+        room->reconnection.is_reconnecting = false;
+        room->reconnection.retry_count = 0;
+        if (w) {
+            w->pending_attempt = false;
+            w->next_attempt_at_ms = 0;
+        }
+        if (room_reconnect_is_threaded(room)) WORKER_SIGNAL(w);
+    }
+    room_reconnection_unlock(room);
+    return revive;
 }
 
 static void room_reconnection_signal_attempt_done(colyseus_room_t* room) {
     colyseus_reconnection_worker_t* w =
         (colyseus_reconnection_worker_t*)room->reconnection.worker;
     if (!w) return;
-#ifndef COLYSEUS_RECONNECT_POLLED_ONLY
-    if (!room_reconnect_is_polled(w)) {
+    if (room_reconnect_is_threaded(room)) {
         WORKER_LOCK(w);
         w->pending_attempt = false;
         WORKER_SIGNAL(w);
         WORKER_UNLOCK(w);
         return;
     }
-#endif
     if (!w->pending_attempt || !room->reconnection.is_reconnecting || room->reconnection.cancelled) return;
     room_reconnection_schedule_next(room);
 }
@@ -732,10 +786,16 @@ static bool room_close_code_is_drop(int code) {
 }
 
 static void room_handle_reconnection(colyseus_room_t* room, int code, const char* reason) {
+    /* an on_drop listener may have called leave() */
+    if (room_has_left(room) || room_is_leaving(room)) {
+        room_finish(room, COLYSEUS_CLOSE_CONSENTED, reason);
+        return;
+    }
+
     colyseus_reconnection_worker_t* w =
         (colyseus_reconnection_worker_t*)room->reconnection.worker;
     if (!w) {
-        room_notify_leave(room, code, reason);
+        room_finish(room, code, reason);
         return;
     }
 
@@ -743,11 +803,8 @@ static void room_handle_reconnection(colyseus_room_t* room, int code, const char
     uint64_t now = colyseus_monotonic_ms();
     if (room->joined_at_ms == 0 ||
         (now - room->joined_at_ms) < (uint64_t)room->reconnection.options.min_uptime_ms) {
-        if (room->serializer) {
-            colyseus_schema_serializer_teardown(room->serializer);
-        }
-        room_notify_leave(room, COLYSEUS_CLOSE_ABNORMAL_CLOSURE,
-                          "Room uptime too short for reconnection.");
+        room_finish(room, COLYSEUS_CLOSE_ABNORMAL_CLOSURE,
+                    "Room uptime too short for reconnection.");
         return;
     }
 
@@ -761,13 +818,16 @@ static void room_handle_reconnection(colyseus_room_t* room, int code, const char
 #ifndef COLYSEUS_RECONNECT_POLLED_ONLY
     if (!room_reconnect_is_polled(w)) {
         WORKER_LOCK(w);
-        if (!room->reconnection.is_reconnecting) {
+        /* leave() on another thread may have landed since the checks above */
+        bool ended = room_has_left(room) || room_is_leaving(room);
+        if (!ended && !room->reconnection.is_reconnecting) {
             room->reconnection.retry_count = 0;
             room->reconnection.is_reconnecting = true;
             room->reconnection.cancelled = false;
             room_reconnect_worker_spawn(room);
         }
         WORKER_UNLOCK(w);
+        if (ended) room_finish(room, COLYSEUS_CLOSE_CONSENTED, reason);
         return;
     }
 #endif
@@ -932,26 +992,43 @@ void colyseus_room_connect(
 void colyseus_room_leave(colyseus_room_t* room, bool consented) {
     if (!room) return;
 
-    /* Suppress drop-handling for this room and cancel any in-flight retry. */
-    if (consented) {
-        room->reconnection.options.enabled = false;
+    /* decided in one lock hold: no retry cycle can start or land half-way */
+    room_reconnection_lock(room);
+    bool left = room_has_left(room);
+    bool reconnecting = room->reconnection.is_reconnecting;
+    /* a running cycle owns room->transport; otherwise nothing swaps it */
+    bool open = !left && !reconnecting && colyseus_transport_is_open(room->transport);
+    /* a joined room's closed socket may still owe it the server's close
+     * (reported on its next tick or poll): a consented leave waits for it */
+    bool local = consented ? reconnecting || (!room->has_joined && !open) : !open;
+    if (!left && local) {
+        left = !room_claim_left(room);
+        if (!left) room_reconnection_cancel_locked(room);
+    } else if (!left && consented) {
+        __atomic_store_n(&room->leaving, true, __ATOMIC_RELEASE);
     }
-    room_reconnection_cancel(room);
+    room_reconnection_unlock(room);
 
-    if (!room->transport) {
-        room_notify_leave(room, COLYSEUS_CLOSE_CONSENTED, "Already left");
-        return;
-    }
+    /* already left: on_leave doesn't fire again */
+    if (left) return;
 
-    if (colyseus_transport_is_open(room->transport)) {
+    if (!local) {
+        if (!open) return; /* the socket's close ends the room */
         if (consented) {
             uint8_t leave_msg[] = { COLYSEUS_PROTOCOL_LEAVE_ROOM };
             colyseus_transport_send(room->transport, leave_msg, 1);
         } else {
             colyseus_transport_close(room->transport, 1000, "Leave");
         }
-    } else {
-        room_notify_leave(room, COLYSEUS_CLOSE_CONSENTED, "Already left");
+        return;
+    }
+
+    /* reconnecting or still connecting: no socket to tell the server on */
+    room_notify_leave(room, COLYSEUS_CLOSE_CONSENTED, "Already left");
+
+    /* aborts a connect in progress; a retry thread closes its own attempt */
+    if (!reconnecting || !room_reconnect_is_threaded(room)) {
+        colyseus_transport_close(room->transport, 1000, "Leave");
     }
 }
 
@@ -1765,9 +1842,11 @@ static void room_handle_frame(colyseus_room_t* room, const uint8_t* data, size_t
             colyseus_transport_send(room->transport, ack, 1);
 
             if (is_reconnect) {
-                /* Tell the worker the attempt succeeded, flush any buffered
-                 * messages, then fire on_reconnect. */
-                room_reconnection_signal_success(room);
+                /* the attempt outran leave(), which couldn't abort it: don't revive */
+                if (!room_reconnection_signal_success(room)) {
+                    colyseus_transport_close(room->transport, 1000, "Leave");
+                    break;
+                }
                 room_flush_message_queue(room);
                 if (room->on_reconnect) {
                     room->on_reconnect(room->on_reconnect_userdata);
@@ -1939,6 +2018,9 @@ static void room_handle_close(colyseus_room_t* room, int code, const char* reaso
     /* in-flight requests can't be answered on a closed socket */
     room_reject_all_pending_requests(room, "connection closed before a response was received.");
 
+    /* left locally (see leave()): this is the aborted attempt closing */
+    if (room_has_left(room)) return;
+
     if (!room->has_joined) {
         /* Connection died before the first JOIN_ROOM — report as error to the
          * original matchmake caller. Tear down the serializer if any. */
@@ -1960,6 +2042,12 @@ static void room_handle_close(colyseus_room_t* room, int code, const char* reaso
         return;
     }
 
+    /* a consented leave() is waiting on this close: a drop ends it as consented */
+    if (room_is_leaving(room) && room_close_code_is_drop(code)) {
+        room_finish(room, COLYSEUS_CLOSE_CONSENTED, reason);
+        return;
+    }
+
     bool reconnectable = room->reconnection.options.enabled
                       && room_close_code_is_drop(code);
 
@@ -1972,14 +2060,14 @@ static void room_handle_close(colyseus_room_t* room, int code, const char* reaso
     }
 
     /* Final close — tear down state and notify. */
-    if (room->serializer) {
-        colyseus_schema_serializer_teardown(room->serializer);
-    }
-    room_notify_leave(room, code, reason);
+    room_finish(room, code, reason);
 }
 
 static void room_on_transport_error(const char* error, void* userdata) {
     colyseus_room_t* room = (colyseus_room_t*)userdata;
+
+    /* a room that has left ignores its socket */
+    if (room_has_left(room)) return;
 
     fprintf(stderr, "Room transport error: %s\n", error);
     if (room->on_error) {

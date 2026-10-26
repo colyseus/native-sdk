@@ -3,6 +3,14 @@
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
 Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
 
+## 0.18.14
+
+### Fixed
+
+- `colyseus_room_leave()` while the room is reconnecting now ends it for good,
+  with `COLYSEUS_CLOSE_CONSENTED`. An attempt already in flight could still
+  rejoin and bring the room back.
+
 ## 0.18.13
 
 ### Fixed
