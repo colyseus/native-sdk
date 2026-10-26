@@ -820,21 +820,27 @@ static void room_handle_reconnection(colyseus_room_t* room, int code, const char
         WORKER_LOCK(w);
         /* leave() on another thread may have landed since the checks above */
         bool ended = room_has_left(room) || room_is_leaving(room);
-        if (!ended && !room->reconnection.is_reconnecting) {
+        /* colyseus_room_free cancelled retries and is joining this cycle: no new one */
+        bool cancelled = room->reconnection.cancelled;
+        if (!ended && !cancelled && !room->reconnection.is_reconnecting) {
             room->reconnection.retry_count = 0;
             room->reconnection.is_reconnecting = true;
-            room->reconnection.cancelled = false;
             room_reconnect_worker_spawn(room);
         }
         WORKER_UNLOCK(w);
         if (ended) room_finish(room, COLYSEUS_CLOSE_CONSENTED, reason);
+        else if (cancelled) room_finish(room, code, reason);
         return;
     }
 #endif
+    /* colyseus_room_free cancelled retries: no new cycle */
+    if (room->reconnection.cancelled) {
+        room_finish(room, code, reason);
+        return;
+    }
     if (!room->reconnection.is_reconnecting) {
         room->reconnection.retry_count = 0;
         room->reconnection.is_reconnecting = true;
-        room->reconnection.cancelled = false;
         room_reconnection_schedule_next(room); /* arms the first deadline */
     }
 }

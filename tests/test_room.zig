@@ -84,6 +84,10 @@ const Fake = struct {
     var sticky: bool = false;
     /// leave() lands while connect() runs, and connect() then fails before a socket exists
     var leave_then_fail: bool = false;
+    /// the next connect() parks until released, as a DNS lookup holds the retry thread
+    var hold_connect: std.atomic.Value(bool) = .init(false);
+    var in_connect: std.Thread.ResetEvent = .{};
+    var release_connect: std.Thread.ResetEvent = .{};
 
     fn sock(i: u32) *Sock {
         return socks[i];
@@ -94,6 +98,9 @@ const Fake = struct {
         count.store(0, .seq_cst);
         sticky = false;
         leave_then_fail = false;
+        hold_connect.store(false, .seq_cst);
+        in_connect = .{};
+        release_connect = .{};
     }
 
     fn factory(events: [*c]const c.colyseus_transport_events_t) callconv(.c) [*c]c.colyseus_transport_t {
@@ -123,6 +130,10 @@ const Fake = struct {
             return;
         }
         s.connecting.store(true, .seq_cst);
+        if (hold_connect.swap(false, .seq_cst)) {
+            in_connect.set();
+            release_connect.wait();
+        }
     }
 
     fn send(t: [*c]c.colyseus_transport_t, data: [*c]const u8, len: usize) callconv(.c) void {
@@ -626,4 +637,38 @@ test "leave: a connect() failing after leave() does not reach on_error (threaded
 
 test "leave: a connect() failing after leave() does not reach on_error (polled)" {
     try attemptFailsAfterLeave(.polled);
+}
+
+// ─── colyseus_room_free while a socket's thread still reports ───────────────
+
+fn freeThenSignal(room: *c.colyseus_room_t, freed: *std.Thread.ResetEvent) void {
+    c.colyseus_room_free(room);
+    freed.set();
+}
+
+fn retriesCancelled() bool {
+    return @atomicLoad(bool, &Ev.room.?.*.reconnection.cancelled, .seq_cst);
+}
+
+test "free: an attempt failing while the room is freed does not start another cycle" {
+    const room = try joinRoom(.threaded, .{});
+    Fake.hold_connect.store(true, .seq_cst);
+
+    sockDrop(Fake.sock(0), ABNORMAL);
+    Fake.in_connect.wait(); // the retry thread is inside the attempt's connect()
+
+    var freed: std.Thread.ResetEvent = .{};
+    const freer = try std.Thread.spawn(.{}, freeThenSignal, .{ room, &freed });
+    // free cancelled the cycle and now joins the retry thread
+    try testing.expect(waitFor(retriesCancelled, 2000));
+
+    // the attempt fails on its socket's thread meanwhile
+    sockDrop(Fake.sock(1), ABNORMAL);
+    Fake.release_connect.set();
+
+    // a new cycle would keep the retry thread waiting on that attempt, and free with it
+    freed.timedWait(2 * std.time.ns_per_s) catch return error.FreeHung;
+    freer.join();
+    Fake.reset();
+    try expectLeftOnce(ABNORMAL);
 }

@@ -10,6 +10,8 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
 - `colyseus_room_leave()` while the room is reconnecting now ends it for good,
   with `COLYSEUS_CLOSE_CONSENTED`. An attempt already in flight could still
   rejoin and bring the room back.
+- Freeing a room while its reconnection attempt closes on another thread no
+  longer deadlocks.
 
 ## 0.18.13
 
