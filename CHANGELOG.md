@@ -13,6 +13,8 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
 - Freeing a room while its reconnection attempt closes on another thread no
   longer deadlocks.
 - Freeing a room in the middle of a reconnection no longer crashes.
+- A rejoin that lands after `colyseus_room_leave()` is no longer acknowledged,
+  so the server doesn't hold the seat for a reconnection.
 
 ## 0.18.13
 

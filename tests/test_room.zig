@@ -65,6 +65,7 @@ const Sock = struct {
     closed: std.atomic.Value(bool) = .init(false),
     close_calls: std.atomic.Value(u32) = .init(0),
     leave_sent: std.atomic.Value(u32) = .init(0),
+    join_acks: std.atomic.Value(u32) = .init(0),
     deferred_close: ?c_int = null,
     /// destroy() reports this drop instead of a normal closure
     drop_on_destroy: ?c_int = null,
@@ -140,6 +141,7 @@ const Fake = struct {
 
     fn send(t: [*c]c.colyseus_transport_t, data: [*c]const u8, len: usize) callconv(.c) void {
         if (len == 1 and data[0] == c.COLYSEUS_PROTOCOL_LEAVE_ROOM) _ = of(t).leave_sent.fetchAdd(1, .seq_cst);
+        if (len == 1 and data[0] == c.COLYSEUS_PROTOCOL_JOIN_ROOM) _ = of(t).join_acks.fetchAdd(1, .seq_cst);
     }
 
     fn close(t: [*c]c.colyseus_transport_t, code: c_int, reason: [*c]const u8) callconv(.c) void {
@@ -412,6 +414,8 @@ fn attemptLandsAfterLeave(scheduler: Scheduler) !void {
     // the attempt connects anyway, and the server lets it back in
     sockJoin(Fake.sock(1));
     try testing.expectEqual(@as(u32, 0), Ev.reconnects.load(.seq_cst));
+    // unacked, the server doesn't hold a seat for the closed socket
+    try testing.expectEqual(@as(u32, 0), Fake.sock(1).join_acks.load(.seq_cst));
     try testing.expect(Fake.sock(1).closed.load(.seq_cst));
     try testing.expect(!c.colyseus_room_is_reconnecting(room));
     try expectLeftOnce(CONSENTED);

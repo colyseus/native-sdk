@@ -1847,16 +1847,18 @@ static void room_handle_frame(colyseus_room_t* room, const uint8_t* data, size_t
                 colyseus_room_clock_set_patch_interval(room->clock, room->input_patch_rate);
             }
 
+            /* the attempt outran leave(), which couldn't abort it: don't revive,
+             * and don't ack — an acked rejoin is a seat the server holds */
+            if (is_reconnect && !room_reconnection_signal_success(room)) {
+                colyseus_transport_close(room->transport, 1000, "Leave");
+                break;
+            }
+
             /* Acknowledge JOIN_ROOM */
             uint8_t ack[] = { COLYSEUS_PROTOCOL_JOIN_ROOM };
             colyseus_transport_send(room->transport, ack, 1);
 
             if (is_reconnect) {
-                /* the attempt outran leave(), which couldn't abort it: don't revive */
-                if (!room_reconnection_signal_success(room)) {
-                    colyseus_transport_close(room->transport, 1000, "Leave");
-                    break;
-                }
                 room_flush_message_queue(room);
                 if (room->on_reconnect) {
                     room->on_reconnect(room->on_reconnect_userdata);
