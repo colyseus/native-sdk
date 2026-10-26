@@ -73,6 +73,16 @@ const Sock = struct {
     hold_is_open: std.atomic.Value(bool) = .init(false),
     in_is_open: std.Thread.ResetEvent = .{},
     release_is_open: std.Thread.ResetEvent = .{},
+    /// destroy() parks until released; calls into the socket after it began are counted
+    hold_destroy: std.atomic.Value(bool) = .init(false),
+    in_destroy: std.Thread.ResetEvent = .{},
+    release_destroy: std.Thread.ResetEvent = .{},
+    destroyed: std.atomic.Value(bool) = .init(false),
+    used_after_destroy: std.atomic.Value(u32) = .init(0),
+
+    fn touch(s: *Sock) void {
+        if (s.destroyed.load(.seq_cst)) _ = s.used_after_destroy.fetchAdd(1, .seq_cst);
+    }
 };
 
 /// The socket whose callback this thread is inside: its close() reports after
@@ -140,12 +150,14 @@ const Fake = struct {
     }
 
     fn send(t: [*c]c.colyseus_transport_t, data: [*c]const u8, len: usize) callconv(.c) void {
+        of(t).touch();
         if (len == 1 and data[0] == c.COLYSEUS_PROTOCOL_LEAVE_ROOM) _ = of(t).leave_sent.fetchAdd(1, .seq_cst);
         if (len == 1 and data[0] == c.COLYSEUS_PROTOCOL_JOIN_ROOM) _ = of(t).join_acks.fetchAdd(1, .seq_cst);
     }
 
     fn close(t: [*c]c.colyseus_transport_t, code: c_int, reason: [*c]const u8) callconv(.c) void {
         const s = of(t);
+        s.touch();
         _ = s.close_calls.fetchAdd(1, .seq_cst);
         if (sticky and !s.open.load(.seq_cst)) return;
         // aborting a connect reports on_error first, as real transports do
@@ -167,6 +179,7 @@ const Fake = struct {
 
     fn isOpen(t: [*c]const c.colyseus_transport_t) callconv(.c) bool {
         const s = of(t);
+        s.touch();
         if (s.hold_is_open.swap(false, .seq_cst)) {
             s.in_is_open.set();
             s.release_is_open.wait();
@@ -177,6 +190,11 @@ const Fake = struct {
     /// Freed by reset(), so a test can still look at it after the room let go.
     fn destroy(t: [*c]c.colyseus_transport_t) callconv(.c) void {
         const s = of(t);
+        s.destroyed.store(true, .seq_cst);
+        if (s.hold_destroy.swap(false, .seq_cst)) {
+            s.in_destroy.set();
+            s.release_destroy.wait();
+        }
         if (s.drop_on_destroy) |code| return finishClose(s, code, "drop");
         finishClose(s, 1000, "Normal closure");
     }
@@ -645,6 +663,51 @@ test "leave: a connect() failing after leave() does not reach on_error (threaded
 
 test "leave: a connect() failing after leave() does not reach on_error (polled)" {
     try attemptFailsAfterLeave(.polled);
+}
+
+// ─── the retry thread swapping the socket under other callers ──────────────
+
+fn sendOne(room: *c.colyseus_room_t) void {
+    c.colyseus_room_send_bytes(room, "x", "y", 1);
+}
+
+fn onPing(_: c_int, _: ?*anyopaque) callconv(.c) void {}
+
+test "reconnect: calls while the retry thread destroys the dropped socket don't reach it" {
+    const room = try joinRoom(.threaded, .{});
+    defer freeRoom(room);
+    const s = Fake.sock(0);
+    s.hold_destroy.store(true, .seq_cst);
+
+    sockDrop(s, ABNORMAL);
+    s.in_destroy.wait(); // the retry thread is tearing the dropped socket down
+
+    sendOne(room);
+    try testing.expect(!c.colyseus_room_is_connected(room));
+    c.colyseus_room_ping(room, onPing, null);
+    s.release_destroy.set();
+
+    try testing.expect(waitFor(attemptConnectingN(1), 2000));
+    try testing.expectEqual(@as(u32, 0), s.used_after_destroy.load(.seq_cst));
+}
+
+test "reconnect: the retry thread waits for a send in progress before destroying the socket" {
+    const room = try joinRoom(.threaded, .{ .retry_ms = 20 });
+    defer freeRoom(room);
+    const s = Fake.sock(0);
+
+    // a send is inside the socket's is_open() when the socket drops
+    s.hold_is_open.store(true, .seq_cst);
+    const sender = try std.Thread.spawn(.{}, sendOne, .{room});
+    s.in_is_open.wait();
+    sockDrop(s, ABNORMAL);
+
+    settle(100); // past the retry delay
+    const destroyed_in_use = s.destroyed.load(.seq_cst);
+    s.release_is_open.set();
+    sender.join();
+    try testing.expect(!destroyed_in_use);
+    try testing.expect(waitFor(attemptConnectingN(1), 2000));
 }
 
 // ─── colyseus_room_free while a socket's thread still reports ───────────────
