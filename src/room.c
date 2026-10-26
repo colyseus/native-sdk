@@ -97,6 +97,7 @@ static bool room_reconnection_signal_success(colyseus_room_t* room);
 static void room_reconnection_cancel(colyseus_room_t* room);
 static void room_finish(colyseus_room_t* room, int code, const char* reason);
 static void room_reconnection_init(colyseus_room_t* room);
+static void room_reconnection_stop(colyseus_room_t* room);
 static void room_reconnection_teardown(colyseus_room_t* room);
 
 /* Reconnection worker. Both schedulers share the struct; which one a room
@@ -527,17 +528,20 @@ static void room_reconnection_init(colyseus_room_t* room) {
     room->reconnection.worker = room_worker_create();
 }
 
-static void room_reconnection_teardown(colyseus_room_t* room) {
+/* Ends retrying for good: once this returns no retry cycle runs or starts. */
+static void room_reconnection_stop(colyseus_room_t* room) {
     room_reconnection_cancel(room);
-    room_clear_message_queue(room);
-
-    colyseus_reconnection_worker_t* w =
-        (colyseus_reconnection_worker_t*)room->reconnection.worker;
     room_reconnect_unregister(room);
 #ifndef COLYSEUS_RECONNECT_POLLED_ONLY
-    room_reconnect_worker_join(w);
+    room_reconnect_worker_join((colyseus_reconnection_worker_t*)room->reconnection.worker);
 #endif
-    room_worker_destroy(w);
+}
+
+/* After the transport is destroyed: its thread's callbacks use the worker
+ * and the queue until then. */
+static void room_reconnection_teardown(colyseus_room_t* room) {
+    room_clear_message_queue(room);
+    room_worker_destroy((colyseus_reconnection_worker_t*)room->reconnection.worker);
     room->reconnection.worker = NULL;
 }
 
@@ -877,10 +881,9 @@ void colyseus_room_free(colyseus_room_t* room) {
     assert(__atomic_load_n(&room->dispatch_depth, __ATOMIC_RELAXED) == 0 &&
            "colyseus_room_free called from inside a room callback");
 
-    /* Cancel and join the reconnection worker before tearing down the
-     * transport — the worker may otherwise try to reconnect against a
-     * half-freed room. */
-    room_reconnection_teardown(room);
+    /* Stop retrying before tearing down the transport — a retry would
+     * otherwise swap it, or reconnect against a half-freed room. */
+    room_reconnection_stop(room);
 
     if (room->callbacks) {
         colyseus_callbacks_free(room->callbacks);
@@ -900,6 +903,7 @@ void colyseus_room_free(colyseus_room_t* room) {
     if (room->transport) {
         colyseus_transport_destroy(room->transport);
     }
+    room_reconnection_teardown(room);
 
     /* Cleanup input layer + clock */
     if (room->input_handle) {

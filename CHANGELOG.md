@@ -12,6 +12,7 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   rejoin and bring the room back.
 - Freeing a room while its reconnection attempt closes on another thread no
   longer deadlocks.
+- Freeing a room in the middle of a reconnection no longer crashes.
 
 ## 0.18.13
 

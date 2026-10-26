@@ -66,6 +66,8 @@ const Sock = struct {
     close_calls: std.atomic.Value(u32) = .init(0),
     leave_sent: std.atomic.Value(u32) = .init(0),
     deferred_close: ?c_int = null,
+    /// destroy() reports this drop instead of a normal closure
+    drop_on_destroy: ?c_int = null,
     /// the next is_open() parks until released, inside whatever lock its caller holds
     hold_is_open: std.atomic.Value(bool) = .init(false),
     in_is_open: std.Thread.ResetEvent = .{},
@@ -172,7 +174,9 @@ const Fake = struct {
 
     /// Freed by reset(), so a test can still look at it after the room let go.
     fn destroy(t: [*c]c.colyseus_transport_t) callconv(.c) void {
-        finishClose(of(t), 1000, "Normal closure");
+        const s = of(t);
+        if (s.drop_on_destroy) |code| return finishClose(s, code, "drop");
+        finishClose(s, 1000, "Normal closure");
     }
 };
 
@@ -671,4 +675,24 @@ test "free: an attempt failing while the room is freed does not start another cy
     freer.join();
     Fake.reset();
     try expectLeftOnce(ABNORMAL);
+}
+
+fn dropWhileFreed(scheduler: Scheduler) !void {
+    const room = try joinRoom(scheduler, .{});
+    sockDrop(Fake.sock(0), ABNORMAL);
+    try testing.expect(waitFor(attemptConnectingN(1), 2000));
+
+    // the attempt drops as free tears its socket down: no cycle is left to retry it
+    Fake.sock(1).drop_on_destroy = ABNORMAL;
+    c.colyseus_room_free(room);
+    Fake.reset();
+    try expectLeftOnce(ABNORMAL);
+}
+
+test "free: a drop landing while the room is freed ends it with the drop's code (threaded)" {
+    try dropWhileFreed(.threaded);
+}
+
+test "free: a drop landing while the room is freed ends it with the drop's code (polled)" {
+    try dropWhileFreed(.polled);
 }
