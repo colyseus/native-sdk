@@ -289,7 +289,17 @@ void colyseus_room_set_state_type(colyseus_room_t* room, const colyseus_schema_v
 /* Get current state (returns pointer to schema state, or NULL if not available) */
 void* colyseus_room_get_state(colyseus_room_t* room);
 
-/* Connection */
+/**
+ * Connect the room to `endpoint` — what the client's matchmaking does with a
+ * seat reservation.
+ *
+ * One of the callbacks fires, once: `on_success` when the first JOIN_ROOM
+ * arrives (after on_join), `on_error` when the join fails before that — the
+ * server refuses it, the socket closes or reports an error (the room's
+ * on_error fires too), or no transport could be created (then before this
+ * returns). Either may be
+ * NULL. They run where the room's other callbacks run.
+ */
 void colyseus_room_connect(
     colyseus_room_t* room,
     const char* endpoint,

@@ -921,15 +921,13 @@ static void client_consume_seat_reservation(
         reservation->reconnection_token
     );
 
-    /* Connect room (pass settings for TLS configuration) */
-    colyseus_room_connect(
-        room,
-        endpoint,
-        client->settings,
-        NULL,  /* on_success handled via room.on_join */
-        on_error,
-        userdata
-    );
+    /* Connect room (pass settings for TLS configuration). on_success below
+     * hands the room over before it joins: from then on the room's own
+     * on_join / on_error report how the connection went. */
+    colyseus_room_connect(room, endpoint, client->settings, NULL, NULL, NULL);
+    if (!room->transport && on_error) {
+        on_error(-1, "Failed to create transport", userdata);
+    }
 
     /* Return room to user */
     if (on_success) {

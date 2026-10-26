@@ -64,6 +64,20 @@ static void room_notify_leave(colyseus_room_t* room, int code, const char* reaso
     room_dispatch_exit(room);
 }
 
+/* colyseus_room_connect()'s callbacks: the first outcome fires one of them,
+ * once. */
+static void room_connect_settle(colyseus_room_t* room, bool joined, int code, const char* message) {
+    void (*on_success)(void*) = room->connect_on_success;
+    void (*on_error)(int, const char*, void*) = room->connect_on_error;
+    room->connect_on_success = NULL;
+    room->connect_on_error = NULL;
+    if (joined) {
+        if (on_success) on_success(room->connect_userdata);
+    } else if (on_error) {
+        on_error(code, message, room->connect_userdata);
+    }
+}
+
 /* Any thread. */
 static bool room_has_left(const colyseus_room_t* room) {
     return __atomic_load_n(&room->left, __ATOMIC_ACQUIRE);
@@ -1935,6 +1949,8 @@ static void room_handle_frame(colyseus_room_t* room, const uint8_t* data, size_t
                 if (room->on_reconnect) {
                     room->on_reconnect(room->on_reconnect_userdata);
                 }
+            } else {
+                room_connect_settle(room, true, 0, NULL);
             }
             break;
         }
@@ -1950,6 +1966,11 @@ static void room_handle_frame(colyseus_room_t* room, const uint8_t* data, size_t
 
             if (room->on_error) {
                 room->on_error(error_code, error_message ? error_message : "Unknown error", room->on_error_userdata);
+            }
+
+            /* the close behind it reports nothing more */
+            if (!room->has_joined) {
+                room_connect_settle(room, false, error_code, error_message ? error_message : "Unknown error");
             }
 
             free(error_message);
@@ -2116,6 +2137,7 @@ static void room_handle_close(colyseus_room_t* room, int code, const char* reaso
         if (room->on_error) {
             room->on_error(code, reason, room->on_error_userdata);
         }
+        room_connect_settle(room, false, code, reason);
         return;
     }
 
@@ -2161,6 +2183,13 @@ static void room_on_transport_error(const char* error, void* userdata) {
     if (room->on_error) {
         room_dispatch_enter(room);
         room->on_error(-1, error, room->on_error_userdata);
+        room_dispatch_exit(room);
+    }
+
+    /* before the first JOIN_ROOM an error ends the connect, whether or not a close follows */
+    if (!room->has_joined) {
+        room_dispatch_enter(room);
+        room_connect_settle(room, false, -1, error);
         room_dispatch_exit(room);
     }
 

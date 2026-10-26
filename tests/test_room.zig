@@ -282,12 +282,37 @@ const Opts = struct {
     retry_ms: c_int = 10,
     min_uptime_ms: c_int = 0,
     max_retries: ?c_int = null,
+    /// pass Connect's callbacks to colyseus_room_connect
+    connect_callbacks: bool = false,
+};
+
+/// colyseus_room_connect's own callbacks.
+const Connect = struct {
+    var successes: std.atomic.Value(u32) = .init(0);
+    var errors: std.atomic.Value(u32) = .init(0);
+    var error_code: std.atomic.Value(c_int) = .init(0);
+
+    fn reset() void {
+        successes.store(0, .seq_cst);
+        errors.store(0, .seq_cst);
+        error_code.store(0, .seq_cst);
+    }
+
+    fn onSuccess(_: ?*anyopaque) callconv(.c) void {
+        _ = successes.fetchAdd(1, .seq_cst);
+    }
+
+    fn onError(code: c_int, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
+        error_code.store(code, .seq_cst);
+        _ = errors.fetchAdd(1, .seq_cst);
+    }
 };
 
 /// A room on `scheduler` whose first socket is connecting.
 fn connectRoom(scheduler: Scheduler, o: Opts) *c.colyseus_room_t {
     Fake.reset();
     Ev.reset();
+    Connect.reset();
 
     // the room picks its scheduler when it connects
     c.colyseus_set_polled(scheduler == .polled);
@@ -307,7 +332,11 @@ fn connectRoom(scheduler: Scheduler, o: Opts) *c.colyseus_room_t {
     c.colyseus_room_on_drop(room, Ev.onDrop, null);
     c.colyseus_room_on_reconnect(room, Ev.onReconnect, null);
     c.colyseus_room_on_error(room, Ev.onError, null);
-    c.colyseus_room_connect(room, "ws://fake/leave_test?sessionId=s", null, null, null, null);
+    if (o.connect_callbacks) {
+        c.colyseus_room_connect(room, "ws://fake/leave_test?sessionId=s", null, Connect.onSuccess, Connect.onError, null);
+    } else {
+        c.colyseus_room_connect(room, "ws://fake/leave_test?sessionId=s", null, null, null, null);
+    }
     return room;
 }
 
@@ -668,6 +697,58 @@ test "leave: a connect() failing after leave() does not reach on_error (threaded
 
 test "leave: a connect() failing after leave() does not reach on_error (polled)" {
     try attemptFailsAfterLeave(.polled);
+}
+
+// ─── colyseus_room_connect's callbacks ──────────────────────────────────────
+
+test "connect: on_error fires once when the socket closes before JOIN_ROOM" {
+    const room = connectRoom(.threaded, .{ .connect_callbacks = true });
+    defer freeRoom(room);
+    const s = Fake.sock(0);
+
+    sockDrop(s, 4002);
+    s.t.events.on_error.?("WebSocket error", s.t.events.userdata);
+    try testing.expectEqual(@as(u32, 1), Connect.errors.load(.seq_cst));
+    try testing.expectEqual(@as(c_int, 4002), Connect.error_code.load(.seq_cst));
+    try testing.expectEqual(@as(u32, 0), Connect.successes.load(.seq_cst));
+}
+
+test "connect: on_error fires once, with the server's code, when it refuses the join" {
+    const room = connectRoom(.threaded, .{ .connect_callbacks = true });
+    defer freeRoom(room);
+    const s = Fake.sock(0);
+
+    // ERROR (code 42, "refused"), and the server closes right behind it
+    sockOpen(s);
+    deliver(s, &[_]u8{ c.COLYSEUS_PROTOCOL_ERROR, 42, 0xa7, 'r', 'e', 'f', 'u', 's', 'e', 'd' });
+    sockDrop(s, 4002);
+    try testing.expectEqual(@as(u32, 1), Connect.errors.load(.seq_cst));
+    try testing.expectEqual(@as(c_int, 42), Connect.error_code.load(.seq_cst));
+    try testing.expectEqual(@as(u32, 0), Connect.successes.load(.seq_cst));
+}
+
+test "connect: on_error reports a connect() that fails before a socket exists" {
+    const room = connectRoom(.threaded, .{ .connect_callbacks = true });
+    defer freeRoom(room);
+    const s = Fake.sock(0);
+
+    s.t.events.on_error.?("Failed to initialize connection", s.t.events.userdata);
+    try testing.expectEqual(@as(u32, 1), Connect.errors.load(.seq_cst));
+    try testing.expectEqual(@as(c_int, -1), Connect.error_code.load(.seq_cst));
+}
+
+test "connect: on_success fires once, on the first JOIN_ROOM" {
+    const room = try joinRoom(.threaded, .{ .connect_callbacks = true });
+    defer freeRoom(room);
+    try testing.expectEqual(@as(u32, 1), Connect.successes.load(.seq_cst));
+
+    // a drop and a reconnect are the room's business, not the connect's
+    sockDrop(Fake.sock(0), ABNORMAL);
+    try testing.expect(waitFor(attemptConnectingN(1), 2000));
+    sockJoin(Fake.sock(1));
+    try testing.expectEqual(@as(u32, 1), Ev.reconnects.load(.seq_cst));
+    try testing.expectEqual(@as(u32, 1), Connect.successes.load(.seq_cst));
+    try testing.expectEqual(@as(u32, 0), Connect.errors.load(.seq_cst));
 }
 
 // ─── the retry thread swapping the socket under other callers ──────────────
