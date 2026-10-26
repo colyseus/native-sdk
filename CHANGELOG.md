@@ -17,6 +17,8 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
   so the server doesn't hold the seat for a reconnection.
 - Sending, pinging or calling `colyseus_room_is_connected()` from another
   thread while the room reconnects no longer risks a crash.
+- Messages sent from `on_drop` are now queued for the reconnection instead of
+  dropped.
 
 ## 0.18.13
 

@@ -117,6 +117,7 @@ typedef struct colyseus_reconnection_worker {
     uint64_t next_attempt_at_ms; /* polled: 0 = no attempt scheduled */
     int transport_users;         /* threaded: callers using room->transport off the retry thread */
     bool awaiting_users;         /* threaded: the retry thread waits for them before a swap */
+    bool dropping;               /* on_drop is running, before the cycle starts */
 #ifndef COLYSEUS_RECONNECT_POLLED_ONLY
 #ifdef _WIN32
     HANDLE thread;
@@ -766,7 +767,11 @@ static bool room_send_or_enqueue(colyseus_room_t* room, const uint8_t* data, siz
     if (sent) colyseus_transport_send(transport, data, length);
     room_transport_release(room, transport);
     if (sent) return true;
-    if (room->reconnection.is_reconnecting && room->reconnection.options.enabled) {
+    /* on_drop runs before the cycle starts, and what it sends is for that cycle */
+    colyseus_reconnection_worker_t* w =
+        (colyseus_reconnection_worker_t*)room->reconnection.worker;
+    bool dropping = w && __atomic_load_n(&w->dropping, __ATOMIC_ACQUIRE);
+    if ((room->reconnection.is_reconnecting || dropping) && room->reconnection.options.enabled) {
         room_enqueue_message(room, data, length);
         return true;
     }
@@ -2132,7 +2137,11 @@ static void room_handle_close(colyseus_room_t* room, int code, const char* reaso
 
     if (reconnectable) {
         if (room->on_drop) {
+            colyseus_reconnection_worker_t* w =
+                (colyseus_reconnection_worker_t*)room->reconnection.worker;
+            if (w) __atomic_store_n(&w->dropping, true, __ATOMIC_RELEASE);
             room->on_drop(code, reason, room->on_drop_userdata);
+            if (w) __atomic_store_n(&w->dropping, false, __ATOMIC_RELEASE);
         }
         room_handle_reconnection(room, code, reason);
         return;

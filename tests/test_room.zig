@@ -66,6 +66,7 @@ const Sock = struct {
     close_calls: std.atomic.Value(u32) = .init(0),
     leave_sent: std.atomic.Value(u32) = .init(0),
     join_acks: std.atomic.Value(u32) = .init(0),
+    data_sent: std.atomic.Value(u32) = .init(0),
     deferred_close: ?c_int = null,
     /// destroy() reports this drop instead of a normal closure
     drop_on_destroy: ?c_int = null,
@@ -153,6 +154,7 @@ const Fake = struct {
         of(t).touch();
         if (len == 1 and data[0] == c.COLYSEUS_PROTOCOL_LEAVE_ROOM) _ = of(t).leave_sent.fetchAdd(1, .seq_cst);
         if (len == 1 and data[0] == c.COLYSEUS_PROTOCOL_JOIN_ROOM) _ = of(t).join_acks.fetchAdd(1, .seq_cst);
+        if (len > 0 and data[0] == c.COLYSEUS_PROTOCOL_ROOM_DATA_BYTES) _ = of(t).data_sent.fetchAdd(1, .seq_cst);
     }
 
     fn close(t: [*c]c.colyseus_transport_t, code: c_int, reason: [*c]const u8) callconv(.c) void {
@@ -238,6 +240,7 @@ const Ev = struct {
     var errors: std.atomic.Value(u32) = .init(0);
     var leave_on_drop: bool = false;
     var leave_on_leave: bool = false;
+    var send_on_drop: bool = false;
 
     fn reset() void {
         room = null;
@@ -248,6 +251,7 @@ const Ev = struct {
         errors.store(0, .seq_cst);
         leave_on_drop = false;
         leave_on_leave = false;
+        send_on_drop = false;
     }
 
     fn onLeave(code: c_int, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
@@ -258,6 +262,7 @@ const Ev = struct {
 
     fn onDrop(_: c_int, _: [*c]const u8, _: ?*anyopaque) callconv(.c) void {
         _ = drops.fetchAdd(1, .seq_cst);
+        if (send_on_drop) c.colyseus_room_send_bytes(room.?, "x", "y", 1);
         if (leave_on_drop) c.colyseus_room_leave(room.?, true);
     }
 
@@ -708,6 +713,27 @@ test "reconnect: the retry thread waits for a send in progress before destroying
     sender.join();
     try testing.expect(!destroyed_in_use);
     try testing.expect(waitFor(attemptConnectingN(1), 2000));
+}
+
+fn sendFromOnDrop(scheduler: Scheduler) !void {
+    const room = try joinRoom(scheduler, .{});
+    defer freeRoom(room);
+    Ev.send_on_drop = true;
+
+    sockDrop(Fake.sock(0), ABNORMAL);
+    try testing.expect(waitFor(attemptConnectingN(1), 2000));
+    sockJoin(Fake.sock(1));
+    try testing.expectEqual(@as(u32, 1), Ev.reconnects.load(.seq_cst));
+    // what on_drop sent was queued, and goes out on the reconnected socket
+    try testing.expectEqual(@as(u32, 1), Fake.sock(1).data_sent.load(.seq_cst));
+}
+
+test "reconnect: a send from on_drop is queued for the reconnection (threaded)" {
+    try sendFromOnDrop(.threaded);
+}
+
+test "reconnect: a send from on_drop is queued for the reconnection (polled)" {
+    try sendFromOnDrop(.polled);
 }
 
 // ─── colyseus_room_free while a socket's thread still reports ───────────────
