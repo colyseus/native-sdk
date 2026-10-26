@@ -30,6 +30,7 @@ const ReconnectTest = struct {
     var on_leave_last_code: i32 = 0;
     var echo_received_count: i32 = 0;
     var on_error_count: i32 = 0;
+    var leave_on_drop: bool = false;
 
     fn reset() void {
         room = null;
@@ -42,6 +43,7 @@ const ReconnectTest = struct {
         on_leave_last_code = 0;
         echo_received_count = 0;
         on_error_count = 0;
+        leave_on_drop = false;
     }
 
     fn onJoin(userdata: ?*anyopaque) callconv(.c) void {
@@ -54,6 +56,7 @@ const ReconnectTest = struct {
         _ = userdata;
         _ = code;
         on_drop_count += 1;
+        if (leave_on_drop) c.colyseus_room_leave(room.?, true);
     }
 
     fn onReconnect(userdata: ?*anyopaque) callconv(.c) void {
@@ -396,12 +399,164 @@ test "reconnect: manual client.reconnect() with the room's token" {
     const force = c.colyseus_message_map_create();
     defer c.colyseus_message_free(force);
     c.colyseus_room_send(room, "force_drop", force);
-    try testing.expect(pollUntil(struct {
-        fn f() bool { return ReconnectTest.on_leave_count >= 1; }
-    }.f, 5 * std.time.ns_per_s));
+    try testing.expect(pollUntil(leftOnce, 5 * std.time.ns_per_s));
 
     // server keeps the seat for 10s (allowReconnection)
     c.colyseus_client_reconnect(client, token, ManualReconnect.onSuccess, ManualReconnect.onError, null);
     try testing.expect(pollUntil(ManualReconnect.settled, 5 * std.time.ns_per_s));
     try testing.expect(ManualReconnect.rejoined);
+}
+
+// ─── leave() after the connection dropped ───────────────────────────────────
+//
+// The JS SDK's ".leave() after the connection dropped" scenarios, against the
+// real server. test_room.zig drives the same ones with a fake socket, on both
+// reconnection schedulers.
+
+const Attempts = struct {
+    var count: std.atomic.Value(u32) = .init(0);
+    var leave_on_connect: bool = false;
+    var ws_connect: ?*const fn ([*c]c.colyseus_transport_t, [*c]const u8) callconv(.c) void = null;
+
+    fn reset() void {
+        count.store(0, .seq_cst);
+        leave_on_connect = false;
+    }
+
+    /// The room's factory once it has joined: counts reconnect attempts, and
+    /// can leave right after one starts connecting.
+    fn factory(events: [*c]const c.colyseus_transport_events_t) callconv(.c) [*c]c.colyseus_transport_t {
+        _ = count.fetchAdd(1, .seq_cst);
+        const t = c.colyseus_websocket_transport_create(events);
+        if (t != null and leave_on_connect) {
+            ws_connect = t.*.connect;
+            t.*.connect = connectThenLeave;
+        }
+        return t;
+    }
+
+    fn connectThenLeave(t: [*c]c.colyseus_transport_t, url: [*c]const u8) callconv(.c) void {
+        ws_connect.?(t, url);
+        c.colyseus_room_leave(ReconnectTest.room.?, true);
+    }
+};
+
+/// A joined private test_room whose retries wait `retry_ms`.
+const Session = struct {
+    settings: [*c]c.colyseus_settings_t,
+    client: [*c]c.colyseus_client_t,
+    room: [*c]c.colyseus_room_t,
+
+    fn join(retry_ms: c_int) !Session {
+        ReconnectTest.reset();
+        Attempts.reset();
+
+        const settings = c.colyseus_settings_create();
+        errdefer c.colyseus_settings_free(settings);
+        c.colyseus_settings_set_address(settings, TEST_SERVER);
+        c.colyseus_settings_set_port(settings, TEST_PORT);
+        const client = c.colyseus_client_create(settings);
+        errdefer c.colyseus_client_free(client);
+
+        c.colyseus_client_create_room(client, "test_room", PRIVATE_ROOM,
+            ReconnectTest.onMatchmakeSuccess, ReconnectTest.onMatchmakeFailure, null);
+        if (!pollUntil(joined, 10 * std.time.ns_per_s)) return error.NeverJoined;
+        const room = ReconnectTest.room.?;
+
+        var opts: c.colyseus_reconnection_options_t = undefined;
+        c.colyseus_reconnection_options_init_defaults(&opts);
+        opts.min_uptime_ms = 0;
+        opts.min_delay_ms = retry_ms;
+        opts.max_delay_ms = retry_ms;
+        opts.delay_ms = retry_ms;
+        c.colyseus_room_set_reconnection_options(room, &opts);
+        room.*.transport_factory = Attempts.factory;
+
+        return .{ .settings = settings, .client = client, .room = room };
+    }
+
+    fn forceDrop(self: Session) void {
+        const force = c.colyseus_message_map_create();
+        defer c.colyseus_message_free(force);
+        c.colyseus_room_send(self.room, "force_drop", force);
+    }
+
+    fn close(self: Session) void {
+        c.colyseus_room_free(self.room);
+        c.colyseus_client_free(self.client);
+        c.colyseus_settings_free(self.settings);
+    }
+};
+
+fn leftOnce() bool {
+    return ReconnectTest.on_leave_count >= 1;
+}
+
+fn expectLeftConsented() !void {
+    try testing.expectEqual(@as(i32, 1), ReconnectTest.on_leave_count);
+    try testing.expectEqual(@as(i32, c.COLYSEUS_CLOSE_CONSENTED), ReconnectTest.on_leave_last_code);
+}
+
+test "reconnect: leave() between retries cancels the pending retry" {
+    const s = try Session.join(100);
+    defer s.close();
+
+    s.forceDrop();
+    try testing.expect(pollUntil(dropped, 5 * std.time.ns_per_s));
+    try testing.expect(c.colyseus_room_is_reconnecting(s.room));
+
+    c.colyseus_room_leave(s.room, true);
+    try expectLeftConsented();
+    try testing.expect(!c.colyseus_room_is_reconnecting(s.room));
+
+    std.Thread.sleep(200 * std.time.ns_per_ms); // past the retry delay
+    try testing.expectEqual(@as(u32, 0), Attempts.count.load(.seq_cst));
+    try expectLeftConsented();
+}
+
+test "reconnect: leave() aborts an attempt that is still connecting" {
+    const s = try Session.join(50);
+    defer s.close();
+    Attempts.leave_on_connect = true;
+
+    s.forceDrop();
+    try testing.expect(pollUntil(leftOnce, 5 * std.time.ns_per_s));
+    try expectLeftConsented();
+
+    std.Thread.sleep(200 * std.time.ns_per_ms); // long enough for the attempt to have completed
+    try testing.expectEqual(@as(i32, 0), ReconnectTest.on_reconnect_count);
+    try testing.expectEqual(@as(u32, 1), Attempts.count.load(.seq_cst));
+    try testing.expect(!c.colyseus_room_is_connected(s.room));
+    try expectLeftConsented();
+}
+
+test "reconnect: leave() from on_drop does not reconnect" {
+    const s = try Session.join(50);
+    defer s.close();
+    ReconnectTest.leave_on_drop = true;
+
+    s.forceDrop();
+    try testing.expect(pollUntil(leftOnce, 5 * std.time.ns_per_s));
+    try expectLeftConsented();
+
+    std.Thread.sleep(200 * std.time.ns_per_ms);
+    try testing.expectEqual(@as(u32, 0), Attempts.count.load(.seq_cst));
+    try testing.expectEqual(@as(i32, 0), ReconnectTest.on_reconnect_count);
+    try expectLeftConsented();
+}
+
+test "reconnect: a drop after LEAVE_ROOM was sent ends as a consented leave" {
+    const s = try Session.join(50);
+    defer s.close();
+
+    // the server drops the socket (4010) before it reads LEAVE_ROOM
+    s.forceDrop();
+    c.colyseus_room_leave(s.room, true);
+
+    try testing.expect(pollUntil(leftOnce, 5 * std.time.ns_per_s));
+    try expectLeftConsented();
+
+    std.Thread.sleep(200 * std.time.ns_per_ms);
+    try testing.expectEqual(@as(i32, 0), ReconnectTest.on_drop_count);
+    try testing.expectEqual(@as(u32, 0), Attempts.count.load(.seq_cst));
 }

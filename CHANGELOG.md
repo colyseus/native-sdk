@@ -3,6 +3,27 @@
 All notable changes to the Colyseus Native SDK (C core / static library) will be documented in this file.
 Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godot/CHANGELOG.md), [platforms/gamemaker/CHANGELOG.md](platforms/gamemaker/CHANGELOG.md), [platforms/flutter/colyseus/CHANGELOG.md](platforms/flutter/colyseus/CHANGELOG.md) and [platforms/swift/CHANGELOG.md](platforms/swift/CHANGELOG.md).
 
+## 0.18.14
+
+### Fixed
+
+- `colyseus_room_leave()` while the room is reconnecting now ends it for good,
+  with `COLYSEUS_CLOSE_CONSENTED`. An attempt already in flight could still
+  rejoin and bring the room back.
+- Freeing a room while its reconnection attempt closes on another thread no
+  longer deadlocks.
+- Freeing a room in the middle of a reconnection no longer crashes.
+- A rejoin that lands after `colyseus_room_leave()` is no longer acknowledged,
+  so the server doesn't hold the seat for a reconnection.
+- Sending, pinging or calling `colyseus_room_is_connected()` from another
+  thread while the room reconnects no longer risks a crash.
+- Messages sent from `on_drop` are now queued for the reconnection instead of
+  dropped.
+- `colyseus_room_connect()` now calls its `on_success` and `on_error`
+  callbacks; neither fired before.
+- Debug builds no longer assert when a room is freed while one of its
+  callbacks runs on another thread.
+
 ## 0.18.13
 
 ### Fixed

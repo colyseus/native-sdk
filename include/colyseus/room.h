@@ -264,6 +264,9 @@ struct colyseus_room {
     void* on_message_any_with_type_bytes_userdata;
 
     int dispatch_depth;  /* frames currently firing this room's callbacks */
+
+    bool leaving;  /* a consented leave() is waiting on the socket's close: a drop ends the room as CONSENTED */
+    bool left;     /* claimed just before on_leave fires, so it fires once; retries are over */
 };
 
 /* Create and destroy room */
@@ -286,7 +289,17 @@ void colyseus_room_set_state_type(colyseus_room_t* room, const colyseus_schema_v
 /* Get current state (returns pointer to schema state, or NULL if not available) */
 void* colyseus_room_get_state(colyseus_room_t* room);
 
-/* Connection */
+/**
+ * Connect the room to `endpoint` — what the client's matchmaking does with a
+ * seat reservation.
+ *
+ * One of the callbacks fires, once: `on_success` when the first JOIN_ROOM
+ * arrives (after on_join), `on_error` when the join fails before that — the
+ * server refuses it, the socket closes or reports an error (the room's
+ * on_error fires too), or no transport could be created (then before this
+ * returns). Either may be
+ * NULL. They run where the room's other callbacks run.
+ */
 void colyseus_room_connect(
     colyseus_room_t* room,
     const char* endpoint,
@@ -296,6 +309,28 @@ void colyseus_room_connect(
     void* userdata
 );
 
+/**
+ * Leave the room. on_leave reports the close code once the room has left.
+ *
+ * On an open connection, a consented leave (the default in every binding)
+ * sends LEAVE_ROOM and on_leave follows the server's close. If the socket
+ * dies first, the room still leaves with COLYSEUS_CLOSE_CONSENTED rather
+ * than reconnecting. `consented = false` closes the connection with 1000.
+ *
+ * While reconnecting or still connecting, either kind of leave ends
+ * automatic reconnection: pending retries are cancelled, a reconnect attempt
+ * that hasn't joined is closed, and on_leave fires with
+ * COLYSEUS_CLOSE_CONSENTED right away, without telling the server (it holds
+ * the seat until its allowReconnection timeout).
+ *
+ * A consented leave of a joined room whose socket has just closed, before
+ * the room has handled that close (it arrives on the socket's next tick or
+ * poll), waits for it: on_leave reports the server's code, or
+ * COLYSEUS_CLOSE_CONSENTED if the socket dropped.
+ *
+ * Calling it on a room that has already left does nothing; on_leave does
+ * not fire again. On the polled scheduler, call it from the polling thread.
+ */
 void colyseus_room_leave(colyseus_room_t* room, bool consented);
 
 /* Getters/Setters */
