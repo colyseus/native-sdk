@@ -2,6 +2,18 @@
 
 All notable changes to the Colyseus GameMaker SDK will be documented in this file.
 
+## 0.18.12
+
+### Fixed
+
+- Leaving a room while it's reconnecting now stops the reconnection and leaves
+  right away. It kept retrying until every attempt had failed, and an attempt
+  already in flight could bring the room back. [colyseus/react-tools#15](https://github.com/colyseus/react-tools/issues/15)
+- Messages sent while the room handles a drop are now delivered after the
+  reconnection instead of being lost.
+- A rejoin that lands after leaving no longer holds the seat on the server.
+- Releasing a room in the middle of a reconnection no longer crashes.
+
 ## 0.18.11
 
 ### Fixed

@@ -9,7 +9,7 @@ Per-binding changes are tracked in [platforms/godot/CHANGELOG.md](platforms/godo
 
 - `colyseus_room_leave()` while the room is reconnecting now ends it for good,
   with `COLYSEUS_CLOSE_CONSENTED`. An attempt already in flight could still
-  rejoin and bring the room back.
+  rejoin and bring the room back. [colyseus/react-tools#15](https://github.com/colyseus/react-tools/issues/15)
 - Freeing a room while its reconnection attempt closes on another thread no
   longer deadlocks.
 - Freeing a room in the middle of a reconnection no longer crashes.
