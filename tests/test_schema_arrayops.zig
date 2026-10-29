@@ -13,6 +13,7 @@ const testing = std.testing;
 //   - "ADD at occupied index = insert" (schema#219)
 //   - DELETE_BY_REFID idempotency guards + ref-count decrement (schema#220)
 //   - MOVE (32) / MOVE_AND_ADD (160) opcode handling
+//   - remove + insert in the same patch (schema#247)
 //   - decode-end hole compaction renumbers survivors 0..n-1
 //   - items are visited in index order (foreach + on_add replay)
 // ============================================================================
@@ -59,6 +60,23 @@ fn playerNameAt(arr: *c.colyseus_array_schema_t, index: c_int) []const u8 {
     const ptr = c.colyseus_array_schema_get(arr, index);
     const player: *c.player_t = @ptrCast(@alignCast(ptr.?));
     return std.mem.span(player.name);
+}
+
+/// Compares the whole array read through numAt, so a failure prints
+/// expected vs actual rather than a single slot.
+fn expectNumbers(arr: *c.colyseus_array_schema_t, want: []const f64) !void {
+    var got: [16]f64 = undefined;
+    const n: usize = @intCast(@min(arr.count, got.len));
+    for (0..n) |i| got[i] = numAt(arr, @intCast(i));
+    try testing.expectEqualSlices(f64, want, got[0..n]);
+}
+
+/// Same as expectNumbers, for Item.value read through itemValueAt.
+fn expectItemValues(arr: *c.colyseus_array_schema_t, want: []const f64) !void {
+    var got: [16]f64 = undefined;
+    const n: usize = @intCast(@min(arr.count, got.len));
+    for (0..n) |i| got[i] = itemValueAt(arr, @intCast(i));
+    try testing.expectEqualSlices(f64, want, got[0..n]);
 }
 
 const snapshot_numbers = [_]u8{ 128, 1, 129, 2, 130, 3, 255, 1, 128, 0, 1, 128, 1, 2, 128, 2, 3 };
@@ -246,6 +264,143 @@ test "arrayschema_move" {
     try testing.expectEqual(@as(f64, 2), itemValueAt(items, 0));
     try testing.expectEqual(@as(f64, 1), itemValueAt(items, 1));
     try testing.expectEqual(@as(f64, 9), itemValueAt(items, 2));
+}
+
+// ============================================================================
+// Remove + insert in the same patch (schema#247)
+// ============================================================================
+
+// numbers = [1, 2]
+const snapshot_numbers_12 = [_]u8{ 128, 1, 129, 2, 130, 3, 255, 1, 128, 0, 1, 128, 1, 2 };
+// items = [Item(1) #4, Item(2) #5]
+const snapshot_items_12 = [_]u8{ 128, 1, 129, 2, 130, 3, 255, 2, 128, 0, 4, 128, 1, 5, 255, 4, 128, 1, 255, 5, 128, 2 };
+// items = [Item(1) #4, Item(2) #5, Item(3) #6]
+const snapshot_items_123 = [_]u8{ 128, 1, 129, 2, 130, 3, 255, 2, 128, 0, 4, 128, 1, 5, 128, 2, 6, 255, 4, 128, 1, 255, 5, 128, 2, 255, 6, 128, 3 };
+
+test "arrayschema_remove_insert_unshift_shift" {
+    // unshift(shift()) => [1, 2]; DELETE_BY_REFID #4, then #4 re-ADDed at occupied 1
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_items_12);
+    decode(decoder, &[_]u8{ 255, 2, 33, 4, 128, 1, 4, 255, 4, 128, 1 });
+
+    try expectNumbers(getState(decoder).numbers.?, &[_]f64{});
+    try expectItemValues(getState(decoder).items.?, &[_]f64{ 1, 2 });
+    // state + 3 collections + 2 Items
+    try testing.expectEqual(@as(usize, 6), c.colyseus_ref_tracker_count(decoder.refs));
+}
+
+test "arrayschema_remove_insert_unshift_pop" {
+    // unshift(pop()) => [3, 1, 2]; #6 ADDed at 0, then DELETE at its old (shifted) index 3
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_items_123);
+    decode(decoder, &[_]u8{ 255, 2, 128, 0, 6, 64, 3, 255, 6, 128, 3 });
+
+    try expectNumbers(getState(decoder).numbers.?, &[_]f64{});
+    try expectItemValues(getState(decoder).items.?, &[_]f64{ 3, 1, 2 });
+    // state + 3 collections + 3 Items
+    try testing.expectEqual(@as(usize, 7), c.colyseus_ref_tracker_count(decoder.refs));
+}
+
+test "arrayschema_remove_insert_splice_reinsert" {
+    // splice(2, 1) then splice(0, 0, removed) => [3, 1, 2]; same wire as unshift(pop())
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_items_123);
+    decode(decoder, &[_]u8{ 255, 2, 128, 0, 6, 64, 3, 255, 6, 128, 3 });
+
+    try expectNumbers(getState(decoder).numbers.?, &[_]f64{});
+    try expectItemValues(getState(decoder).items.?, &[_]f64{ 3, 1, 2 });
+    // state + 3 collections + 3 Items
+    try testing.expectEqual(@as(usize, 7), c.colyseus_ref_tracker_count(decoder.refs));
+}
+
+test "arrayschema_remove_insert_numbers_unshift_shift" {
+    // [1, 2] -> unshift(3); unshift(4); shift() => [3, 1, 2]
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_numbers_12);
+    decode(decoder, &[_]u8{ 255, 1, 128, 0, 3 });
+
+    try expectNumbers(getState(decoder).numbers.?, &[_]f64{ 3, 1, 2 });
+    try expectItemValues(getState(decoder).items.?, &[_]f64{});
+    // state + 3 collections
+    try testing.expectEqual(@as(usize, 4), c.colyseus_ref_tracker_count(decoder.refs));
+}
+
+test "arrayschema_remove_insert_numbers_splice_append" {
+    // [1, 2] -> splice(0, 1); splice(1, 0, 3) => [2, 3]; DELETE 0 + ADD past the end
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_numbers_12);
+    decode(decoder, &[_]u8{ 255, 1, 64, 0, 128, 2, 3 });
+
+    try expectNumbers(getState(decoder).numbers.?, &[_]f64{ 2, 3 });
+    try expectItemValues(getState(decoder).items.?, &[_]f64{});
+    // state + 3 collections
+    try testing.expectEqual(@as(usize, 4), c.colyseus_ref_tracker_count(decoder.refs));
+}
+
+test "arrayschema_remove_insert_replace_then_pop" {
+    // splice(1, 1, Item(3)); pop() => [1]; the never-sent Item(3) leaves only DELETE_BY_REFID #5
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_items_12);
+    decode(decoder, &[_]u8{ 255, 2, 33, 5 });
+
+    try expectNumbers(getState(decoder).numbers.?, &[_]f64{});
+    try expectItemValues(getState(decoder).items.?, &[_]f64{1});
+    // state + 3 collections + 1 Item
+    try testing.expectEqual(@as(usize, 5), c.colyseus_ref_tracker_count(decoder.refs));
+}
+
+test "arrayschema_remove_insert_replace_insert_delete" {
+    // splice(1, 1, Item(4)); unshift(Item(5)); splice(2, 1) => [5, 1, 3]
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_items_123);
+    decode(decoder, &[_]u8{ 255, 2, 128, 0, 8, 33, 5, 255, 8, 128, 5 });
+
+    try expectNumbers(getState(decoder).numbers.?, &[_]f64{});
+    try expectItemValues(getState(decoder).items.?, &[_]f64{ 5, 1, 3 });
+    // state + 3 collections + 3 Items
+    try testing.expectEqual(@as(usize, 7), c.colyseus_ref_tracker_count(decoder.refs));
+}
+
+test "arrayschema_remove_insert_duplicate_pop" {
+    // [Item(1) #4, Item(2) #5, #4 again] -> pop(); unshift(Item(3)) => [3, 1, 2]
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &[_]u8{ 128, 1, 129, 2, 130, 3, 255, 2, 128, 0, 4, 128, 1, 5, 128, 2, 4, 255, 4, 128, 1, 255, 5, 128, 2 });
+    decode(decoder, &[_]u8{ 255, 2, 128, 0, 6, 64, 3, 255, 6, 128, 3 });
+
+    try expectNumbers(getState(decoder).numbers.?, &[_]f64{});
+    try expectItemValues(getState(decoder).items.?, &[_]f64{ 3, 1, 2 });
+    // state + 3 collections + 3 Items (#4 survives the pop of its duplicate)
+    try testing.expectEqual(@as(usize, 7), c.colyseus_ref_tracker_count(decoder.refs));
+}
+
+test "arrayschema_remove_insert_shift_unshift_more" {
+    // shift(); unshift(Item(3), Item(4)) => [3, 4, 2]
+    const decoder = createDecoder();
+    defer c.colyseus_decoder_free(decoder);
+
+    decode(decoder, &snapshot_items_12);
+    decode(decoder, &[_]u8{ 255, 2, 33, 4, 128, 1, 6, 128, 2, 7, 255, 6, 128, 3, 255, 7, 128, 4 });
+
+    try expectNumbers(getState(decoder).numbers.?, &[_]f64{});
+    try expectItemValues(getState(decoder).items.?, &[_]f64{ 3, 4, 2 });
+    // state + 3 collections + 3 Items
+    try testing.expectEqual(@as(usize, 7), c.colyseus_ref_tracker_count(decoder.refs));
 }
 
 // ============================================================================
