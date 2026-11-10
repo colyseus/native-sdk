@@ -896,6 +896,7 @@ fn buildSdk(b: *std.Build) void {
         .{ .name = "test_msgpack_builder", .file = "tests/test_msgpack_builder.zig", .description = "Run message builder ownership tests (offline)" },
         .{ .name = "test_transport", .file = "tests/test_transport.zig", .description = "Run WebSocket transport tests: address fallthrough, refusal, SIGPIPE, polled mode (offline)" },
         .{ .name = "test_poll", .file = "tests/test_poll.zig", .description = "Run colyseus_poll() tests: poll-thread delivery, nested poll, send flush, latency (offline)" },
+        .{ .name = "test_matchmake_errors", .file = "tests/test_matchmake_errors.zig", .description = "Run matchmaking error-code tests against a canned HTTP peer (offline)" },
         .{ .name = "test_gamemaker_predict", .file = "tests/test_gamemaker_predict.zig", .description = "Run GameMaker predict-bridge tests (offline, drives the GML FFI surface)" },
         .{ .name = "test_gamemaker_schema", .file = "tests/test_gamemaker_schema.zig", .description = "Run GameMaker schema-bridge tests (offline)" },
         .{ .name = "test_suite", .file = "tests/test_suite.zig", .description = "Run unit test suite" },
@@ -934,7 +935,8 @@ fn buildSdk(b: *std.Build) void {
         }
         // Their in-test peer is BSD sockets, and SIGPIPE is POSIX-only.
         if ((std.mem.eql(u8, test_file.name, "test_transport") or
-            std.mem.eql(u8, test_file.name, "test_poll")) and
+            std.mem.eql(u8, test_file.name, "test_poll") or
+            std.mem.eql(u8, test_file.name, "test_matchmake_errors")) and
             target.result.os.tag == .windows)
         {
             continue;

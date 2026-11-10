@@ -20,7 +20,8 @@ Byte fixtures and in-process peers, no network: `test_suite`, `test_http`,
 `test_auth`, `test_room`, `test_storage`, `test_schema`, `test_schema_arrayops`,
 `test_schema_resync`, `test_room_protocol`, `test_quantized`, `test_input`,
 `test_predict`, `test_netdelay`, `test_msgpack_builder`, `test_transport`,
-`test_poll`, `test_gamemaker_predict`, `test_gamemaker_schema`.
+`test_poll`, `test_matchmake_errors`, `test_gamemaker_predict`,
+`test_gamemaker_schema`.
 
 `test_transport` drives the native WebSocket transport against a loopback
 WebSocket peer it runs itself (`tests/ws_peer.zig`): `localhost` served on
@@ -34,6 +35,9 @@ same peer and a refused port: a matchmaking result and a latency probe arrive
 on the polling thread and only inside the poll, a nested `colyseus_poll()` is a
 no-op, and a send from the polling thread reaches the peer without another
 poll (from any other thread it waits for one). POSIX only.
+
+`test_matchmake_errors` answers a join with a canned HTTP response, to check
+the code `on_error` gets (the body's `code`, else the status). POSIX only.
 
 ## Integration suites
 
