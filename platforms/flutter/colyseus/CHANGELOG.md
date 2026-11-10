@@ -2,6 +2,16 @@
 
 All notable changes to the Colyseus Flutter SDK will be documented in this file.
 
+## 0.18.12
+
+### Fixed
+
+- `ColyseusError.code` for a failed join is now the server's error code (such as
+  520 or 525) even when the server sends standard HTTP statuses
+  (`matchMaker.controller.standardHttpStatus` in `@colyseus/core` 0.18.28). A
+  custom code like `ServerError(4000, …)` now reaches it too, where it used to
+  be 500. [colyseus/colyseus#999](https://github.com/colyseus/colyseus/issues/999)
+
 ## 0.18.11
 
 ### Fixed
