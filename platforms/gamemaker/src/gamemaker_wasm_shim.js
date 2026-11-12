@@ -482,6 +482,18 @@
         return _callN('colyseus_gm_message_iter_value_number', [], []);
     };
 
+    window.colyseus_gm_message_get_json = function() {
+        return _callS('colyseus_gm_message_get_json', [], []);
+    };
+
+    window.colyseus_gm_room_send_json = function(room_handle, type, json) {
+        return _callN('colyseus_gm_room_send_json', ['number', 'string', 'string'], [room_handle, type, json]);
+    };
+
+    window.colyseus_gm_room_send_int_json = function(room_handle, type, json) {
+        return _callN('colyseus_gm_room_send_int_json', ['number', 'number', 'string'], [room_handle, type, json]);
+    };
+
     window.colyseus_gm_auth_request = function(client_handle, op, payload_json) {
         return _callN('colyseus_gm_auth_request', ['number', 'number', 'string'], [client_handle, op, payload_json]);
     };

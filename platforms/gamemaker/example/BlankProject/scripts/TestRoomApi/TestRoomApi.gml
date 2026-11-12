@@ -181,6 +181,76 @@ suite(function() {
             expect(global.__rt.echo.value).toBe(42);
         });
 
+        test("messages decode nested structs and arrays", function() {
+            global.__rt.echo = undefined;
+            global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
+            colyseus_on_message(global.__rt.room, function(_room, _type, _data) {
+                if (_type != "nested") return;
+                global.__rt.echo = _data;
+                global.__rt.done = true;
+            });
+            test_poll_until_joined(global.__rt.room, 5000);
+
+            colyseus_send(global.__rt.room, "nested_fixture", {});
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.done).toBeTruthy();
+
+            var _m = global.__rt.echo;
+            expect(_m.seat.roomId).toBe("abc");
+            expect(_m.seat.port).toBe(2567);
+            expect(_m.seat.devMode).toBe(false);
+            expect(array_length(_m.list)).toBe(5);
+            expect(_m.list[0]).toBe(1);
+            expect(_m.list[1]).toBe("two");
+            expect(_m.list[2]).toBe(true);
+            expect(_m.list[3]).toBe(undefined);
+            expect(_m.list[4].deep[0]).toBe(3.5);
+            expect(_m.list[4].deep[1][0]).toBe(4);
+            expect(_m.nothing).toBe(undefined);
+            expect(variable_struct_names_count(_m.empty)).toBe(0);
+            expect(array_length(_m.emptyList)).toBe(0);
+            expect(_m.bytes).toBe("AAEC/w=="); // binary arrives as base64
+            expect(string_length(_m.long)).toBe(5000);
+        });
+
+        test("colyseus_send carries nested structs and arrays", function() {
+            global.__rt.echo = undefined;
+            global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
+            colyseus_on_message(global.__rt.room, function(_room, _type, _data) {
+                if (_type != "tagged_echo") return;
+                global.__rt.echo = _data;
+                global.__rt.done = true;
+            });
+            test_poll_until_joined(global.__rt.room, 5000);
+
+            colyseus_send(global.__rt.room, "echo", {
+                seat: { roomId: "abc", tags: ["a", "b"] },
+                points: [{ x: 1, y: 2.5 }, { x: -3, y: 4 }],
+                flag: true,
+                label: "@i64@7$i64$",
+            });
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.done).toBeTruthy();
+            var _m = global.__rt.echo;
+            expect(_m.seat.roomId).toBe("abc");
+            expect(_m.seat.tags[1]).toBe("b");
+            expect(array_length(_m.points)).toBe(2);
+            expect(_m.points[0].y).toBe(2.5);
+            expect(_m.points[1].x).toBe(-3);
+            expect(_m.flag).toBe(true);
+            expect(_m.label).toBe("@i64@7$i64$");
+
+            // an array is a message of its own
+            global.__rt.done = false;
+            colyseus_send(global.__rt.room, "echo", [1, [2, 3], { k: "v" }]);
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.done).toBeTruthy();
+            _m = global.__rt.echo;
+            expect(is_array(_m)).toBe(true);
+            expect(_m[1][1]).toBe(3);
+            expect(_m[2].k).toBe("v");
+        });
+
         test("consume_seat_reservation joins the seat a server route reserved", function() {
             global.__rt.seat = undefined;
             colyseus_http_post(global.__rt.client, "/reserve_seat",

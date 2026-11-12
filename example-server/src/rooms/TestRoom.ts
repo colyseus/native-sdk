@@ -84,6 +84,18 @@ export class TestRoom extends Room {
     echo: (client: Client, message: any) => {
       client.send("tagged_echo", message);
     },
+    // Every shape a message can nest, for SDKs that decode into native values.
+    nested_fixture: (client: Client) => {
+      client.send("nested", {
+        seat: { roomId: "abc", sessionId: "xyz", port: 2567, devMode: false },
+        list: [1, "two", true, null, { deep: [3.5, [4]] }],
+        nothing: null,
+        empty: {},
+        emptyList: [],
+        bytes: new Uint8Array([0, 1, 2, 255]),
+        long: "x".repeat(5000),
+      });
+    },
     // a numeric message type: SDKs check room.send(7, ...) reaches the server
     7: (client: Client, message: any) => {
       client.send("int_echo", message);

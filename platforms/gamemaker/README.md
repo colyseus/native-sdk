@@ -123,7 +123,7 @@ colyseus_on_leave(net_room, function(_code, _reason) {
 // Step
 colyseus_process();   // delivers every event and callback; call once per Step
 
-// anywhere: send a message (structs, strings, numbers, booleans)
+// anywhere: send a message (structs and arrays nested to any depth, strings, numbers, booleans)
 colyseus_send(net_room, "move", { x: mouse_x, y: mouse_y });
 
 // Clean Up

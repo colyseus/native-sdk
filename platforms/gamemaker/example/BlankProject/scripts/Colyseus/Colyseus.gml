@@ -553,9 +553,11 @@ function colyseus_array_get(_instance, _field, _index) {
 // =============================================================================
 
 /// Send a value as a message to the room. The type is a string or a number.
-/// Supports: structs (sent as map), booleans, numbers, and strings.
+/// Supports: structs and arrays (nested to any depth), booleans, numbers,
+/// and strings.
 /// Examples:
 ///   colyseus_send(room, "move", { x: 10, y: 20 });
+///   colyseus_send(room, "path", { points: [{ x: 1, y: 2 }, { x: 3, y: 4 }] });
 ///   colyseus_send(room, "shoot", true);
 ///   colyseus_send(room, "target", 90);
 ///   colyseus_send(room, "name", "player1");
@@ -565,22 +567,19 @@ function colyseus_send(_room_ref, _type, _data) {
         show_debug_message("colyseus_send: the message type must be a string or a number");
         return;
     }
-    var _msg;
-    if (is_struct(_data)) {
-        _msg = colyseus_message_create_map();
-        var _keys = variable_struct_get_names(_data);
-        for (var _i = 0; _i < array_length(_keys); _i++) {
-            var _key = _keys[_i];
-            var _val = variable_struct_get(_data, _key);
-            if (is_string(_val)) {
-                colyseus_message_put_str(_msg, _key, _val);
-            } else if (is_bool(_val)) {
-                colyseus_message_put_bool(_msg, _key, _val);
-            } else {
-                colyseus_message_put_number(_msg, _key, _val);
-            }
+    if (is_struct(_data) || is_array(_data)) {
+        var _json = json_stringify(_data);
+        var _sent = is_string(_type)
+            ? __colyseus_gm_room_send_json(_room_ref, _type, _json)
+            : __colyseus_gm_room_send_int_json(_room_ref, _type, _json);
+        // NaN and infinity stringify to tokens JSON does not have
+        if (!_sent && colyseus_room_is_connected(_room_ref)) {
+            show_debug_message("colyseus_send: could not encode the data of message '" + string(_type) + "'");
         }
-    } else if (is_bool(_data)) {
+        return;
+    }
+    var _msg;
+    if (is_bool(_data)) {
         _msg = colyseus_message_create_bool(_data);
     } else if (is_string(_data)) {
         _msg = colyseus_message_create_string(_data);
@@ -841,26 +840,19 @@ function __colyseus_auth_restore(_client) {
 // Message decoding helper — auto-decode received message into GML value
 // =============================================================================
 
-/// @returns {Struct|String|Real|Bool|Undefined}
+/// Maps decode to structs and arrays to arrays, nested to any depth. Binary
+/// values arrive as base64 strings.
+/// @returns {Struct|Array|String|Real|Bool|Undefined}
 function __colyseus_decode_message() {
     var _msg_type = colyseus_message_get_type();
 
     switch (_msg_type) {
         case COLYSEUS_MSG_MAP:
-            var _struct = {};
-            colyseus_message_iter_begin();
-            while (colyseus_message_iter_next()) {
-                var _key = colyseus_message_iter_key();
-                var _vtype = colyseus_message_iter_value_type();
-                if (_vtype == COLYSEUS_MSG_STR) {
-                    variable_struct_set(_struct, _key, colyseus_message_iter_value_string());
-                } else if (_vtype == COLYSEUS_MSG_BOOL) {
-                    variable_struct_set(_struct, _key, colyseus_message_iter_value_number() > 0.5);
-                } else {
-                    variable_struct_set(_struct, _key, colyseus_message_iter_value_number());
-                }
-            }
-            return _struct;
+        case COLYSEUS_MSG_ARRAY:
+            var _json = __colyseus_gm_message_get_json();
+            if (_json == "") return undefined;
+            // `true`: strings stay strings, even ones shaped like "@i64@...$i64$"
+            return json_parse(_json, undefined, true);
 
         case COLYSEUS_MSG_STR:
             return colyseus_message_read_string_value();

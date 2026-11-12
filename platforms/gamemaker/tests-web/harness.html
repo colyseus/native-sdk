@@ -77,6 +77,7 @@
   var joined = false, reconnected = false, dropped = false, left = false;
   var joinError = null, roomError = null;
   var authReply = null;
+  var lastMessage = null;
   var sawInFlight = 0;
 
   function pumpRecon() {
@@ -110,6 +111,10 @@
     var t;
     while ((t = window.colyseus_gm_poll_event()) !== 0) {
       if (t === 1) joined = true;           // ROOM_JOIN
+      if (t === 3) lastMessage = {          // ROOM_MESSAGE
+        type: window.colyseus_gm_event_get_message(),
+        json: window.colyseus_gm_message_get_json(),
+      };
       if (t === 4) roomError = window.colyseus_gm_event_get_message(); // ROOM_ERROR
       if (t === 5) { left = true; log("EVT leave: " + window.colyseus_gm_event_get_message()); }
       if (t === 6) joinError = {            // CLIENT_ERROR
@@ -217,6 +222,22 @@
     report("auth_instance_room", why === "", why);
     window.colyseus_gm_auth_signout(authClient);
     window.colyseus_gm_client_free(authClient);
+
+    // T1d: a nested message survives the round trip as JSON
+    var echoClient = window.colyseus_gm_client_create(AUTH_SERVER);
+    joined = false; left = false; lastMessage = null;
+    var echoRef = window.colyseus_gm_client_join_or_create(echoClient, "test_room", "{}");
+    await waitFor(function () { return joined; }, 8000);
+    var nested = '{"seat":{"list":[1,"two",true,null,{"deep":[3.5]}]}}';
+    var sentJson = window.colyseus_gm_room_send_json(echoRef, "echo", nested);
+    await waitFor(function () { return lastMessage && lastMessage.type === "tagged_echo"; }, 5000);
+    report("nested_message", sentJson === 1 && lastMessage && lastMessage.json === nested,
+      "sent=" + sentJson + " got=" + JSON.stringify(lastMessage));
+    window.colyseus_gm_room_leave(echoRef);
+    await waitFor(function () { return left; }, 3000);
+    window.colyseus_gm_room_free(echoRef);
+    window.colyseus_gm_client_free(echoClient);
+    joined = false; left = false;
 
     // T2: join lab-move on the playground server
     var client = window.colyseus_gm_client_create(SERVER);

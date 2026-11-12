@@ -93,6 +93,7 @@ static colyseus_message_reader_t* g_current_message_reader = NULL;
 static colyseus_message_map_iterator_t g_current_map_iterator = {0};
 static colyseus_message_reader_t* g_current_iter_key = NULL;
 static colyseus_message_reader_t* g_current_iter_value = NULL;
+static char* g_current_message_json = NULL;
 
 // Global callback entry table
 static gm_callback_entry_t g_callback_entries[MAX_GM_CALLBACK_ENTRIES] = {0};
@@ -1543,6 +1544,11 @@ GM_EXPORT double colyseus_gm_poll_event(void) {
         g_current_message_reader = NULL;
     }
 
+    if (g_current_message_json) {
+        cJSON_free(g_current_message_json);
+        g_current_message_json = NULL;
+    }
+
     // Clean up previous HTTP response body
     if (g_current_http_body) {
         free(g_current_http_body);
@@ -1888,6 +1894,179 @@ GM_EXPORT double colyseus_gm_message_iter_value_number(void) {
         return colyseus_message_reader_get_bool(g_current_iter_value) ? 1.0 : 0.0;
     }
     return 0.0;
+}
+
+// =============================================================================
+// Message <-> JSON — a whole payload crosses to GML as one string, so nesting
+// survives and decoding costs one extension call
+// =============================================================================
+
+#define GM_JSON_MAX_DEPTH 64
+
+static cJSON* gm_json_string(const char* str, size_t len) {
+    char* tmp = (char*)malloc(len + 1);
+    if (!tmp) return NULL;
+    if (len) memcpy(tmp, str, len);
+    tmp[len] = '\0';
+    cJSON* item = cJSON_CreateString(tmp);
+    free(tmp);
+    return item;
+}
+
+// JSON has no binary type: bin values cross as base64 strings.
+static cJSON* gm_json_base64(const uint8_t* data, size_t len) {
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    char* out = (char*)malloc(4 * ((len + 2) / 3) + 1);
+    if (!out) return NULL;
+    size_t o = 0;
+    for (size_t i = 0; i < len; i += 3) {
+        uint32_t n = (uint32_t)data[i] << 16;
+        if (i + 1 < len) n |= (uint32_t)data[i + 1] << 8;
+        if (i + 2 < len) n |= data[i + 2];
+        out[o++] = alphabet[(n >> 18) & 63];
+        out[o++] = alphabet[(n >> 12) & 63];
+        out[o++] = i + 1 < len ? alphabet[(n >> 6) & 63] : '=';
+        out[o++] = i + 2 < len ? alphabet[n & 63] : '=';
+    }
+    out[o] = '\0';
+    cJSON* item = cJSON_CreateString(out);
+    free(out);
+    return item;
+}
+
+static cJSON* gm_reader_to_json(colyseus_message_reader_t* reader, int depth) {
+    if (!reader || depth > GM_JSON_MAX_DEPTH) return cJSON_CreateNull();
+
+    switch (colyseus_message_reader_get_type(reader)) {
+        case COLYSEUS_MESSAGE_TYPE_BOOL:
+            return cJSON_CreateBool(colyseus_message_reader_get_bool(reader));
+        case COLYSEUS_MESSAGE_TYPE_INT:
+            return cJSON_CreateNumber((double)colyseus_message_reader_get_int(reader));
+        case COLYSEUS_MESSAGE_TYPE_UINT:
+            return cJSON_CreateNumber((double)colyseus_message_reader_get_uint(reader));
+        case COLYSEUS_MESSAGE_TYPE_FLOAT:
+            // NaN and ±Infinity print as null — JSON cannot carry them
+            return cJSON_CreateNumber(colyseus_message_reader_get_float(reader));
+        case COLYSEUS_MESSAGE_TYPE_STR: {
+            size_t len = 0;
+            const char* str = colyseus_message_reader_get_str(reader, &len);
+            return gm_json_string(str, str ? len : 0);
+        }
+        case COLYSEUS_MESSAGE_TYPE_BIN: {
+            size_t len = 0;
+            const uint8_t* bin = colyseus_message_reader_get_bin(reader, &len);
+            return gm_json_base64(bin, bin ? len : 0);
+        }
+        case COLYSEUS_MESSAGE_TYPE_ARRAY: {
+            cJSON* arr = cJSON_CreateArray();
+            size_t size = colyseus_message_reader_get_array_size(reader);
+            for (size_t i = 0; arr && i < size; i++) {
+                colyseus_message_reader_t* el = colyseus_message_reader_get_array_element(reader, i);
+                cJSON* item = gm_reader_to_json(el, depth + 1);
+                if (el) colyseus_message_reader_free(el);
+                if (item) cJSON_AddItemToArray(arr, item);
+            }
+            return arr;
+        }
+        case COLYSEUS_MESSAGE_TYPE_MAP: {
+            cJSON* obj = cJSON_CreateObject();
+            colyseus_message_map_iterator_t it = colyseus_message_reader_map_iterator(reader);
+            colyseus_message_reader_t* key = NULL;
+            colyseus_message_reader_t* value = NULL;
+            while (obj && colyseus_message_map_iterator_next(&it, &key, &value)) {
+                char numeric_key[32];
+                char* owned_key = NULL;
+                const char* name = "";
+                if (colyseus_message_reader_is_str(key)) {
+                    size_t len = 0;
+                    const char* str = colyseus_message_reader_get_str(key, &len);
+                    owned_key = (char*)malloc(len + 1);
+                    if (owned_key) {
+                        if (len) memcpy(owned_key, str, len);
+                        owned_key[len] = '\0';
+                        name = owned_key;
+                    }
+                } else {
+                    // msgpack allows non-string keys; JSON does not
+                    snprintf(numeric_key, sizeof(numeric_key), "%.17g", colyseus_message_reader_get_float(key));
+                    name = numeric_key;
+                }
+                cJSON* item = gm_reader_to_json(value, depth + 1);
+                if (item) cJSON_AddItemToObject(obj, name, item);
+                free(owned_key);
+                colyseus_message_reader_free(key);
+                colyseus_message_reader_free(value);
+            }
+            return obj;
+        }
+        default:
+            return cJSON_CreateNull();
+    }
+}
+
+/*
+ * The current ROOM_MESSAGE payload as JSON, "" when there is none or it does
+ * not decode. Valid until the next colyseus_gm_poll_event().
+ */
+GM_EXPORT const char* colyseus_gm_message_get_json(void) {
+    if (g_current_message_json) return g_current_message_json;
+    gm_ensure_message_reader();
+    if (!g_current_message_reader) return "";
+    cJSON* json = gm_reader_to_json(g_current_message_reader, 0);
+    if (!json) return "";
+    g_current_message_json = cJSON_PrintUnformatted(json);
+    cJSON_Delete(json);
+    return g_current_message_json ? g_current_message_json : "";
+}
+
+static colyseus_message_t* gm_json_to_message(const cJSON* json, int depth) {
+    if (!json || depth > GM_JSON_MAX_DEPTH || cJSON_IsNull(json)) return colyseus_message_nil_create();
+    if (cJSON_IsBool(json)) return colyseus_message_bool_create(cJSON_IsTrue(json));
+    if (cJSON_IsString(json)) return colyseus_message_str_create(json->valuestring);
+    if (cJSON_IsNumber(json)) {
+        double d = json->valuedouble;
+        // whole numbers a double holds exactly go out as msgpack ints
+        if (d >= -9007199254740992.0 && d <= 9007199254740992.0 && d == (double)(int64_t)d) {
+            return colyseus_message_int_create((int64_t)d);
+        }
+        return colyseus_message_float_create(d);
+    }
+
+    bool is_array = cJSON_IsArray(json);
+    colyseus_message_t* out = is_array ? colyseus_message_array_create() : colyseus_message_map_create();
+    const cJSON* child = NULL;
+    cJSON_ArrayForEach(child, json) {
+        colyseus_message_t* value = gm_json_to_message(child, depth + 1);
+        if (is_array) colyseus_message_array_push_msg(out, value);
+        else colyseus_message_map_put_msg(out, child->string, value);
+        colyseus_message_free(value);
+    }
+    return out;
+}
+
+// Parse `json` and send it as `type` (a string, or an int when type_str is NULL)
+static double gm_room_send_json(double room_handle, const char* type_str, int type_int, const char* json) {
+    colyseus_room_t* room = gm_room_ref_get((int)room_handle);
+    if (!room || !json) return 0.0;
+    cJSON* parsed = cJSON_Parse(json);
+    if (!parsed) return 0.0;
+    colyseus_message_t* msg = gm_json_to_message(parsed, 0);
+    cJSON_Delete(parsed);
+    if (!msg) return 0.0;
+    if (type_str) colyseus_room_send(room, type_str, msg);
+    else colyseus_room_send_int(room, type_int, msg);
+    colyseus_message_free(msg);
+    return 1.0;
+}
+
+// Returns 0 when the room is gone or `json` does not parse.
+GM_EXPORT double colyseus_gm_room_send_json(double room_handle, const char* type, const char* json) {
+    return gm_room_send_json(room_handle, type ? type : "", 0, json);
+}
+
+GM_EXPORT double colyseus_gm_room_send_int_json(double room_handle, double type, const char* json) {
+    return gm_room_send_json(room_handle, NULL, (int)type, json);
 }
 
 // =============================================================================

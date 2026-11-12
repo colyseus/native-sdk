@@ -1460,6 +1460,59 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_message_get_json",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_message_get_json",
+          "help": "(internal) message get json",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_message_get_json",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 1
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_room_send_json",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_send_json",
+          "help": "(internal) room send json",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_room_send_json",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_room_send_int_json",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_send_int_json",
+          "help": "(internal) room send int json",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_room_send_int_json",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__colyseus_gm_auth_request",
           "argCount": 3,
           "args": [
@@ -4616,6 +4669,59 @@
           "hidden": false,
           "kind": 1,
           "name": "colyseus_message_iter_value_number",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_message_get_json",
+          "argCount": 0,
+          "args": [],
+          "documentation": "",
+          "externalName": "colyseus_gm_message_get_json",
+          "help": "(internal) message get json",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_message_get_json",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 1
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_room_send_json",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_send_json",
+          "help": "(internal) room send json",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_room_send_json",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__colyseus_gm_room_send_int_json",
+          "argCount": 3,
+          "args": [
+            2,
+            2,
+            1
+          ],
+          "documentation": "",
+          "externalName": "colyseus_gm_room_send_int_json",
+          "help": "(internal) room send int json",
+          "hidden": true,
+          "kind": 1,
+          "name": "__colyseus_gm_room_send_int_json",
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 2

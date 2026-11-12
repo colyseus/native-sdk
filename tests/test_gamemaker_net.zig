@@ -17,6 +17,9 @@ extern fn colyseus_gm_client_create_room(client: f64, room_name: [*c]const u8, o
 extern fn colyseus_gm_poll_event() f64;
 extern fn colyseus_gm_event_get_message() [*c]const u8;
 extern fn colyseus_gm_room_send(room: f64, type: [*c]const u8, data: [*c]const u8) void;
+extern fn colyseus_gm_room_send_json(room: f64, type: [*c]const u8, json: [*c]const u8) f64;
+extern fn colyseus_gm_room_send_int_json(room: f64, type: f64, json: [*c]const u8) f64;
+extern fn colyseus_gm_message_get_json() [*c]const u8;
 extern fn colyseus_gm_room_leave(room: f64) void;
 extern fn colyseus_gm_room_free(room: f64) void;
 extern fn colyseus_gm_room_get_state(room: f64) f64;
@@ -143,3 +146,64 @@ test "gm: decoded instances are room-scoped handles, dead once the room is gone"
     try testing.expect(gm_schema_resolve(me) == null);
 }
 
+
+/// Process until a `msg` message arrives, and return its payload as JSON.
+/// The string is the bridge's: valid until the next poll.
+fn awaitJson(msg: []const u8, timeout_ms: u64) ?[]const u8 {
+    var timer = std.time.Timer.start() catch unreachable;
+    while (timer.read() < timeout_ms * ms) : (std.Thread.sleep(5 * ms)) {
+        while (true) {
+            const t = colyseus_gm_poll_event();
+            if (t == 0) break;
+            if (t == EVENT_ROOM_MESSAGE and std.mem.eql(u8, std.mem.span(colyseus_gm_event_get_message()), msg)) {
+                return std.mem.span(colyseus_gm_message_get_json());
+            }
+        }
+    }
+    return null;
+}
+
+// GML decoded one map level and read everything else as 0, so a seat
+// reservation nested in a message arrived as `{ seat: 0 }`.
+test "gm: messages cross as JSON, nested both ways" {
+    const client = colyseus_gm_client_create("ws://localhost:2567");
+    try testing.expect(client != 0);
+    defer colyseus_gm_client_free(client);
+
+    const ref = colyseus_gm_client_create_room(client, "test_room", "{\"private\":true}");
+    try testing.expect(ref != 0);
+    try testing.expect(processUntil(EVENT_ROOM_JOIN, 10_000));
+
+    // one key per container: map order is not part of the contract
+    const sent = "{\"seat\":{\"list\":[1,\"two\",true,null,{\"deep\":[3.5,[-4]]},{},[]]}}";
+    try testing.expectEqual(@as(f64, 1), colyseus_gm_room_send_json(ref, "echo", sent));
+    try testing.expectEqualStrings(sent, awaitJson("tagged_echo", 5000) orelse return error.NoEcho);
+
+    try testing.expectEqual(@as(f64, 1), colyseus_gm_room_send_int_json(ref, 7, "[[\"a\"],{\"b\":2}]"));
+    try testing.expectEqualStrings("[[\"a\"],{\"b\":2}]", awaitJson("int_echo", 5000) orelse return error.NoEcho);
+
+    // not JSON: refused, nothing sent
+    try testing.expectEqual(@as(f64, 0), colyseus_gm_room_send_json(ref, "echo", "{\"x\":NaN}"));
+
+    try testing.expectEqual(@as(f64, 1), colyseus_gm_room_send_json(ref, "nested_fixture", "{}"));
+    const text = awaitJson("nested", 5000) orelse return error.NoFixture;
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, text, .{});
+    defer parsed.deinit();
+    const root = parsed.value.object;
+    try testing.expectEqualStrings("abc", root.get("seat").?.object.get("roomId").?.string);
+    try testing.expectEqual(@as(i64, 2567), root.get("seat").?.object.get("port").?.integer);
+    try testing.expectEqual(false, root.get("seat").?.object.get("devMode").?.bool);
+    const list = root.get("list").?.array.items;
+    try testing.expectEqual(@as(usize, 5), list.len);
+    try testing.expect(list[3] == .null);
+    try testing.expectEqual(@as(i64, 4), list[4].object.get("deep").?.array.items[1].array.items[0].integer);
+    try testing.expect(root.get("nothing").? == .null);
+    try testing.expectEqual(@as(usize, 0), root.get("empty").?.object.count());
+    try testing.expectEqual(@as(usize, 0), root.get("emptyList").?.array.items.len);
+    try testing.expectEqualStrings("AAEC/w==", root.get("bytes").?.string); // bin → base64
+    try testing.expectEqual(@as(usize, 5000), root.get("long").?.string.len);
+
+    colyseus_gm_room_leave(ref);
+    try testing.expect(processUntil(EVENT_ROOM_LEAVE, 5000));
+    colyseus_gm_room_free(ref);
+}
