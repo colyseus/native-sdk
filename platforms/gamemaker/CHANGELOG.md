@@ -9,9 +9,10 @@ All notable changes to the Colyseus GameMaker SDK will be documented in this fil
 - Messages now keep nested structs and arrays, in both directions. A received
   `{ seat: { roomId: "abc" }, list: [1, 2] }` used to arrive as
   `{ seat: 0, list: 0 }`, and `colyseus_send` dropped anything nested. `null`
-  values now arrive as `undefined` instead of `0`, binary values as base64
-  strings, and strings inside a message are no longer cut at 4095 bytes. Thanks
-  @RoyallGuards for reporting!
+  values now arrive as `undefined` instead of `0`, and binary values as base64
+  strings. Thanks @RoyallGuards for reporting!
+- Messages of any size now arrive whole. A payload over 8192 bytes, or a
+  string over 4095 bytes, used to be cut short.
 
 ## 0.18.13
 

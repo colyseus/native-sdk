@@ -94,6 +94,8 @@ static colyseus_message_map_iterator_t g_current_map_iterator = {0};
 static colyseus_message_reader_t* g_current_iter_key = NULL;
 static colyseus_message_reader_t* g_current_iter_value = NULL;
 static char* g_current_message_json = NULL;
+static char* g_current_message_string = NULL;
+static uint8_t* g_current_message_data = NULL;
 
 // Global callback entry table
 static gm_callback_entry_t g_callback_entries[MAX_GM_CALLBACK_ENTRIES] = {0};
@@ -331,8 +333,12 @@ void gm_event_queue_push(const gm_event_t* event) {
     event_queue_lock();
 
     if (g_event_queue.count >= MAX_EVENT_QUEUE_SIZE) {
-        // Queue is full, drop oldest event — free HTTP body if applicable
+        // Queue is full, drop oldest event — free what it owns
         gm_event_t* oldest = &g_event_queue.events[g_event_queue.head];
+        if (oldest->type == GM_EVENT_ROOM_MESSAGE && oldest->msg.data) {
+            free(oldest->msg.data);
+            oldest->msg.data = NULL;
+        }
         if ((oldest->type == GM_EVENT_HTTP_RESPONSE || oldest->type == GM_EVENT_HTTP_ERROR)
             && oldest->http.body) {
             free(oldest->http.body);
@@ -614,8 +620,13 @@ static void on_room_message_with_type_encoded(const char* type, const uint8_t* d
     event.type = GM_EVENT_ROOM_MESSAGE;
     event.room_handle = (double)ref;
     strncpy(event.message, type ? type : "", sizeof(event.message) - 1);
-    event.msg.data_length = length < sizeof(event.msg.data) ? length : sizeof(event.msg.data);
-    memcpy(event.msg.data, data, event.msg.data_length);
+    if (data && length > 0) {
+        event.msg.data = (uint8_t*)malloc(length);
+        if (event.msg.data) {
+            memcpy(event.msg.data, data, length);
+            event.msg.data_length = length;
+        }
+    }
     gm_event_queue_push(&event);
 }
 
@@ -1548,6 +1559,15 @@ GM_EXPORT double colyseus_gm_poll_event(void) {
         cJSON_free(g_current_message_json);
         g_current_message_json = NULL;
     }
+    if (g_current_message_string) {
+        free(g_current_message_string);
+        g_current_message_string = NULL;
+    }
+    // after the reader: it points into this payload
+    if (g_current_message_data) {
+        free(g_current_message_data);
+        g_current_message_data = NULL;
+    }
 
     // Clean up previous HTTP response body
     if (g_current_http_body) {
@@ -1564,6 +1584,10 @@ GM_EXPORT double colyseus_gm_poll_event(void) {
             memset(&g_current_event, 0, sizeof(g_current_event));
             return 0.0;
         }
+    }
+
+    if (g_current_event.type == GM_EVENT_ROOM_MESSAGE) {
+        g_current_message_data = g_current_event.msg.data;
     }
 
     // Save HTTP body pointer for accessor (valid until next poll)
@@ -1776,18 +1800,17 @@ GM_EXPORT double colyseus_gm_message_read_bool(const char* key) {
 }
 
 GM_EXPORT const char* colyseus_gm_message_read_string_value(void) {
-    static char buf[4096];
-    buf[0] = '\0';
+    if (g_current_message_string) return g_current_message_string;
     gm_ensure_message_reader();
-    if (!g_current_message_reader) return buf;
+    if (!g_current_message_reader) return "";
     size_t len = 0;
     const char* value = colyseus_message_reader_get_str(g_current_message_reader, &len);
-    if (value && len > 0) {
-        if (len >= sizeof(buf)) len = sizeof(buf) - 1;
-        memcpy(buf, value, len);
-        buf[len] = '\0';
-    }
-    return buf;
+    if (!value || len == 0) return "";
+    g_current_message_string = (char*)malloc(len + 1);
+    if (!g_current_message_string) return "";
+    memcpy(g_current_message_string, value, len);
+    g_current_message_string[len] = '\0';
+    return g_current_message_string;
 }
 
 GM_EXPORT double colyseus_gm_message_read_number_value(void) {

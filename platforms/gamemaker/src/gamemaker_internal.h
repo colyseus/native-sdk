@@ -71,7 +71,7 @@ typedef struct {
     union {
         // Message events (type 3)
         struct {
-            uint8_t data[8192];
+            uint8_t* data;  // dynamically allocated, freed on next poll
             size_t data_length;
         } msg;
 

@@ -96,6 +96,11 @@ export class TestRoom extends Room {
         long: "x".repeat(5000),
       });
     },
+    // Payloads past any fixed client buffer: a 20 KB map and a 20 KB string.
+    large_fixture: (client: Client) => {
+      client.send("large_map", { items: Array.from({ length: 1000 }, (_, i) => ({ id: i, name: "item-" + i })) });
+      client.send("large_string", "y".repeat(20000));
+    },
     // a numeric message type: SDKs check room.send(7, ...) reaches the server
     7: (client: Client, message: any) => {
       client.send("int_echo", message);

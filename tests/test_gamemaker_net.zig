@@ -203,6 +203,15 @@ test "gm: messages cross as JSON, nested both ways" {
     try testing.expectEqualStrings("AAEC/w==", root.get("bytes").?.string); // bin → base64
     try testing.expectEqual(@as(usize, 5000), root.get("long").?.string.len);
 
+    // payloads were cut at a fixed 8192-byte event buffer
+    try testing.expectEqual(@as(f64, 1), colyseus_gm_room_send_json(ref, "large_fixture", "{}"));
+    const large = awaitJson("large_map", 5000) orelse return error.NoLargeMap;
+    const big = try std.json.parseFromSlice(std.json.Value, testing.allocator, large, .{});
+    defer big.deinit();
+    const items = big.value.object.get("items").?.array.items;
+    try testing.expectEqual(@as(usize, 1000), items.len);
+    try testing.expectEqualStrings("item-999", items[999].object.get("name").?.string);
+
     colyseus_gm_room_leave(ref);
     try testing.expect(processUntil(EVENT_ROOM_LEAVE, 5000));
     colyseus_gm_room_free(ref);

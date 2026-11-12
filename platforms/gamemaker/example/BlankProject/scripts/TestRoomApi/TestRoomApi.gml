@@ -213,6 +213,27 @@ suite(function() {
             expect(string_length(_m.long)).toBe(5000);
         });
 
+        test("messages larger than 8 KB arrive whole", function() {
+            global.__rt.big_map = undefined;
+            global.__rt.big_string = undefined;
+            global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
+            colyseus_on_message(global.__rt.room, function(_room, _type, _data) {
+                if (_type == "large_map") global.__rt.big_map = _data;
+                if (_type == "large_string") {
+                    global.__rt.big_string = _data;
+                    global.__rt.done = true;
+                }
+            });
+            test_poll_until_joined(global.__rt.room, 5000);
+
+            colyseus_send(global.__rt.room, "large_fixture", {});
+            test_poll_until(global.__rt, 5000);
+            expect(global.__rt.done).toBeTruthy();
+            expect(array_length(global.__rt.big_map.items)).toBe(1000);
+            expect(global.__rt.big_map.items[999].name).toBe("item-999");
+            expect(string_length(global.__rt.big_string)).toBe(20000);
+        });
+
         test("colyseus_send carries nested structs and arrays", function() {
             global.__rt.echo = undefined;
             global.__rt.room = colyseus_client_join_or_create(global.__rt.client, "my_room", "{}");
